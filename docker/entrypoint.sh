@@ -43,7 +43,7 @@ prepare_data() {
   while IFS= read -r key; do
     case "$key" in
       # Host-side launcher keys; paths are fixed to the /data volume below.
-      RUNTIME|DOCKER_BUILD|DOCKER_IMAGE|PUID|PGID|STEAMCMD_DIR|SERVER_DIR|BACKUP_DIR) continue ;;
+      RUNTIME|DOCKER_BUILD|DOCKER_IMAGE|PUID|PGID|STEAMCMD_DIR|SERVER_DIR|BACKUP_DIR|INI_OVERRIDES_DIR) continue ;;
     esac
     if [[ -v "$key" ]]; then
       conf_set "$key" "${!key}"
@@ -59,6 +59,7 @@ prepare_data() {
   conf_set STEAMCMD_DIR /data/steamcmd
   conf_set SERVER_DIR /data/server
   conf_set BACKUP_DIR /data/backups
+  conf_set INI_OVERRIDES_DIR /opt/theisle-overrides
   # Generate an RCON password on first start (needed for save-before-stop).
   local rcon_enabled rcon_pw
   rcon_enabled="$(grep -E '^RCON_ENABLED=' "$CONF" | tail -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')"

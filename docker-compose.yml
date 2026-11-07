@@ -56,6 +56,8 @@ services:
       - "127.0.0.1:${RCON_PORT:-8888}:${RCON_PORT:-8888}/tcp"
     volumes:
       - theisle-data:/data
+      # Game.ini / Engine.ini overrides from the host (config/overrides), read-only
+      - "${ISLE_OVERRIDES_DIR:-./config/overrides}:/opt/theisle-overrides:ro"
       # Or use a host folder (set PUID/PGID to its owner):
       # - ./data:/data
     # If the server doesn't show up in the browser behind Docker NAT, try host

@@ -32,8 +32,20 @@
     RemoveFirewall Remove the firewall rules
     InstallService Register a scheduled task that runs the server at boot
     RemoveService  Remove that scheduled task
+    Admins         list|add|remove <SteamID64...>             (e.g. Admins add 7656119...)
+    Whitelist      list|add|remove <SteamID64...>|on|off      (live via RCON when running)
+    Classes        list|known|set|add|remove <Class...>|reset|preset [roster]
+    AIClasses      list|known|set|add|remove <Class...>|reset (disabled AI)
+    Profile        list|show <name>|apply <name>              (whole play styles)
+    Preset         list|show <name>|apply <name...>           (stackable tweaks)
+    Plugins        list|search|info|install|remove|enable|disable|update|preset|run|config|sources
     Info           Print resolved paths and settings
     Version        Print the script version
+
+.PARAMETER Items
+    Arguments for Admins, Whitelist, Classes, AIClasses, Profile, Preset and Plugins,
+    e.g.  .\IsleServer.ps1 Whitelist add 76561198000000001
+          .\IsleServer.ps1 Plugins install discord-notify
 
 .PARAMETER Runtime
     Native or Docker. Overrides RUNTIME in server.conf for this command.
@@ -44,13 +56,16 @@
     .\IsleServer.ps1 Start
     .\IsleServer.ps1 Logs -Follow
     .\IsleServer.ps1 Rcon -RconArgs announce,'Restart in 5 minutes'
+    .\IsleServer.ps1 Profile apply realism
+    .\IsleServer.ps1 Classes preset carnivores
 #>
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
     [ValidateSet('Install', 'Update', 'Validate', 'Check', 'Configure', 'Start', 'Stop', 'Restart', 'Status', 'Run',
                  'Logs', 'Backup', 'Restore', 'Rcon', 'Save', 'Firewall', 'RemoveFirewall',
-                 'InstallService', 'RemoveService', 'Info', 'Version', 'Help')]
+                 'InstallService', 'RemoveService', 'Info', 'Version', 'Help',
+                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins')]
     [string]$Command = 'Help',
 
     [string]$ConfigPath,
@@ -60,7 +75,9 @@ param(
     [ValidateSet('LocalService', 'System')]
     [string]$ServiceAccount = 'LocalService',
     [ValidateSet('Native', 'Docker')]
-    [string]$Runtime
+    [string]$Runtime,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Items
 )
 
 Set-StrictMode -Version 2.0
@@ -172,16 +189,17 @@ function Test-ServerConfig {
     $boolKeys = 'UPDATE_ON_START', 'VALIDATE_ON_UPDATE', 'FIREWALL_OPEN_RCON', 'WHITELIST_ENABLED', 'QUEUE_ENABLED',
         'RCON_ENABLED', 'GLOBAL_CHAT', 'ENABLE_HUMANS', 'DYNAMIC_WEATHER', 'ENABLE_MUTATIONS', 'ENABLE_DIETS',
         'ENABLE_PATROL_ZONES', 'ALLOW_RECORDING_REPLAY', 'SPAWN_PLANTS', 'SPAWN_AI', 'ENABLE_MIGRATION',
-        'ENABLE_MASS_MIGRATION', 'MANAGE_INI_FILES', 'AUTO_RESTART', 'SAVE_BEFORE_STOP', 'DOCKER_BUILD'
+        'ENABLE_MASS_MIGRATION', 'MANAGE_INI_FILES', 'AUTO_RESTART', 'SAVE_BEFORE_STOP', 'DOCKER_BUILD',
+        'REGION_SPAWNING', 'REGION_SPAWN_COOLDOWN'
     foreach ($k in $boolKeys) {
         $v = C $k
         if ($v -and (@('true', 'false', 'yes', 'no', '1', '0', 'on', 'off') -notcontains $v.ToLowerInvariant())) { $errors.Add("$k='$v' must be true or false") }
     }
-    foreach ($k in 'GROWTH_MULTIPLIER', 'CORPSE_DECAY_MULTIPLIER', 'PLANT_SPAWN_MULTIPLIER', 'AI_DENSITY', 'DAY_LENGTH_MINUTES', 'NIGHT_LENGTH_MINUTES') {
+    foreach ($k in 'GROWTH_MULTIPLIER', 'CORPSE_DECAY_MULTIPLIER', 'PLANT_SPAWN_MULTIPLIER', 'AI_DENSITY', 'DAY_LENGTH_MINUTES', 'NIGHT_LENGTH_MINUTES', 'WEATHER_MIN_INTERVAL', 'WEATHER_MAX_INTERVAL') {
         $v = C $k
         if ($v -and $v -notmatch '^\d+(\.\d+)?$') { $errors.Add("$k='$v' must be a number") }
     }
-    foreach ($k in 'MAX_MIGRATION_TIME', 'MASS_MIGRATION_TIME', 'MASS_MIGRATION_DISABLE_TIME', 'STOP_TIMEOUT', 'BACKUP_RETENTION') {
+    foreach ($k in 'MAX_MIGRATION_TIME', 'MASS_MIGRATION_TIME', 'MASS_MIGRATION_DISABLE_TIME', 'STOP_TIMEOUT', 'BACKUP_RETENTION', 'REGION_SPAWN_COOLDOWN_SECONDS', 'NET_TICK_RATE') {
         $v = C $k
         if ($v -and $v -notmatch '^\d+$') { $errors.Add("$k='$v' must be a whole number") }
     }
@@ -323,6 +341,12 @@ function Get-GameIni {
     $o.Add("bEnableMassMigration=$(UeBool (C 'ENABLE_MASS_MIGRATION' 'true'))")
     $o.Add("MassMigrationTime=$(C 'MASS_MIGRATION_TIME' '43200')")
     $o.Add("MassMigrationDisableTime=$(C 'MASS_MIGRATION_DISABLE_TIME' '7200')")
+    # Optional keys: only written when set (PRD CFX-03)
+    if (C 'REGION_SPAWNING') { $o.Add("bUseRegionSpawning=$(UeBool (C 'REGION_SPAWNING'))") }
+    if (C 'REGION_SPAWN_COOLDOWN') { $o.Add("bUseRegionSpawnCooldown=$(UeBool (C 'REGION_SPAWN_COOLDOWN'))") }
+    if (C 'REGION_SPAWN_COOLDOWN_SECONDS') { $o.Add("RegionSpawnCooldownTimeSeconds=$(C 'REGION_SPAWN_COOLDOWN_SECONDS')") }
+    if (C 'WEATHER_MIN_INTERVAL') { $o.Add("MinWeatherVariationInterval=$(C 'WEATHER_MIN_INTERVAL')") }
+    if (C 'WEATHER_MAX_INTERVAL') { $o.Add("MaxWeatherVariationInterval=$(C 'WEATHER_MAX_INTERVAL')") }
     Add-IniList $o 'AllowedClasses' (C 'ALLOWED_CLASSES')
     Add-IniList $o 'DisallowedAIClasses' (C 'DISABLED_AI_CLASSES')
     Add-IniList $o 'AdminsSteamIDs' (C 'ADMIN_STEAM_IDS')
@@ -348,6 +372,7 @@ function Get-EngineIni {
         'MaxClientRate=100000',
         'MaxInternetClientRate=100000'
     )
+    if (C 'NET_TICK_RATE') { $lines += "NetServerMaxTickRate=$(C 'NET_TICK_RATE')" }
     return ($lines -join "`r`n") + "`r`n"
 }
 
@@ -363,12 +388,15 @@ function Set-ServerConfig([switch]$Force) {
     New-Item -ItemType Directory -Force -Path $IniDir | Out-Null
     $game = Join-Path $IniDir 'Game.ini'
     $engine = Join-Path $IniDir 'Engine.ini'
+    $ovr = Get-OverridesDir
+    $gameText = Merge-IniOverrides (Get-GameIni) (Join-Path $ovr 'Game.ini')
+    $engineText = Merge-IniOverrides (Get-EngineIni) (Join-Path $ovr 'Engine.ini')
     if ($Force -or (Test-True (C 'MANAGE_INI_FILES'))) {
-        Write-IniFile $game (Get-GameIni)
-        Write-IniFile $engine (Get-EngineIni)
+        Write-IniFile $game $gameText
+        Write-IniFile $engine $engineText
     } else {
-        if (-not (Test-Path $game)) { Write-IniFile $game (Get-GameIni) }
-        if (-not (Test-Path $engine)) { Write-IniFile $engine (Get-EngineIni) }
+        if (-not (Test-Path $game)) { Write-IniFile $game $gameText }
+        if (-not (Test-Path $engine)) { Write-IniFile $engine $engineText }
         Write-Step 'MANAGE_INI_FILES=false - existing .ini files left untouched'
     }
 }
@@ -711,6 +739,8 @@ function Assert-Docker {
 # PowerShell parameter name. Docker output goes to the host, not the pipeline.
 function Invoke-Dc([string[]]$DcArgs) {
     $env:ISLE_CONF_FILE = $ConfigPath
+    $env:ISLE_OVERRIDES_DIR = Get-OverridesDir
+    New-Item -ItemType Directory -Force -Path $env:ISLE_OVERRIDES_DIR | Out-Null
     $base = @('compose', '--project-directory', $RepoDir, '-f', (Join-Path $RepoDir 'docker-compose.yml'), '--env-file', $ConfigPath)
     & docker @base @DcArgs | Out-Host
     return $LASTEXITCODE
@@ -796,19 +826,28 @@ function Invoke-DockerCommand([string]$cmd) {
             Assert-DockerStopped $cmd.ToLowerInvariant(); Assert-ServerConfig
             Invoke-DockerImage
             Invoke-DcChecked @('run', '--rm', 'theisle', $cmd.ToLowerInvariant())
+            Invoke-Hooks 'post-update'
         }
         'Configure' { Assert-ServerConfig; Invoke-DcChecked @('run', '--rm', 'theisle', 'configure') }
         'Start' {
             Initialize-RconPassword; Assert-ServerConfig
             Invoke-DcChecked (@('up', '-d') + $nb)
             Write-Ok 'Container started - follow the startup with: .\IsleServer.ps1 Logs -Follow'
+            Invoke-Hooks 'post-start'
         }
-        'Stop' { Invoke-DcChecked @('stop'); Write-Ok 'Container stopped' }
+        'Stop' {
+            if (Test-DockerRunning) { Invoke-Hooks 'pre-stop' }
+            Invoke-DcChecked @('stop'); Write-Ok 'Container stopped'
+            Invoke-Hooks 'post-stop'
+        }
         'Restart' {
+            if (Test-DockerRunning) { Invoke-Hooks 'pre-stop' }
             Invoke-DcChecked @('stop')
+            Invoke-Hooks 'post-stop'
             Initialize-RconPassword; Assert-ServerConfig
             Invoke-DcChecked (@('up', '-d') + $nb)
             Write-Ok 'Container restarted'
+            Invoke-Hooks 'post-start'
         }
         'Status' {
             if (Test-DockerRunning) { $rc = Invoke-Dc @('exec', '-T', 'theisle', 'isle-server', 'status'); exit $rc }
@@ -821,6 +860,7 @@ function Invoke-DockerCommand([string]$cmd) {
         'Backup' {
             if (Test-DockerRunning) { Invoke-DcChecked @('exec', '-T', 'theisle', 'isle-server', 'backup') }
             else { Invoke-DcChecked @('run', '--rm', 'theisle', 'backup') }
+            Invoke-Hooks 'post-backup'
         }
         'Restore' {
             if (-not $Path) { throw 'Usage: IsleServer.ps1 Restore -Path <backup.tar.gz | name in /data/backups>' }
@@ -860,6 +900,276 @@ function Invoke-DockerCommand([string]$cmd) {
     }
 }
 
+# ----------------------------------------------------------- ini overrides --
+# config\overrides\{Game,Engine}.ini are merged into the generated files
+# (PRD CFX-01): a Key=Value replaces every generated line of that key in that
+# section, new keys/sections are appended, +/-/! lines pass through unchanged.
+function Get-OverridesDir {
+    $d = C 'INI_OVERRIDES_DIR'
+    if ($d) { return $d }
+    return (Join-Path (Split-Path -Parent $ConfigPath) 'overrides')
+}
+function Merge-IniOverrides([string]$content, [string]$overrideFile) {
+    if (-not (Test-Path $overrideFile)) { return $content }
+    $order = New-Object 'Collections.Generic.List[string]'
+    $lines = @{}
+    $replace = @{}
+    $sec = ''
+    foreach ($raw in [IO.File]::ReadAllLines($overrideFile)) {
+        $l = $raw.Trim()
+        if (-not $l -or $l.StartsWith(';') -or $l.StartsWith('#')) { continue }
+        if ($l -match '^\[.*\]$') {
+            $sec = $l
+            if (-not $lines.ContainsKey($sec)) { $lines[$sec] = New-Object 'Collections.Generic.List[string]'; $order.Add($sec) }
+            continue
+        }
+        if (-not $sec) { continue }
+        $passThrough = $l -match '^[+!-]'
+        if (-not $l.Contains('=') -and -not $passThrough) { continue }
+        $lines[$sec].Add($l)
+        if (-not $passThrough) { $replace[$sec + '|' + $l.Split('=')[0].Trim().ToLowerInvariant()] = $true }
+    }
+    $out = New-Object 'Collections.Generic.List[string]'
+    $done = @{}
+    $cur = ''
+    foreach ($raw in ($content -split "`r?`n")) {
+        $l = $raw.Trim()
+        if ($l -match '^\[.*\]$') {
+            if ($cur -and $lines.ContainsKey($cur) -and -not $done.ContainsKey($cur)) { foreach ($x in $lines[$cur]) { $out.Add($x) }; $done[$cur] = $true }
+            $cur = $l; $out.Add($raw); continue
+        }
+        if ($cur -and $l -and -not $l.StartsWith(';') -and $l.Contains('=') -and
+            $replace.ContainsKey($cur + '|' + $l.Split('=')[0].Trim().ToLowerInvariant())) { continue }
+        $out.Add($raw)
+    }
+    if ($cur -and $lines.ContainsKey($cur) -and -not $done.ContainsKey($cur)) { foreach ($x in $lines[$cur]) { $out.Add($x) }; $done[$cur] = $true }
+    foreach ($s in $order) {
+        if (-not $done.ContainsKey($s)) { $out.Add(''); $out.Add($s); foreach ($x in $lines[$s]) { $out.Add($x) } }
+    }
+    Write-Step "Merged overrides from $overrideFile"
+    return (($out -join "`r`n").TrimEnd() + "`r`n")
+}
+
+# ------------------------------------------------------- list editing -------
+# Admins / whitelist / rosters (PRD CFX-06..08): edit the host server.conf and
+# push live changes through RCON when the server is running.
+function Get-ListValues([string]$key) { return @((C $key) -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+function Set-ListValues([string]$key, [string[]]$values) {
+    $seen = @{}; $unique = New-Object 'Collections.Generic.List[string]'
+    foreach ($v in $values) {
+        $t = "$v".Trim()
+        if ($t -and -not $seen.ContainsKey($t.ToLowerInvariant())) { $seen[$t.ToLowerInvariant()] = $true; $unique.Add($t) }
+    }
+    Set-ConfigValue $key ($unique -join ',')
+    return , $unique.ToArray()
+}
+function Assert-SteamIds([string[]]$ids) {
+    foreach ($i in $ids) { if ($i -notmatch '^7656119\d{10}$') { throw "'$i' is not a SteamID64 (17 digits starting with 7656119)" } }
+}
+function Get-KnownClasses([string]$section) {
+    $file = Join-Path $RepoDir 'config\classes.txt'
+    if (-not (Test-Path $file)) { return @() }
+    $on = $false; $names = @()
+    foreach ($line in [IO.File]::ReadAllLines($file)) {
+        $t = $line.Trim()
+        if ($t -match '^\[(.+)\]$') { $on = ($Matches[1] -eq $section); continue }
+        if ($on -and $t -and -not $t.StartsWith('#')) { $names += ($t -split '\s+')[0] }
+    }
+    return $names
+}
+function Assert-ClassNames([string]$section, [string[]]$names) {
+    $known = @(Get-KnownClasses $section)
+    foreach ($n in $names) {
+        if ($n -notmatch '^[A-Za-z][A-Za-z0-9_]*$') { throw "'$n' is not a valid class name" }
+        if ($known.Count -and -not ($known | Where-Object { $_ -ieq $n })) {
+            Write-Warn "'$n' is not in config\classes.txt - keeping it anyway (new or renamed species?)"
+        }
+    }
+}
+function Edit-List([string]$key, [string]$op, [string[]]$items) {
+    $cur = @(Get-ListValues $key)
+    switch ($op) {
+        'set'    { return Set-ListValues $key $items }
+        'add'    { return Set-ListValues $key ($cur + $items) }
+        'remove' { return Set-ListValues $key @($cur | Where-Object { $v = $_; -not ($items | Where-Object { $_ -ieq $v }) }) }
+    }
+}
+function Send-LiveRcon([string[]]$rconArgs) {
+    if (-not (Test-True (C 'RCON_ENABLED')) -or -not (C 'RCON_PASSWORD')) { Write-Step 'RCON disabled - the change applies on the next restart'; return }
+    if ((Get-Runtime) -eq 'docker') {
+        if (-not (Get-Command docker -ErrorAction SilentlyContinue) -or -not (Test-DockerRunning)) { Write-Step 'Server not running - the change applies on the next start'; return }
+        $rc = Invoke-Dc (@('exec', '-T', 'theisle', 'isle-server', 'rcon') + $rconArgs)
+    } else {
+        if (-not (Get-ServerProcess)) { Write-Step 'Server not running - the change applies on the next start'; return }
+        if (-not (Get-Python)) { Write-Warn 'Python 3 missing - the change applies on the next restart'; return }
+        $rc = Invoke-PyRcon $rconArgs
+    }
+    if ($rc -eq 0) { Write-Ok "Applied live via RCON ($($rconArgs[0]))" } else { Write-Warn 'Live RCON update failed - the change applies on the next restart' }
+}
+function Show-List([string]$key, [string]$empty) {
+    $v = @(Get-ListValues $key)
+    if ($v.Count -eq 0) { Write-Host $empty } else { $v | ForEach-Object { Write-Host $_ } }
+}
+function Invoke-ListCommand([string]$kind) {
+    $sub = 'list'; $rest = @()
+    if ($Items -and $Items.Count -gt 0) { $sub = $Items[0].ToLowerInvariant(); $rest = @($Items | Select-Object -Skip 1) }
+    switch ($kind) {
+        'Admins' {
+            switch ($sub) {
+                'list' { Show-List 'ADMIN_STEAM_IDS' '(no admins)' }
+                { $_ -in 'add', 'remove' } {
+                    if ($rest.Count -eq 0) { throw "Usage: IsleServer.ps1 Admins $sub <SteamID64> [...]" }
+                    Assert-SteamIds $rest
+                    $v = @(Edit-List 'ADMIN_STEAM_IDS' $sub $rest)
+                    Write-Ok "Admins: $($v.Count) - restart the server to apply (the game reads admins at start)"
+                }
+                default { throw 'Usage: IsleServer.ps1 Admins list|add|remove <SteamID64> [...]' }
+            }
+        }
+        'Whitelist' {
+            switch ($sub) {
+                'list' {
+                    $state = 'OFF'; if (Test-True (C 'WHITELIST_ENABLED' 'false')) { $state = 'ON' }
+                    Write-Host "Whitelist is $state"; Show-List 'WHITELIST_IDS' '(no whitelisted players)'
+                }
+                { $_ -in 'add', 'remove' } {
+                    if ($rest.Count -eq 0) { throw "Usage: IsleServer.ps1 Whitelist $sub <SteamID64> [...]" }
+                    Assert-SteamIds $rest
+                    $v = @(Edit-List 'WHITELIST_IDS' $sub $rest)
+                    Write-Ok "Whitelist: $($v.Count) player(s)"
+                    $verb = 'removewhitelist'; if ($sub -eq 'add') { $verb = 'addwhitelist' }
+                    Send-LiveRcon @($verb, ($rest -join ','))
+                }
+                { $_ -in 'on', 'off' } {
+                    $was = Test-True (C 'WHITELIST_ENABLED' 'false'); $want = ($sub -eq 'on')
+                    Set-ConfigValue 'WHITELIST_ENABLED' ($want.ToString().ToLowerInvariant())
+                    Write-Ok "Whitelist turned $sub"
+                    if ($was -ne $want) { Send-LiveRcon @('togglewhitelist') }
+                    if ($want -and -not (C 'WHITELIST_IDS')) { Write-Warn 'The whitelist is empty - nobody can join' }
+                }
+                default { throw 'Usage: IsleServer.ps1 Whitelist list|add|remove <SteamID64> [...]|on|off' }
+            }
+        }
+        { $_ -in 'Classes', 'AIClasses' } {
+            $key = 'ALLOWED_CLASSES'; $section = 'playable'; $rcmd = 'updateplayables'; $label = 'Classes'
+            if ($kind -eq 'AIClasses') { $key = 'DISABLED_AI_CLASSES'; $section = 'ai'; $rcmd = 'disableaiclasses'; $label = 'AIClasses' }
+            $v = $null
+            switch ($sub) {
+                'list' { $e = '(none disabled)'; if ($section -eq 'playable') { $e = '(all classes allowed)' }; Show-List $key $e; return }
+                'known' { Get-KnownClasses $section | ForEach-Object { Write-Host $_ }; return }
+                { $_ -in 'set', 'add', 'remove' } {
+                    if ($rest.Count -eq 0) { throw "Usage: IsleServer.ps1 $label $sub <Class> [...]" }
+                    Assert-ClassNames $section $rest
+                    $v = @(Edit-List $key $sub $rest)
+                }
+                'reset' { Set-ConfigValue $key ''; $v = @() }
+                'preset' {
+                    if ($section -ne 'playable') { throw 'Roster presets are for the playable roster (Classes)' }
+                    $dir = Join-Path $RepoDir 'config\rosters'
+                    if ($rest.Count -eq 0) {
+                        Get-ChildItem $dir -Filter *.txt | ForEach-Object {
+                            $d = ((Get-Content $_.FullName -TotalCount 1) -replace '^# Roster: \S+ - ', '')
+                            Write-Host ('  {0,-12} {1}' -f $_.BaseName, $d)
+                        }
+                        return
+                    }
+                    $file = Join-Path $dir ($rest[0] + '.txt')
+                    if (-not (Test-Path $file)) { throw "Unknown roster '$($rest[0])' (see: IsleServer.ps1 Classes preset)" }
+                    $names = @([IO.File]::ReadAllLines($file) | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
+                    if ($names.Count) { Assert-ClassNames 'playable' $names; $v = @(Edit-List $key 'set' $names) } else { Set-ConfigValue $key ''; $v = @() }
+                }
+                default { throw "Usage: IsleServer.ps1 $label list|known|set|add|remove <Class> [...]|reset|preset [name]" }
+            }
+            if ($v.Count -eq 0) {
+                if ($section -eq 'playable') { Write-Ok "$($label): all classes allowed - restart the server to apply" } else { Write-Ok "$($label): none disabled" }
+            } else {
+                Write-Ok ("$($label): " + ($v -join ','))
+                Send-LiveRcon @($rcmd, ($v -join ','))
+            }
+        }
+    }
+}
+
+# ------------------------------------------------------ profiles / presets --
+function Get-OverlayDescription([string]$file) { return ((Get-Content $file -TotalCount 1) -replace '^# [A-Za-z]+: \S+ - ', '') }
+function Invoke-OverlayCommand([string]$kind) {
+    $dir = Join-Path $RepoDir ("config\" + $kind.ToLowerInvariant() + 's')
+    $sub = 'list'; $rest = @()
+    if ($Items -and $Items.Count -gt 0) { $sub = $Items[0].ToLowerInvariant(); $rest = @($Items | Select-Object -Skip 1) }
+    switch ($sub) {
+        'list' { Get-ChildItem $dir -Filter *.conf | ForEach-Object { Write-Host ('  {0,-18} {1}' -f $_.BaseName, (Get-OverlayDescription $_.FullName)) } }
+        'show' {
+            if ($rest.Count -eq 0 -or -not (Test-Path (Join-Path $dir ($rest[0] + '.conf')))) { throw "Usage: IsleServer.ps1 $kind show <name>" }
+            $file = Join-Path $dir ($rest[0] + '.conf')
+            Write-Host ("{0}: {1}" -f $rest[0], (Get-OverlayDescription $file))
+            foreach ($line in [IO.File]::ReadAllLines($file)) {
+                if ($line -match '^\s*([A-Z_][A-Z0-9_]*)=(.*)$') {
+                    $now = C $Matches[1] '(empty)'; $new = $Matches[2]; if (-not $new) { $new = '(empty)' }
+                    Write-Host ('  {0,-28} {1} -> {2}' -f $Matches[1], $now, $new)
+                }
+            }
+        }
+        'apply' {
+            if ($rest.Count -eq 0) { throw "Usage: IsleServer.ps1 $kind apply <name>" }
+            if ($kind -eq 'Profile' -and $rest.Count -gt 1) { throw 'Apply one profile at a time (combine presets with: IsleServer.ps1 Preset apply a b c)' }
+            $files = foreach ($n in $rest) {
+                $f = Join-Path $dir ($n + '.conf')
+                if (-not (Test-Path $f)) { throw "Unknown $($kind.ToLowerInvariant()) '$n' (see: IsleServer.ps1 $kind list)" }
+                $f
+            }
+            $backup = "$ConfigPath.bak-" + (Get-Date -Format 'yyyyMMdd-HHmmss')
+            Copy-Item $ConfigPath $backup
+            foreach ($f in $files) {
+                foreach ($line in [IO.File]::ReadAllLines($f)) {
+                    if ($line -match '^\s*([A-Z_][A-Z0-9_]*)=(.*)$') { Set-ConfigValue $Matches[1] ($Matches[2].Trim().Trim('"')) }
+                }
+            }
+            $script:Cfg = @{}; Import-ServerConfig
+            if (Test-ServerConfig) {
+                Write-Ok ("Applied " + ($rest -join ' ') + " (previous config saved as $backup)")
+                Write-Step 'Restart the server to apply: IsleServer.ps1 Restart'
+            } else {
+                Copy-Item $backup $ConfigPath -Force
+                throw "The result did not validate - server.conf was restored from $backup"
+            }
+        }
+        default { throw "Usage: IsleServer.ps1 $kind list|show <name>|apply <name>" }
+    }
+}
+
+# ------------------------------------------------------------------ plugins --
+function Invoke-Python([string[]]$pyArgs) {
+    $py = Get-Python
+    if (-not $py) { throw 'Python 3 is required for plugins (winget install Python.Python.3.12)' }
+    $a = @(); if ($py[1]) { $a += $py[1] }
+    & $py[0] @($a + $pyArgs) | Out-Host
+    return $LASTEXITCODE
+}
+function Invoke-Plugins([string[]]$pluginArgs) {
+    $base = @((Join-Path $RepoDir 'tools\isle_plugins.py'), '--conf', $ConfigPath,
+              '--launcher', (Join-Path $ScriptDir 'IsleServer.ps1'), '--runtime', (Get-Runtime))
+    return Invoke-Python ($base + $pluginArgs)
+}
+function Invoke-Hooks([string]$hookEvent) {
+    $enabled = Join-Path (Split-Path -Parent $ConfigPath) 'plugins\enabled.txt'
+    if (-not (Test-Path $enabled) -or -not ((Get-Content $enabled) -join '').Trim()) { return }
+    if (-not (Get-Python)) { Write-Warn 'Python 3 missing - plugin hooks skipped'; return }
+    try { if ((Invoke-Plugins @('hook', $hookEvent)) -ne 0) { Write-Warn "A plugin hook for $hookEvent failed" } }
+    catch { Write-Warn "Plugin hooks for $hookEvent failed: $_" }
+}
+function Invoke-ConfigTool([string]$cmd) {
+    switch ($cmd) {
+        { $_ -in 'Admins', 'Whitelist', 'Classes', 'AIClasses' } { Invoke-ListCommand $cmd; return $true }
+        { $_ -in 'Profile', 'Preset' } { Invoke-OverlayCommand $cmd; return $true }
+        'Plugins' {
+            $a = @('list'); if ($Items -and $Items.Count) { $a = $Items }
+            $rc = Invoke-Plugins $a
+            exit $rc
+        }
+    }
+    return $false
+}
+
 # ------------------------------------------------------------------ main ---
 if ($Command -eq 'Help') { Get-Help $MyInvocation.MyCommand.Path -Detailed; exit 0 }
 if ($Command -eq 'Version') { Write-Host "IsleServer.ps1 $ScriptVersion"; exit 0 }
@@ -867,6 +1177,7 @@ Import-ServerConfig
 
 try {
     $rt = Get-Runtime
+    if (@('native', 'docker') -contains $rt -and (Invoke-ConfigTool $Command)) { exit 0 }
     if ($rt -eq 'docker' -and @('Firewall', 'RemoveFirewall') -notcontains $Command) {
         Invoke-DockerCommand $Command
         exit 0
@@ -882,17 +1193,17 @@ try {
             Set-ServerConfig
             Write-Ok "Install complete. Start with: .\IsleServer.ps1 Start"
         }
-        'Update'         { if (Get-ServerProcess) { Fail 'Stop the server before updating' }; Update-Server }
-        'Validate'       { if (Get-ServerProcess) { Fail 'Stop the server before validating' }; Update-Server -Validate }
+        'Update'         { if (Get-ServerProcess) { Fail 'Stop the server before updating' }; Update-Server; Invoke-Hooks 'post-update' }
+        'Validate'       { if (Get-ServerProcess) { Fail 'Stop the server before validating' }; Update-Server -Validate; Invoke-Hooks 'post-update' }
         'Check'          { if (Test-ServerConfig) { Write-Ok "Configuration OK ($ConfigPath)" } else { exit 1 } }
         'Configure'      { Set-ServerConfig -Force }
-        'Start'          { Invoke-Start }
-        'Stop'           { Invoke-Stop }
-        'Restart'        { Invoke-Stop; Start-Sleep -Seconds 2; Invoke-Start }
+        'Start'          { Invoke-Start; Invoke-Hooks 'post-start' }
+        'Stop'           { if (Get-ServerProcess) { Invoke-Hooks 'pre-stop' }; Invoke-Stop; Invoke-Hooks 'post-stop' }
+        'Restart'        { if (Get-ServerProcess) { Invoke-Hooks 'pre-stop' }; Invoke-Stop; Invoke-Hooks 'post-stop'; Start-Sleep -Seconds 2; Invoke-Start; Invoke-Hooks 'post-start' }
         'Status'         { Show-Status }
         'Run'            { Invoke-Run }
         'Logs'           { Show-Logs }
-        'Backup'         { Invoke-Backup }
+        'Backup'         { Invoke-Backup; Invoke-Hooks 'post-backup' }
         'Restore'        { Invoke-Restore }
         'Rcon'           { Invoke-Rcon }
         'Save'           { Invoke-Save }

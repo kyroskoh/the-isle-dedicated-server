@@ -6,6 +6,33 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-07
+
+Planned in [PRD.md](PRD.md) as milestone M12 (requirements CFX-01 to CFX-09, PLG-01 to PLG-07).
+
+### Added
+- **Any Game.ini / Engine.ini key** through `config/overrides/{Game,Engine}.ini`, merged into the generated
+  files (replace, append, and Unreal `+`/`-`/`!` pass-through), natively and in Docker (read-only mount).
+- Annotated key references (`config/reference/`) and override examples (`config/examples/overrides/`).
+- Optional keys written only when set: region spawning, weather variation intervals, `NetServerMaxTickRate`.
+- **Profiles** (vanilla, realism, casual, hardcore-pvp, friends-private, sandbox, performance) and **22 stackable
+  presets**, with `profile`/`preset list|show|apply`. Applying keeps a backup, validates, and rolls back on errors.
+- **Admin tools:** `admins`, `whitelist` (including on/off) and `classes` / `ai-classes` (including roster
+  presets `all`, `carnivores`, `herbivores`, `no-apex`, `small-only`, `beginner`). They validate SteamID64s and
+  class names (`config/classes.txt`) and push whitelist and roster changes live over RCON.
+- **Plugin manager** (`plugins list|search|info|install|remove|enable|disable|update|preset|run|config|sources`).
+  Standard-library Python, both OSes and runtimes, lifecycle hooks, SHA-256-pinned remote installs, archive
+  safety checks, and a third-party code warning. Plugin presets: base, recommended, full.
+- First-party plugins: `restart-countdown`, `discord-notify`, `offsite-backup`, `welcome-announcer`.
+  `tools/isle_sdk.py` for plugin authors.
+- `windows\Manage.bat` to run any command (`Manage.bat Whitelist add <id>`). `IsleServer.ps1` takes command
+  arguments directly (`IsleServer.ps1 Admins add <id>`).
+- Tests: `tests/test_config_tools.sh`, `tests/test_config_tools.ps1`, `tests/test_plugins.py`, in CI on both OSes.
+- `PLUGINS.md`, and CONFIGURATION.md sections on profiles, admin tools and overrides.
+
+### Changed
+- Editing `server.conf` as root keeps the file's owner, so a native service user can still read it.
+
 ## [1.6.0] - 2026-11-07
 
 Planned in [PRD.md](PRD.md) as milestone M11 (requirement INS-20).
@@ -161,7 +188,8 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.3.0...v1.4.0

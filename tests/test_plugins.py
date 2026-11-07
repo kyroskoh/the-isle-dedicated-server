@@ -119,10 +119,15 @@ class PluginTests(unittest.TestCase):
         self.backups = os.path.join(self.tmp, "backups")
         os.makedirs(self.backups)
         self.marker = os.path.join(self.tmp, "launcher-called")
-        self.launcher = os.path.join(self.tmp, "fake-launcher.sh")
-        with open(self.launcher, "w") as f:
-            f.write("#!/bin/sh\necho \"$@\" >> '%s'\n" % self.marker)
-        os.chmod(self.launcher, 0o755)
+        if os.name == "nt":
+            self.launcher = os.path.join(self.tmp, "fake-launcher.cmd")
+            with open(self.launcher, "w") as f:
+                f.write("@echo %%*>> \"%s\"\r\n" % self.marker)
+        else:
+            self.launcher = os.path.join(self.tmp, "fake-launcher.sh")
+            with open(self.launcher, "w") as f:
+                f.write("#!/bin/sh\necho \"$@\" >> '%s'\n" % self.marker)
+            os.chmod(self.launcher, 0o755)
         with open(self.conf, "w") as f:
             f.write("SERVER_NAME=\"Test Server\"\nRCON_ENABLED=true\nRCON_PASSWORD=pw\nRCON_PORT=%d\nBACKUP_DIR=%s\n"
                     % (self.rcon.port, self.backups))

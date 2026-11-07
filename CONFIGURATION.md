@@ -17,6 +17,84 @@ every start and keep the previous copy as `*.bak`:
 If you prefer to edit the `.ini` files by hand, set `MANAGE_INI_FILES=false`. The scripts
 then generate them only if they don't exist yet.
 
+## Profiles and presets
+
+**Profiles** are complete play styles. **Presets** are small changes you can stack. Applying either writes
+its keys into `server.conf`, keeps a timestamped backup, validates, and rolls back if the result is invalid.
+Restart the server afterwards.
+
+| Profile | Style |
+|---|---|
+| `vanilla` | The standard Evrima defaults |
+| `realism` | Slow growth, long days and nights, no global chat |
+| `casual` | Fast growth, short nights, more food |
+| `hardcore-pvp` | Slow growth, fast corpse decay, 150 players, no global chat |
+| `friends-private` | 20 players, whitelist on, no queue |
+| `sandbox` | Very fast growth, humans on, no diets or migration |
+| `performance` | Fewer AI, plants and players, 30 Hz tick |
+
+Presets: `ai-off`, `ai-low`, `ai-high`, `fast-growth`, `very-fast-growth`, `slow-growth`, `humans-on`,
+`humans-off`, `no-migration`, `short-nights`, `long-days`, `static-weather`, `whitelist-on`, `whitelist-off`,
+`global-chat-off`, `global-chat-on`, `mutations-off`, `diets-off`, `queue-off`, `more-food`,
+`region-spawning`, `replays-off`.
+
+```bash
+isle-server profile list
+isle-server profile show realism          # current -> new value for every key
+isle-server profile apply realism
+isle-server preset apply ai-low short-nights fast-growth   # applied left to right
+```
+
+Windows: `IsleServer.ps1 Profile apply realism`, `IsleServer.ps1 Preset apply ai-low short-nights`
+(or `Manage.bat Profile apply realism`).
+
+Profiles never touch names, passwords or ports. Your own profiles and presets are just `KEY=VALUE` files in
+`config/profiles/` and `config/presets/`. The first comment line is the description.
+
+## Admins, whitelist and playable roster
+
+| Linux | Windows | Effect |
+|---|---|---|
+| `isle-server admins list\|add\|remove <SteamID64...>` | `IsleServer.ps1 Admins add <id...>` | `ADMIN_STEAM_IDS`. Applies on restart |
+| `isle-server whitelist list\|add\|remove <id...>\|on\|off` | `IsleServer.ps1 Whitelist add <id...>` | `WHITELIST_IDS` / `WHITELIST_ENABLED`. **Live** via RCON |
+| `isle-server classes list\|known\|set\|add\|remove <Class...>\|reset\|preset [roster]` | `IsleServer.ps1 Classes ...` | `ALLOWED_CLASSES`. **Live** via RCON `updateplayables` |
+| `isle-server ai-classes list\|known\|set\|add\|remove\|reset` | `IsleServer.ps1 AIClasses ...` | `DISABLED_AI_CLASSES`. **Live** via RCON |
+
+- SteamIDs must be SteamID64s (17 digits starting with `7656119`). Duplicates are dropped.
+- Class names are checked against [`config/classes.txt`](config/classes.txt). Unknown names only warn, so new
+  species keep working. Edit that file when a patch adds or renames one.
+- **Roster presets** live in [`config/rosters/`](config/rosters/): `all`, `carnivores`, `herbivores`,
+  `no-apex`, `small-only`, `beginner`.
+- When the server is running and RCON is enabled, whitelist and roster changes are also sent live. Otherwise
+  they apply on the next start. In docker mode the live change goes through the container.
+
+## Any Game.ini / Engine.ini key (overrides)
+
+Put `Game.ini` and/or `Engine.ini` in `config/overrides/` (or the folder set in `INI_OVERRIDES_DIR`).
+They are merged into the generated files on every start:
+
+- `Key=Value` **replaces every generated line** of that key in that section. Repeat the key for lists.
+- New keys are added to their section, and new sections are appended.
+- Lines starting with `+`, `-` or `!` (Unreal array syntax) pass through unchanged.
+
+Examples: [`config/examples/overrides/`](config/examples/overrides/). Every known key, with its section, default,
+`server.conf` key and status: [`config/reference/Game.ini.md`](config/reference/Game.ini.md) and
+[`config/reference/Engine.ini.md`](config/reference/Engine.ini.md). In docker mode the folder is mounted
+read-only into the container.
+
+### Optional / advanced keys
+
+Written only when set:
+
+| server.conf | ini key | Notes |
+|---|---|---|
+| `REGION_SPAWNING` | `bUseRegionSpawning` | community-documented |
+| `REGION_SPAWN_COOLDOWN` | `bUseRegionSpawnCooldown` | community-documented |
+| `REGION_SPAWN_COOLDOWN_SECONDS` | `RegionSpawnCooldownTimeSeconds` | community-documented |
+| `WEATHER_MIN_INTERVAL` / `WEATHER_MAX_INTERVAL` | `Min/MaxWeatherVariationInterval` | community-documented |
+| `NET_TICK_RATE` | Engine.ini `NetServerMaxTickRate` | Unreal Engine |
+| `INI_OVERRIDES_DIR` | (override folder) | default `config/overrides` |
+
 ## Validation (`check`)
 
 Run `isle-server check` (Linux) or `IsleServer.ps1 Check` (Windows) after you edit the file.

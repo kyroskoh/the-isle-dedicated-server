@@ -127,6 +127,15 @@ the old volume in place.
 the world from it when the native server has no world yet. See
 [INSTALL.md](INSTALL.md#switching-uninstalling-and-reinstalling).
 
+## Overrides, admin tools and plugins in Docker
+
+- **Overrides:** `config/overrides/` next to your `server.conf` is mounted read-only into the container, so
+  `Game.ini` / `Engine.ini` overrides work the same as natively.
+- **Admin tools and profiles:** `admins`, `whitelist`, `classes`, `profile` and `preset` edit the host
+  `server.conf`. Live RCON changes go through the running container.
+- **Plugins:** plugins run on the host, next to the launcher. They reach RCON on `127.0.0.1` and copy backups
+  out of the container (offsite-backup).
+
 ## Volume layout
 
 ```

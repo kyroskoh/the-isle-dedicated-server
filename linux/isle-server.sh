@@ -867,7 +867,8 @@ docker_require() {
 }
 
 dc() {  # docker compose bound to this repo and the host server.conf
-  ISLE_CONF_FILE="$ISLE_CONF" docker compose --project-directory "$REPO_DIR" \
+  local ovr; ovr="$(overrides_dir)"; mkdir -p "$ovr" 2>/dev/null || true
+  ISLE_CONF_FILE="$ISLE_CONF" ISLE_OVERRIDES_DIR="$ovr" docker compose --project-directory "$REPO_DIR" \
     -f "$REPO_DIR/docker-compose.yml" --env-file "$ISLE_CONF" "$@"
 }
 

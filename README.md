@@ -19,6 +19,9 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 
 - **One config for both OSes.** `config/server.conf` produces `Game.ini` and `Engine.ini` for you.
 - **Native or Docker, same launcher.** Set `RUNTIME=docker` (or pass `--docker` / `-Runtime Docker`) and the same commands and `.bat` files manage a container instead.
+- **Every Game.ini / Engine.ini key** through override files, an annotated key reference, **7 profiles** (realism, casual, hardcore-pvp, ...), **22 stackable presets**, and **roster presets**.
+- **Admin, whitelist and roster commands** (`admins`, `whitelist`, `classes`, `ai-classes`) with SteamID and class validation. Whitelist and roster changes apply live over RCON.
+- **Plugin manager** with search, install, update and presets (base, recommended, full). First-party plugins: scheduled restart countdown, Discord notifications, off-site backups, welcome announcement. Third-party catalogs must be SHA-256-pinned. See [PLUGINS.md](PLUGINS.md).
 - **Config validation.** `check` catches bad ports, typos in true/false values, a missing RCON password and malformed SteamIDs before the server launches.
 - **Installers with two modes, native or Docker** (you choose, or pick at the prompt). They set up dependencies, SteamCMD, the server (Steam app `412680`, branch `evrima`), firewall rules and a boot-time service, or a container. Re-run them to update or to switch modes. **Uninstall lets you choose** what to keep: everything (default), everything except the re-downloadable game files, no worlds, or nothing. A later reinstall in either mode picks it up again, importing it from the other mode if needed. `--purge` wipes everything.
 - **Launchers** for start, stop, restart, status, logs and a console mode.
@@ -83,6 +86,10 @@ Then forward these ports on your router or cloud firewall:
 | Uninstall: keep / choose / purge | `sudo ./linux/install.sh --uninstall` (asks), `--keep-data`, `--remove-game-files`, `--remove-worlds`, `--purge` | `Install.bat -Uninstall` (asks), `-KeepData`, `-RemoveGameFiles`, `-RemoveWorlds`, `-Purge` |
 | RCON announce | `isle-server rcon announce "Restart in 5 min"` | `IsleServer.ps1 Rcon -RconArgs announce,'Restart in 5 min'` |
 | Check the config | `isle-server check` | `IsleServer.ps1 Check` |
+| Apply a profile / presets | `isle-server profile apply realism`, `isle-server preset apply ai-low short-nights` | `Manage.bat Profile apply realism` |
+| Admins / whitelist | `isle-server admins add <id>`, `isle-server whitelist add <id>` | `Manage.bat Admins add <id>`, `Manage.bat Whitelist add <id>` |
+| Playable roster | `isle-server classes preset carnivores`, `isle-server classes add Triceratops` | `Manage.bat Classes preset carnivores` |
+| Plugins | `isle-server plugins preset recommended` | `Manage.bat Plugins preset recommended` |
 | Re-generate ini | `isle-server configure` | `IsleServer.ps1 Configure` |
 | Paths & settings | `isle-server info` | `IsleServer.ps1 Info` |
 | Script version | `isle-server version` | `IsleServer.ps1 Version` |
@@ -101,6 +108,12 @@ windows/Install.ps1 (.bat)   Elevated installer: VC++ runtime, SteamCMD, server,
 windows/IsleServer.ps1       Manager with the same commands as the Linux script
 windows/*.bat                Double-click launchers (Start, Stop, Restart, Update, Backup, ...)
 tools/isle_rcon.py           Cross-platform Evrima RCON client
+tools/isle_plugins.py        Plugin manager (+ tools/isle_sdk.py for plugin authors)
+plugins/                     Plugin catalog and first-party plugins
+config/profiles|presets/     Play-style profiles and stackable presets
+config/rosters/, classes.txt Roster presets and known class names
+config/overrides/            Your Game.ini / Engine.ini overrides (examples in config/examples/)
+config/reference/            Annotated Game.ini / Engine.ini key reference
 docker/                      Dockerfile, entrypoint and exec wrapper
 docker-compose.yml           Compose service (ports, volume, env settings)
 ```
@@ -109,6 +122,7 @@ docker-compose.yml           Compose service (ports, volume, env settings)
 
 - [INSTALL.md](INSTALL.md): step-by-step installation, manual installs, and uninstalling
 - [DOCKER.md](DOCKER.md): running in Docker / Docker Compose
+- [PLUGINS.md](PLUGINS.md): the plugin manager, first-party plugins, writing plugins, third-party catalogs
 - [CONFIGURATION.md](CONFIGURATION.md): every `server.conf` key and the `Game.ini` key it maps to
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): common problems and fixes
 - [PRD.md](PRD.md): product requirements, plan and traceability (start here before contributing)

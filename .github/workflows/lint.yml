@@ -13,9 +13,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck
-        run: shellcheck -x linux/*.sh
+        run: shellcheck -x linux/*.sh tests/*.sh
       - name: Python syntax
-        run: python3 -m py_compile tools/isle_rcon.py
+        run: python3 -m py_compile tools/*.py plugins/available/*/plugin.py tests/test_plugins.py
+      - name: JSON catalogs and manifests
+        run: for f in plugins/catalog.json plugins/available/*/plugin.json; do python3 -m json.tool "$f" >/dev/null || exit 1; done
+      - name: Config tools (overrides, profiles, presets, admins, whitelist, roster)
+        run: bash tests/test_config_tools.sh
+      - name: Plugin manager tests
+        run: python3 -m unittest -v tests/test_plugins.py
       - name: Render config with a fake server
         run: |
           set -e
@@ -213,6 +219,27 @@ jobs:
           $env:ISLE_RUNTIME = 'podman'
           .\windows\IsleServer.ps1 Status -ConfigPath $conf
           if ($LASTEXITCODE -ne 1) { Write-Host 'accepted RUNTIME=podman'; exit 1 }
+      - name: Config tools (PowerShell 5.1)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests\test_config_tools.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Plugin manager tests (Windows Python)
+        shell: powershell
+        run: |
+          python -m unittest -v tests\test_plugins.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Plugins via IsleServer.ps1
+        shell: powershell
+        run: |
+          $conf = Join-Path $env:RUNNER_TEMP 'plugins.conf'
+          (Get-Content config\server.conf.example) -replace '^RCON_PASSWORD=$', 'RCON_PASSWORD=x' | Set-Content $conf
+          .\windows\IsleServer.ps1 Plugins list -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\windows\IsleServer.ps1 Plugins install offsite-backup -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\windows\IsleServer.ps1 Plugins info offsite-backup -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Restore accepts .zip and .tar.gz (native)
         shell: powershell
         run: |
