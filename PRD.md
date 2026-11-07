@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Document version** | 1.2 |
-| **Product version** | 1.2.0 (released) |
+| **Document version** | 1.3 |
+| **Product version** | 1.3.0 (planned), 1.2.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -78,6 +78,7 @@ cover ongoing operation or offer a single workflow for both Windows and Linux.
 | US-7 | P1/P2 | be told clearly when a setting is wrong | I don't wonder why the server isn't listed |
 | US-8 | P3 | use the same commands on Windows and Linux | my runbooks work on both |
 | US-9 | P3 | uninstall cleanly while keeping my data | I can migrate or rebuild safely |
+| US-10 | P1/P2 | use the **same launcher commands and `server.conf`** whether the server runs natively or in Docker | I can switch runtimes without learning a second workflow |
 
 ## 5. Platform support
 
@@ -207,6 +208,19 @@ Priority: **M** = must, **S** = should, **C** = could.
 | DKR-09 | S | Backups | `isle-server backup` writes to `/data/backups`. The compose docs show a host cron example |
 | DKR-10 | M | Game updates without rebuilding the image | A container restart updates the game (`UPDATE_ON_START`) |
 
+### 6.11 Launcher runtime modes (LCH)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| LCH-01 | M | `RUNTIME=native\|docker` setting in `server.conf` (default `native`) | `check` rejects any other value |
+| LCH-02 | M | Per-command override | Linux: `isle-server.sh --docker\|--native <cmd>` or `ISLE_RUNTIME`. Windows: `-Runtime Docker\|Native` or `ISLE_RUNTIME`. Precedence: flag > env > config |
+| LCH-03 | M | Same commands in both modes (Linux and Windows launchers, so `.bat` files work too) | In docker mode: install = build image + create container; start = `compose up -d` (applies config changes); stop, restart, status (exit 0/3), run (foreground), logs [-f], update/validate (refuse while running, then rebuild the image + SteamCMD in a one-off container), configure, backup, restore, rcon, save, check, info, version |
+| LCH-04 | M | One config file drives the container | The host `server.conf` goes to the container through compose `env_file` and `--env-file` (ports). Path keys are forced to `/data/...` inside the container. The container always runs its own manager in native mode |
+| LCH-05 | M | Secrets stay on the host | In docker mode the launcher generates the RCON password into the **host** `server.conf`, so it's stable across restarts and visible to the admin |
+| LCH-06 | M | Clear errors | Missing Docker / compose v2 / daemon gives one actionable message and exit 1. Native-only commands (`Firewall`, `InstallService` on Windows) still work. The root check is skipped in docker mode |
+| LCH-07 | M | Installers have a docker mode | Linux `install.sh --docker`: checks Docker, enables the daemon at boot, sets `RUNTIME=docker`, builds. Windows `Install.ps1 -Docker`: checks Docker Desktop (Linux containers), sets `RUNTIME=docker`, builds. No SteamCMD, service user or scheduled task in this mode |
+| LCH-08 | S | Prebuilt images | `DOCKER_BUILD=false` + `DOCKER_IMAGE=<ref>` uses an existing or registry image instead of building |
+
 ## 7. CLI contract
 
 | Command | Linux (`isle-server.sh`) | Windows (`IsleServer.ps1`) | Exit codes |
@@ -225,8 +239,9 @@ Priority: **M** = must, **S** = should, **C** = could.
 | info / version / help | ✅ | ✅ | 0 |
 | firewall / service management | `install.sh` | `Firewall`, `RemoveFirewall`, `InstallService`, `RemoveService` | 0 / 1 |
 
-In Docker every Linux command is available as `docker compose exec theisle isle-server <command>`.
-The container lifecycle (`docker compose up -d`, `stop`, `restart`, `logs -f`) replaces start, stop, restart and logs.
+With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** drive the Docker container
+(§6.11). Inside a container every Linux command is also available as
+`docker compose exec theisle isle-server <command>`.
 
 ## 8. Non-functional requirements
 
@@ -274,6 +289,7 @@ The container lifecycle (`docker compose up -d`, `stop`, `restart`, `logs -f`) r
 | Job | Checks |
 |---|---|
 | linux (ubuntu-latest) | ShellCheck. Python compile. Fake-server smoke test: `version`, `check`, `configure`, `start`, `status`, `stop`, `backup`. `check` must fail on a bad port. `update` must fail while running |
+| launcher-docker (ubuntu-latest) | Build the image. Seed a fake server. With `RUNTIME=docker` via the Linux launcher: `install`, `start`, `status` = 0, the host `server.conf` setting reaches `Game.ini`, `backup`, `update` refused while running, `stop`, `status` = 3, `restore`, `start` again |
 | docker (ubuntu-latest) | hadolint. `docker build`. Run the container with a fake server binary in `/data` and `UPDATE_ON_START=false`. Assert: env override reaches `Game.ini`, health turns `healthy`, `exec isle-server status` returns 0, `docker stop` exits cleanly within the grace period, data survives a new container. A bad env value (`GAME_PORT=99999`) makes the container exit non-zero |
 | windows (windows-latest) | PS 5.1 `Parser::ParseFile` on every `.ps1`. PSScriptAnalyzer (Error). Smoke test: `Version`, `Check`, `Configure`, `Info`, `Backup`. `Check` must fail on a bad port |
 
@@ -300,6 +316,7 @@ The container lifecycle (`docker compose up -d`, `stop`, `restart`, `logs -f`) r
 | M5 Hardening (v1.1.0) | CFG-05 config validation, UPD-03 on Linux, CLI-02 help completeness, CLI-03 version | ✅ Done (v1.1.0) |
 | M6 Field validation | §10.2 checklist on each Tier-1 OS | ⏳ Planned. Needs real hosts |
 | M7 Docker (v1.2.0) | DKR-01 – DKR-10: Dockerfile, entrypoint, compose file, CI job, DOCKER.md | ✅ Done (v1.2.0). Full image build verified in CI only |
+| **M8 Launcher runtime modes (v1.3.0)** | **LCH-01 – LCH-08**: native/docker in both launchers and installers, compose `env_file`, CI job | 🔜 In progress |
 
 ## 12. Traceability matrix
 
@@ -335,6 +352,12 @@ The container lifecycle (`docker compose up -d`, `stop`, `restart`, `logs -f`) r
 | DKR-06 | Dockerfile `HEALTHCHECK` | CI (healthy) | Done (v1.2) |
 | DKR-07 | `docker/isle-server` wrapper | CI (`exec isle-server status`) | Done (v1.2) |
 | DKR-08/09/10 | `docker-compose.yml`, DOCKER.md | Review, manual §10.2-8 | Done (v1.2) |
+| LCH-01/02 | `resolve_runtime` (Linux), `Get-Runtime` (Windows), `check_config`/`Test-ServerConfig` | CI (bad value rejected) | **Planned v1.3** |
+| LCH-03 | `docker_*` dispatch in `isle-server.sh`, `Invoke-Docker*` in `IsleServer.ps1` | CI launcher-docker job (Linux), parser (Windows) | **Planned v1.3** |
+| LCH-04 | `docker-compose.yml` `env_file`, entrypoint path/runtime forcing | CI launcher-docker (setting reaches Game.ini) | **Planned v1.3** |
+| LCH-05/06 | launchers | CI, review | **Planned v1.3** |
+| LCH-07 | `install.sh --docker`, `Install.ps1 -Docker` | Manual | **Planned v1.3** |
+| LCH-08 | compose `image:`, `--no-build` | CI (local image, `DOCKER_BUILD=false`) | **Planned v1.3** |
 
 ## 13. Risks and mitigations
 
