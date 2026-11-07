@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.4 |
-| **Product version** | 1.6.0 (released) |
+| **Product version** | 1.7.0 (planned), 1.6.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -54,7 +54,7 @@ cover ongoing operation or offer a single workflow for both Windows and Linux.
 
 - Web panel or GUI
 - Kubernetes manifests or Helm charts (the Docker image (§6.10) can be used as a base)
-- Mod or workshop management
+- Game mod/workshop management. Evrima has no official mod or workshop support (as far as known), so no mod catalog ships. The plugin manager (§6.13) handles toolkit plugins and user-supplied catalogs/files
 - Treating the Legacy branch as a target (it works with `STEAM_BRANCH=` but isn't tested)
 - ARM or musl (Alpine) hosts. The game server binary is x86_64 glibc only
 - Several server instances on one host (see §15)
@@ -81,6 +81,9 @@ cover ongoing operation or offer a single workflow for both Windows and Linux.
 | US-10 | P1/P2 | use the **same launcher commands and `server.conf`** whether the server runs natively or in Docker | I can switch runtimes without learning a second workflow |
 | US-11 | P1/P2 | choose native or Docker when I install, and switch later by re-running the installer | I'm not locked into my first choice |
 | US-12 | P1/P2/P3 | uninstall and later reinstall (or wipe everything and start fresh) | a broken or abandoned setup can always be recovered |
+| US-14 | P2/P3 | set **any** `Game.ini`/`Engine.ini` key and start from ready-made profiles and presets | I can run a realism, casual, PvP or private server without hand-writing ini files |
+| US-15 | P2 | manage admins, the whitelist and the playable roster with commands | moderation doesn't mean editing files by hand, and live changes apply without a restart where the game allows |
+| US-16 | P2/P3 | search, install and manage plugins (scheduled restarts, Discord alerts, off-site backups) with presets | common server chores are one command away |
 | US-13 | P1/P2 | choose at uninstall what to keep and what to delete (game files, worlds, backups, settings) | I can free disk space without losing my world, or wipe only what I want |
 
 ## 5. Platform support
@@ -232,6 +235,32 @@ Priority: **M** = must, **S** = should, **C** = could.
 | LCH-07 | M | Installers have a docker mode | Linux `install.sh --docker`: checks Docker, enables the daemon at boot, sets `RUNTIME=docker`, builds. Windows `Install.ps1 -Docker`: checks Docker Desktop (Linux containers), sets `RUNTIME=docker`, builds. No SteamCMD, service user or scheduled task in this mode |
 | LCH-08 | S | Prebuilt images | `DOCKER_BUILD=false` + `DOCKER_IMAGE=<ref>` uses an existing or registry image instead of building |
 
+### 6.12 Server configuration: ini overrides, profiles, presets, admin tools (CFX)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| CFX-01 | M | **Any ini key** | `config/overrides/Game.ini` and `config/overrides/Engine.ini` (any `[Section]` / `Key=Value`) are merged into the generated files. Keys in an override replace every generated line of that key in that section (repeat a key for lists). New keys and sections are appended. Works natively and in Docker (directory mounted read-only) |
+| CFX-02 | M | **Reference** | `config/reference/Game.ini.md` and `Engine.ini.md` list every known key with section, type, default, the `server.conf` key (if any) and a description. Entries are marked *community-documented* where not confirmed |
+| CFX-03 | S | More first-class keys | Optional `server.conf` keys written only when set: region spawning (`bUseRegionSpawning`, `bUseRegionSpawnCooldown`, `RegionSpawnCooldownTimeSeconds`), weather intervals, `NetServerMaxTickRate` |
+| CFX-04 | M | **Profiles** | `config/profiles/*.conf` (vanilla, realism, casual, hardcore-pvp, friends-private, sandbox, performance). `profile list\|show <name>\|apply <name>`: apply writes the profile's keys into `server.conf` after a timestamped backup and validates with `check` |
+| CFX-05 | M | **Presets** | `config/presets/*.conf`, small stackable changes (e.g. ai-off, fast-growth, humans-on, no-migration, short-nights, whitelist-on). `preset list\|show\|apply <a> [<b> ...]` applied left to right |
+| CFX-06 | M | **Admins** | `admins list\|add <id...>\|remove <id...>`. SteamID64 validated (17 digits, `7656119`), de-duplicated, saved to `ADMIN_STEAM_IDS`. Takes effect after restart (the game has no RCON for admins) |
+| CFX-07 | M | **Whitelist** | `whitelist list\|add\|remove <id...>\|on\|off`. Saved to `WHITELIST_IDS` / `WHITELIST_ENABLED`, and pushed live with RCON (`addwhitelist`, `removewhitelist`, `togglewhitelist`) when the server is running |
+| CFX-08 | M | **Playable roster** | `classes list\|known\|set <c...>\|add\|remove\|reset\|preset <name>` for `ALLOWED_CLASSES`, and `ai-classes` the same for `DISABLED_AI_CLASSES`. Names checked against `config/classes.txt` (unknown names warn, so new dinosaurs still work). Roster presets in `config/rosters/*.txt`. Live push with RCON `updateplayables` when running |
+| CFX-09 | M | Parity | Same commands in `isle-server.sh`, `IsleServer.ps1` (`Admins`, `Whitelist`, `Classes`, `AIClasses`, `Profile`, `Preset` with `-Items`) and in both runtimes (they edit the host `server.conf`; live RCON goes through the container) |
+
+### 6.13 Plugins (PLG)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| PLG-01 | M | **Plugin manager** | `plugins list\|search <text>\|info <name>\|install <name\|path\|url#sha256>\|remove\|enable\|disable\|update [name]\|preset <base\|recommended\|full>\|run <name> [args]\|config <name> [KEY=VALUE]\|sources [add\|remove <url>]`. Shared Python tool (`tools/isle_plugins.py`, stdlib only) used by both launchers and both runtimes |
+| PLG-02 | M | **Plugin format** | A folder with `plugin.json` (name, version, description, hooks, commands, settings with defaults) and Python entry points. Settings live in `config/plugins/<name>.conf` (mode 600) |
+| PLG-03 | M | **Hooks** | The launcher runs enabled plugins' hooks on `post-start`, `pre-stop`, `post-stop`, `post-backup` and `post-update`, with `ISLE_EVENT`, `ISLE_CONF`, `ISLE_LAUNCHER`, `ISLE_RUNTIME` and the plugin's settings in the environment. A failing hook warns and never blocks the server |
+| PLG-04 | M | **First-party plugins** | `restart-countdown` (RCON announcements, then restart), `discord-notify` (webhook on lifecycle events), `offsite-backup` (copy backups to a folder/NAS, with retention), `welcome-announcer` (RCON message after start). Catalog presets: base = restart-countdown; recommended = base + discord-notify + offsite-backup; full = all |
+| PLG-05 | M | **Third-party sources are safe by default** | Extra catalogs are added explicitly. Remote archives need a SHA-256 (catalog entry or `url#sha256`) and are refused on a mismatch. Archive members with absolute paths or `..` are refused. Installing third-party code prints a warning that plugins run with the server user's rights |
+| PLG-06 | S | **File add-ons** | `"type": "files"` entries copy files into the server folder (for example `TheIsle/Content/Paks/~mods`). Documented as **untested with Evrima**, which has no official mod support |
+| PLG-07 | M | Tests | `tests/test_plugins.py` (unittest, offline: local HTTP server for remote installs, good and bad hashes, path traversal) and `tests/test_config_tools.sh` (overrides, profiles, presets, admins, whitelist, classes). Windows CI runs the PowerShell equivalents |
+
 ## 7. CLI contract
 
 | Command | Linux (`isle-server.sh`) | Windows (`IsleServer.ps1`) | Exit codes |
@@ -333,6 +362,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M9 Installer modes & reinstall (v1.4.0) | INS-13 – INS-18: mode prompt and flags, install state, safe mode switching, uninstall/reinstall/purge, fixed compose names, CI reinstall cycle | ✅ Done (v1.4.0). Linux cycle verified locally (no systemd) and in CI. Windows installer covered by CI for arguments, uninstall and purge only |
 | M10 Reinstall with retained data (v1.5.0) | INS-19: import retained worlds across modes on reinstall, both installers, CI | ✅ Done (v1.5.0). Linux verified by the cycle test. Windows import paths parse-checked only (they need Docker Desktop with Linux containers) |
 | M11 Uninstall data choices (v1.6.0) | INS-20: keep/remove per data category, menu, safety backup, both installers, CI | ✅ Done (v1.6.0). Linux verified by the cycle test (70 checks). Windows native paths covered by Windows CI; Windows Docker-volume paths parse-checked only |
+| **M12 Config tools & plugins (v1.7.0)** | **CFX-01 – CFX-09, PLG-01 – PLG-07** | 🔜 In progress |
 
 ## 12. Traceability matrix
 
@@ -353,6 +383,9 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | INS-18 | `docker-compose.yml` `name:` + volume `name:` | CI | Done (v1.4) |
 | INS-19 | `install.sh` (`volume_has_world`, `export_volume_world`, `native_has_world`), `Install.ps1` equivalents | CI (Linux cycle steps 4-8 check world markers), manual (Windows) | Done (v1.5) |
 | INS-20 | `install.sh` (`choose_removals`, `remove_native_data`, `remove_docker_data`, `safe_rm`), `Install.ps1` equivalents | CI (Linux cycle: each flag, menu via a pseudo-terminal, safety backup, reinstall after each), Windows CI (flag validation, refusal) | Done (v1.6) |
+| CFX-01 – CFX-03 | `merge_ini` (Linux), `Merge-IniOverrides` (Windows), compose overrides mount, `config/reference/` | `tests/test_config_tools.sh`, Windows CI | **Planned v1.7** |
+| CFX-04 – CFX-09 | `cmd_profile`/`cmd_preset`/`cmd_list_edit` (Linux), `Invoke-ProfileCommand`/`Invoke-ListCommand` (Windows), `config/profiles|presets|rosters|classes.txt` | `tests/test_config_tools.sh`, Windows CI | **Planned v1.7** |
+| PLG-01 – PLG-07 | `tools/isle_plugins.py`, `plugins/`, launcher hook calls | `tests/test_plugins.py` | **Planned v1.7** |
 | CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |
 | CFG-03/04 | `render_*_ini`/`configure`, `Get-*Ini`/`Set-ServerConfig` | CI smoke (grep sections) | Done |
 | CFG-05 | `check_config` / `Test-ServerConfig`, called by configure/run/start/install | CI smoke (positive + negative) | Done (v1.1) |
@@ -402,6 +435,8 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | Q2 | Section holding `AdminsSteamIDs`/`WhitelistIDs` | Written to both `TIGameSession` and `TIGameStateBase` | Confirm on a live server (M6) |
 | Q3 | RCON command bytes | Community-documented values | Confirm on a live server (M6) |
 | Q4 | Does Evrima need TCP on the game port? | Opened to be safe | Confirm (M6), then close it if not needed |
+| Q6 | Does Evrima load third-party `.pak` files on a dedicated server? | Unknown. Assumed **no** (no official mod support). `files` add-ons are marked untested | Confirm with the developers / a live server |
+| Q7 | Exact current names of the Evrima playable classes and of the newer Game.ini keys | From community documentation, editable in `config/classes.txt` / overrides | Confirm against the current patch (M6) |
 | Q5 | Does the server register the right public address with EOS from Docker bridge networking? | Yes, when host port = container port | Confirm (M6). Fallback: `network_mode: host` |
 
 ## 15. Future (v1.2+)
