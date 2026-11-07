@@ -2,117 +2,330 @@
 
 | | |
 |---|---|
-| **Status** | v1.0.0, released |
+| **Document version** | 1.1 |
+| **Product version** | 1.1.0 (planned), 1.0.0 (released) |
+| **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
 
-## 1. Summary
+This PRD defines **what** the toolkit must do and **how we know it's done**. All code, docs and
+tests trace back to a requirement ID here (see [§12 Traceability](#12-traceability-matrix)).
+Change the PRD first, then the code.
 
-A free, open-source toolkit that turns a fresh Windows or Linux machine into a working
-**The Isle – Evrima** dedicated server in a few minutes. It also covers the day-two work:
-updates, restarts, crash recovery, backups and admin commands.
+---
 
-## 2. Problem
+## 1. Overview
 
-Hosting Evrima by hand means:
+A free, open-source toolkit that turns a clean Windows or Linux machine into a working
+**The Isle – Evrima** dedicated server with one command. It then keeps the server running:
+updates, restarts, crash recovery, backups and admin (RCON) commands, all driven by one shared
+configuration file.
 
-- installing SteamCMD and the right 32-bit libraries, which differ on every Linux distro
-- knowing the app ID (`412680`), the `evrima` beta branch, and that `steamclient.so` must go in `~/.steam/sdk64`
-- writing `Game.ini` and `Engine.ini` from scratch, including the EOS credentials the server needs to appear in the browser
-- opening the right ports (UDP game port, TCP queue port, and RCON kept private)
-- keeping the server running through crashes and reboots, and updating it after every patch
-- stopping it without losing player progress
+## 2. Problem statement
 
-Community guides cover the first run but not ongoing operation, and most target only one OS.
+Hosting Evrima by hand means you have to:
 
-## 3. Goals
+1. Install SteamCMD and the 32-bit runtime libraries it needs. Package names differ on every Linux distro.
+2. Know the Steam app ID (`412680`) and the `evrima` beta branch, and know that Linux needs `steamclient.so` in `~/.steam/sdk64`.
+3. Write `Game.ini` and `Engine.ini` from scratch, including the Epic Online Services (EOS) credentials
+   the server needs to appear in the in-game browser.
+4. Open the right ports: UDP game port and TCP queue port public, RCON private.
+5. Keep the process alive through crashes and reboots, and update it after every game patch.
+6. Stop it without losing player progress.
 
-| # | Goal | Measure |
+Community guides (for example the XGamingServer Evrima guide) cover the first run on one OS. They don't
+cover ongoing operation or offer a single workflow for both Windows and Linux.
+
+## 3. Goals and non-goals
+
+### 3.1 Goals
+
+| ID | Goal | Success metric |
 |---|---|---|
-| G1 | One-command install on supported OSes | Installer finishes without manual steps on a clean VM |
-| G2 | Same configuration on both platforms | One `server.conf` drives Windows and Linux |
-| G3 | Survives crashes and reboots | Service auto-starts at boot and restarts after a crash |
-| G4 | No progress loss on routine stop/update | RCON `save` before every scripted stop or backup |
-| G5 | Secure by default | Non-root/non-admin runtime account, RCON not exposed, random RCON password |
-| G6 | Few dependencies | Bash + coreutils on Linux; built-in PowerShell 5.1 on Windows; Python only for RCON |
+| G1 | One-command install | On a clean VM of each Tier-1 OS (§5), the installer finishes with no manual steps and the server reaches the "listening" state |
+| G2 | One configuration for both OSes | The same `server.conf` produces equivalent `Game.ini` and `Engine.ini` on Windows and Linux |
+| G3 | Unattended operation | The server starts at boot and is back within 60 s of a crash |
+| G4 | No progress loss on routine operations | Every scripted stop, restart, update and backup asks the server to save via RCON first |
+| G5 | Secure by default | Runs without root/admin rights, RCON not exposed, random RCON password, config readable only by its owner |
+| G6 | Few dependencies | Linux: bash + coreutils. Windows: built-in PowerShell 5.1. Python 3 only for RCON features |
+| G7 | Fail early on bad config | Invalid settings are reported with the key name **before** the server launches |
 
-### Non-goals
+### 3.2 Non-goals (v1.x)
 
-- A web panel or GUI (a possible later addition)
-- Docker or Kubernetes images (the scripts work inside a glibc container, but no image ships)
+- Web panel or GUI
+- Shipping Docker or Kubernetes images (running inside a glibc container is fine)
 - Mod or workshop management
-- The Legacy branch as a first-class target (it works with `STEAM_BRANCH=` but isn't tested)
-- ARM or musl hosts (the game server binary doesn't support them)
+- Treating the Legacy branch as a target (it works with `STEAM_BRANCH=` but isn't tested)
+- ARM or musl (Alpine) hosts. The game server binary is x86_64 glibc only
+- Several server instances on one host (see §15)
 
-## 4. Users
+## 4. Users and user stories
 
-- **Hobby admin:** runs a server for friends on a home PC (Windows 10/11). Wants double-click scripts.
-- **Community admin:** rents a VPS (Ubuntu/Debian/Rocky). Wants systemd, backups and RCON.
-- **Hosting tinkerer:** runs Windows Server 2019–2025 or an unusual distro. Wants the scripts to stay understandable and changeable.
+| Persona | Context | Needs |
+|---|---|---|
+| **P1 Hobby admin** | Home PC, Windows 10/11, hosting for friends | Double-click install and start, no command line |
+| **P2 Community admin** | Rented VPS (Ubuntu, Debian or Rocky) with 50–150 players | systemd, backups, RCON, auto-update |
+| **P3 Infra tinkerer** | Windows Server 2019–2025 (incl. Core) or a less common distro | Readable, changeable scripts with no hidden behaviour |
 
-## 5. Functional requirements
-
-| ID | Requirement | Linux | Windows |
+| ID | As a… | I want to… | So that… |
 |---|---|---|---|
-| F1 | Install OS dependencies | `install.sh` (apt/dnf/yum/pacman/zypper) | VC++ runtime, optional Python via winget |
-| F2 | Install SteamCMD | `~/steamcmd` | `C:\TheIsle\steamcmd` |
-| F3 | Install and update the server (app 412680, configurable branch, optional validate, 3x retry) | ✅ | ✅ |
-| F4 | Generate `Game.ini` and `Engine.ini` from `server.conf` and keep a `.bak` | ✅ | ✅ |
-| F5 | Start, stop, restart, status, foreground run | ✅ | ✅ |
-| F6 | Auto-start at boot and auto-restart after a crash | systemd unit | Scheduled task + watchdog |
-| F7 | Graceful stop: RCON save, then SIGTERM/close, then force after timeout | ✅ | ✅ (save + close/kill) |
-| F8 | Firewall configuration | ufw / firewalld | Windows Defender Firewall |
-| F9 | Backups with retention, plus restore | tar.gz + systemd timer | zip + scheduled task |
-| F10 | RCON client | `tools/isle_rcon.py` | same |
-| F11 | Uninstall that keeps data | `--uninstall` | `-Uninstall` |
-| F12 | Idempotent re-runs that keep user config | ✅ | ✅ |
+| US-1 | P1 | double-click an installer and get a running server | I don't need to learn SteamCMD |
+| US-2 | P1/P2 | edit one well-commented file to change name, password, admins and gameplay | I don't hand-edit Unreal ini files |
+| US-3 | P2 | have the server start at boot and restart after a crash | it runs while I'm asleep |
+| US-4 | P2 | update the game with one command, or automatically on restart | patches don't need manual steps |
+| US-5 | P2 | take daily backups and restore one | a bad patch or griefing can be rolled back |
+| US-6 | P2 | send announcements, kicks, bans and saves from the shell | I can moderate without joining the game |
+| US-7 | P1/P2 | be told clearly when a setting is wrong | I don't wonder why the server isn't listed |
+| US-8 | P3 | use the same commands on Windows and Linux | my runbooks work on both |
+| US-9 | P3 | uninstall cleanly while keeping my data | I can migrate or rebuild safely |
 
-## 6. Non-functional requirements
+## 5. Platform support
 
-- **Compatibility:** Bash 4.2+ and GNU coreutils/findutils. Windows PowerShell 5.1, with no
-  PowerShell 7-only syntax. Script files are ASCII-only so 5.1 parses them correctly.
-- **Safety:** the config file is parsed, never `source`d or executed. The Linux manager refuses to run the game as root.
-  Config and ini files are created with mode `600` on Linux.
-- **Quality:** CI runs ShellCheck, the Windows PowerShell 5.1 parser, PSScriptAnalyzer, Python compile,
-  and a smoke test with a fake server binary on Ubuntu and Windows.
-- **Transparency:** every action is logged to the console with timestamps. There are no hidden downloads beyond
-  SteamCMD, the VC++ runtime and (optionally) Python.
+| Tier | Platform | Meaning |
+|---|---|---|
+| **1** | Windows 10 22H2, Windows 11, Windows Server 2019 / 2022 / 2025 (Desktop + Core) | Fully supported. Tested by CI on the parser, linter and smoke level, plus the manual checklist (§10.2) |
+| **1** | Ubuntu 22.04/24.04, Debian 12, Rocky/Alma 9, Fedora (current) | Fully supported. Tested by CI and the manual checklist |
+| **2** | Arch/Manjaro/EndeavourOS, openSUSE Leap/Tumbleweed, RHEL 8/9, Mint, Pop!_OS | Installer supports them. Tested by the community |
+| **3** | Other x86_64 glibc distros | Manager works. Install dependencies manually (INSTALL.md) |
+| ✗ | Alpine/musl, ARM, 32-bit | Rejected with a clear message |
 
-## 7. Architecture
+## 6. Functional requirements
+
+Priority: **M** = must, **S** = should, **C** = could.
+
+### 6.1 Installation (INS)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| INS-01 | M | Linux installer detects the distro and installs the dependencies (curl/wget, tar, python3, CA certs, 32-bit glibc/libgcc/libstdc++) | Works with apt, dnf, yum, pacman (turns on `[multilib]` and backs up `pacman.conf`) and zypper. A package that fails to install gives a warning, not a fatal error. Alpine exits with an explanation |
+| INS-02 | M | Linux installer creates an unprivileged service user (default `theisle`) | User exists with its own home. The server never runs as root |
+| INS-03 | M | Windows installer self-elevates and checks the OS | Shows a UAC prompt. Refuses 32-bit Windows. Warns on builds older than 17763 |
+| INS-04 | M | Windows installer installs the Visual C++ 2015-2022 x64 runtime if missing | Checks the registry first. Exit codes 0, 1638 and 3010 count as success |
+| INS-05 | M | Both install SteamCMD from Valve's official URL | Skipped if already present |
+| INS-06 | M | Both install the server: app `412680`, branch from config (default `evrima`) | Server executable present afterwards. SteamCMD retried up to 3 times |
+| INS-07 | M | Linux places `steamclient.so` in `~/.steam/sdk64` | File present after install and after every update |
+| INS-08 | M | Installers copy the scripts to a stable location and create `server.conf` from the example | Linux: `/home/<user>/theisle-scripts`. Windows: `<root>\scripts`. An existing `server.conf` is never overwritten |
+| INS-09 | M | Installers generate a random RCON password if none is set | 24 characters, alphanumeric, from a secure RNG |
+| INS-10 | S | Windows installer installs Python 3 with winget when it's available | Skipped with a warning when winget is missing (Server Core) |
+| INS-11 | M | Installers are idempotent | Re-running keeps the config and data and updates the scripts |
+| INS-12 | M | Installers have an uninstall mode | Removes services, tasks, sudoers rule and firewall rules. Keeps all files and the user |
+
+### 6.2 Configuration (CFG)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| CFG-01 | M | One `KEY=value` file shared by both OSes | Same parsing rules everywhere: `#` comments, optional quotes, CRLF tolerated, unknown keys ignored |
+| CFG-02 | M | The config file is **parsed, never executed** | No `source` or `Invoke-Expression`. Values with `$()` stay literal |
+| CFG-03 | M | Generate `Game.ini` (`TIGameSession`, `TIGameStateBase`, `Engine.GameSession`) and `Engine.ini` (`EpicOnlineServices`) | Output matches CONFIGURATION.md. List keys become one line per entry |
+| CFG-04 | M | `MANAGE_INI_FILES` switch | `true`: regenerate on each start and keep `.bak`. `false`: create only if missing |
+| CFG-05 | M | **Validate config before launch** (`check` command, also run automatically by `configure`, `run` and `start`) | Errors (non-zero exit, launch blocked) when: a port isn't 1–65535; game, queue and RCON ports collide; `MAX_PLAYERS` isn't a positive integer; a boolean isn't true/false/yes/no/1/0/on/off; `RCON_ENABLED=true` with an empty password; EOS keys are empty. Warnings when: an admin or whitelist ID isn't a 17-digit SteamID64; the server name is empty |
+| CFG-06 | S | Escape hatch for keys the scripts don't know | `EXTRA_GAME_SESSION_SETTINGS` (`|`-separated) and `EXTRA_ARGS` |
+| CFG-07 | M | Defaults for every key | An empty or missing key falls back to the documented default |
+| CFG-08 | M | Restrictive permissions | Linux `server.conf` and ini files use mode `600` |
+
+### 6.3 Server lifecycle (RUN)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| RUN-01 | M | `start` uses the service if one is installed, otherwise a background watchdog | Linux: `systemctl` (with sudo if needed) or `nohup` + PID files. Windows: scheduled task, or a minimized console |
+| RUN-02 | M | `run` runs in the foreground | Linux `exec`s the binary (systemd gets the real PID). Windows runs a watchdog loop |
+| RUN-03 | M | Watchdog restarts after a crash when `AUTO_RESTART=true` | Restart within 10 s. A stop flag prevents a restart after an intentional stop |
+| RUN-04 | M | Graceful `stop` | RCON save → SIGTERM (Linux) or close-window (Windows) → force kill after `STOP_TIMEOUT` |
+| RUN-05 | M | `status` with standard exit codes | 0 = running, 3 = not running |
+| RUN-06 | M | `logs` shows the server log, `-f` / `-Follow` tails it | Falls back to journald on Linux when there's no log file |
+| RUN-07 | M | Linux manager refuses to run the game as root | Overridable only with `ISLE_ALLOW_ROOT=1` |
+| RUN-08 | M | Raise the open-file limit on Linux | `ulimit -n` in the manager. `LimitNOFILE=100000` in the unit |
+
+### 6.4 Service and boot (SVC)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| SVC-01 | M | Linux systemd unit `theisle-server.service` | Enabled at boot, `Restart=on-failure`, runs as the service user, `ExecStop` saves via RCON |
+| SVC-02 | M | Windows scheduled task `TheIsleServer` | Runs at startup as `LOCAL SERVICE` by default (or `SYSTEM`), restarts on failure, no time limit |
+| SVC-03 | S | Linux sudoers rule so the service user can control only its own unit | Checked with `visudo -c` and removed if invalid |
+| SVC-04 | M | Fallback when there's no systemd | Installer warns. The manager's background watchdog works |
+
+### 6.5 Networking and firewall (NET)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| NET-01 | M | Open the game port (UDP+TCP) and the queue port (TCP) | Linux: ufw or firewalld when active, otherwise print the ports. Windows: Defender rules in one group |
+| NET-02 | M | RCON stays closed by default | Opened only when `FIREWALL_OPEN_RCON=true` |
+| NET-03 | S | Bind to one interface | `MULTIHOME_IP` → `-MultiHome=` |
+
+### 6.6 Updates (UPD)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| UPD-01 | M | `update` / `validate` commands | `validate` re-checks every file |
+| UPD-02 | M | Optional update on every start (`UPDATE_ON_START`) | If the update fails, the server starts on the existing build and logs a warning |
+| UPD-03 | M | **`update` / `validate` refuse to run while the server is running** (both OSes) | Clear error with exit 1. No partial updates under a live process |
+
+### 6.7 Backup and restore (BAK)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| BAK-01 | M | `backup` archives `TheIsle/Saved` (minus Logs/Crashes) plus `server.conf` | Linux `.tar.gz`, Windows `.zip`. Timestamped name |
+| BAK-02 | M | RCON save before backing up a running server | |
+| BAK-03 | M | Retention | Keeps the newest `BACKUP_RETENTION` archives. `0` keeps all |
+| BAK-04 | M | Scheduled daily backup | systemd timer / scheduled task at 05:00 |
+| BAK-05 | M | `restore` | Refuses while running. Moves current data to `Saved.pre-restore-<ts>` first |
+
+### 6.8 RCON (RCN)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| RCN-01 | M | Cross-platform client using only the standard library | Python 3.6+ on both OSes |
+| RCN-02 | M | Named commands plus `raw <byte>` | announce, directmessage, serverdetails, wipecorpses, updateplayables, ban, kick, playerlist, save, playerdata, whitelist toggles and add/remove, toggleglobalchat, togglehumans, toggleai, disableaiclasses, aidensity |
+| RCN-03 | M | Password never on the command line when called by the managers | Passed through the `ISLE_RCON_PASSWORD` environment variable |
+| RCN-04 | M | Manager wrappers `rcon` and `save` | `save` is a warning (not an error) when RCON or Python isn't available |
+
+### 6.9 CLI and usability (CLI)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| CLI-01 | M | The same command set on both OSes (§7) | Names match, case-insensitive on Windows |
+| CLI-02 | M | `help` lists **every** public command | Checked against the dispatcher in review |
+| CLI-03 | S | `version` command and a `VERSION` file | Prints the script version. `info` shows it too |
+| CLI-04 | M | `info` prints the resolved paths, ports and service state | |
+| CLI-05 | M | Double-click `.bat` launchers on Windows | Pause at the end unless `ISLE_NOPAUSE` is set. Pass the exit code through |
+| CLI-06 | M | Coloured, timestamped output. Colour only on a TTY | |
+
+## 7. CLI contract
+
+| Command | Linux (`isle-server.sh`) | Windows (`IsleServer.ps1`) | Exit codes |
+|---|---|---|---|
+| install | ✅ | ✅ `Install` | 0 / 1 |
+| update | ✅ | ✅ `Update` | 0 / 1 (also when running) |
+| validate | ✅ | ✅ `Validate` | 0 / 1 |
+| check | ✅ | ✅ `Check` | 0 ok/warnings, 1 errors |
+| configure | ✅ | ✅ `Configure` | 0 / 1 |
+| start / stop / restart | ✅ | ✅ | 0 / 1 |
+| status | ✅ | ✅ | 0 running, 3 stopped |
+| run | ✅ | ✅ `Run` | server exit code |
+| logs [-f] | ✅ | ✅ `Logs [-Follow]` | 0 / 1 |
+| backup / restore | ✅ | ✅ (`-Path`) | 0 / 1 |
+| rcon / save | ✅ | ✅ (`-RconArgs`) | RCON client code |
+| info / version / help | ✅ | ✅ | 0 |
+| firewall / service management | `install.sh` | `Firewall`, `RemoveFirewall`, `InstallService`, `RemoveService` | 0 / 1 |
+
+## 8. Non-functional requirements
+
+| ID | Area | Requirement |
+|---|---|---|
+| NFR-01 | Compatibility | Bash 4.2+, GNU coreutils/findutils. Windows PowerShell 5.1 with no PS7-only syntax |
+| NFR-02 | Encoding | `.ps1` files are ASCII-only. Line endings enforced by `.gitattributes` (LF for sh/py/conf, CRLF for ps1/bat) |
+| NFR-03 | Security | Least privilege (G5). Secrets never passed as process arguments by the managers. `server.conf` git-ignored |
+| NFR-04 | Reliability | SteamCMD retried 3 times. Watchdog restart. systemd `Restart=on-failure`. Task `RestartCount` |
+| NFR-05 | Observability | All actions logged with timestamps. Console output kept in `.isle-scripts/console.log` (Linux background mode) |
+| NFR-06 | Maintainability | Any new config key goes into both renderers + the example + CONFIGURATION.md (CONTRIBUTING.md) |
+| NFR-07 | Quality gates | ShellCheck clean, PS 5.1 parser clean, PSScriptAnalyzer (Error) clean, CI smoke tests pass |
+| NFR-08 | Transparency | The only downloads are SteamCMD, the VC++ runtime, Python (optional) and the game via SteamCMD |
+
+## 9. Architecture
 
 ```
-            config/server.conf  (KEY=VALUE, shared)
-                     |
-      +--------------+---------------+
-      |                              |
-linux/isle-server.sh          windows/IsleServer.ps1
-  | install/update -> steamcmd.sh   | install/update -> steamcmd.exe
-  | configure -> LinuxServer/*.ini  | configure -> WindowsServer/*.ini
-  | run (exec) <- systemd           | Run (watchdog loop) <- Scheduled Task
-  | start/stop (watchdog + pid)     | Start/Stop (task or window + pid)
-  | backup/restore (tar.gz)         | Backup/Restore (zip, robocopy)
-  +--------------+------------------+
-                 |
-          tools/isle_rcon.py  (save before stop, admin commands)
+                 config/server.conf  (KEY=VALUE, shared, parsed - never executed)
+                          |
+        +-----------------+------------------+
+        |                                    |
+ linux/install.sh (root, one-time)    windows/Install.ps1 (admin, one-time)
+   deps, user, firewall, systemd,       VC++, Python, firewall, scheduled
+   sudoers -> hands off to:             task, ACLs -> hands off to:
+        |                                    |
+ linux/isle-server.sh (service user)  windows/IsleServer.ps1 (LOCAL SERVICE / user)
+   check -> configure -> run/start      Check -> Configure -> Run/Start
+   update (steamcmd.sh)                 Update (steamcmd.exe)
+   backup/restore (tar.gz)              Backup/Restore (zip via robocopy)
+        |                                    |
+        +-----------------+------------------+
+                          |
+              tools/isle_rcon.py  (save before stop/backup, admin commands)
 ```
 
-Installers (`linux/install.sh`, `windows/Install.ps1`) handle privileged one-time setup: packages,
-user/ACLs, firewall, service registration. After that they hand over to the unprivileged manager.
+## 10. Verification plan
 
-## 8. Risks and mitigations
+### 10.1 Automated (GitHub Actions, `.github/workflows/lint.yml`)
 
-| Risk | Mitigation |
+| Job | Checks |
 |---|---|
-| Game update renames ini keys or RCON bytes | `EXTRA_GAME_SESSION_SETTINGS`, `MANAGE_INI_FILES=false`, `rcon raw`; documented in CONFIGURATION.md |
-| EOS credentials change | Exposed as `EOS_CLIENT_ID/SECRET` in server.conf |
-| SteamCMD is flaky | 3 retries with back-off; the existing build starts if an update fails |
-| Distro package names drift | Each package is installed separately with warnings, never fatal; manual fallback documented |
-| No graceful signal on Windows | RCON save before close/kill |
+| linux (ubuntu-latest) | ShellCheck. Python compile. Fake-server smoke test: `check`, `configure`, `start`, `status`, `stop`, `backup`. `check` must fail on a bad port |
+| windows (windows-latest) | PS 5.1 `Parser::ParseFile` on every `.ps1`. PSScriptAnalyzer (Error). Smoke test: `Check`, `Configure`, `Info`, `Backup`. `Check` must fail on a bad port |
 
-## 9. Future ideas
+### 10.2 Manual release checklist (per Tier-1 OS, real game server)
 
-- Discord webhook notifications (start, stop, crash, update available)
-- Scheduled restarts with in-game RCON countdown announcements
-- Update check that compares the Steam build ID and restarts only when needed
-- Docker image and docker-compose example
-- Multiple instances on one host (per-instance config and unit names)
+1. Clean VM → run the installer → the server appears in the in-game browser within 5 minutes.
+2. Join, change something in-world, run `stop` → the change survives `start`.
+3. Kill the server process → it's back within 60 s.
+4. Reboot → the server is running with nobody logged in.
+5. `backup`, then `restore` the archive → the world state matches.
+6. `rcon announce test` → the message shows in game.
+7. Uninstall → no services, tasks or firewall rules left. Data still present.
+
+## 11. Delivery plan
+
+| Milestone | Scope | Status |
+|---|---|---|
+| M0 Requirements | This PRD | ✅ Done |
+| M1 Linux core | INS-01/02/05–09/11/12, CFG-01–04/06–08, RUN-*, SVC-01/03/04, NET-*, UPD-01/02, BAK-* | ✅ Done (v1.0.0) |
+| M2 Windows core | INS-03–06/08–12, CFG-01–04/06/07, RUN-01–06, SVC-02, NET-*, UPD-01–03, BAK-* | ✅ Done (v1.0.0). Real-hardware run pending (§10.2) |
+| M3 RCON | RCN-* | ✅ Done (v1.0.0). Mock-tested only |
+| M4 Docs and CI | README, INSTALL, CONFIGURATION, TROUBLESHOOTING, SECURITY, CONTRIBUTING, CHANGELOG, LICENSE, CI | ✅ Done (v1.0.0) |
+| **M5 Hardening (v1.1.0)** | **CFG-05** config validation, **UPD-03** on Linux, **CLI-02** help completeness, **CLI-03** version | 🔜 In progress |
+| M6 Field validation | §10.2 checklist on each Tier-1 OS | ⏳ Planned. Needs real hosts |
+
+## 12. Traceability matrix
+
+| Req | Implementation | Verification | Status |
+|---|---|---|---|
+| INS-01 | `linux/install.sh` `install_deps` | Manual §10.2 | Done, field test pending |
+| INS-02 | `linux/install.sh` user section | Manual | Done |
+| INS-03 | `windows/Install.ps1` elevation + OS check | Parser CI, manual | Done, field test pending |
+| INS-04 | `IsleServer.ps1` `Install-VcRedist` | Manual | Done, field test pending |
+| INS-05/06 | `install_steamcmd`/`update_server`, `Install-SteamCmd`/`Update-Server` | Manual | Done, field test pending |
+| INS-07 | `isle-server.sh` `link_steamclient` | Manual | Done |
+| INS-08/09/11 | both installers | Manual | Done |
+| INS-10 | `Install.ps1` Python section | Manual | Done |
+| INS-12 | `install.sh --uninstall`, `Install.ps1 -Uninstall` | Manual | Done |
+| CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |
+| CFG-03/04 | `render_*_ini`/`configure`, `Get-*Ini`/`Set-ServerConfig` | CI smoke (grep sections) | Done |
+| CFG-05 | `check_config` / `Test-ServerConfig` | CI smoke (positive + negative) | **Planned v1.1** |
+| CFG-06/08 | renderers, `write_ini` chmod | Review | Done |
+| RUN-01–08 | `cmd_*` / `Invoke-*` | CI smoke (Linux start/stop), manual | Done |
+| SVC-01–04 | unit files in `install.sh`, `Install-ServerService` | Manual | Done |
+| NET-01–03 | `firewall_rules`, `Set-Firewall`, `server_args` | Manual | Done |
+| UPD-01/02 | `update_server`, `Update-Server`, `prepare_launch`/`Invoke-Run` | Manual | Done |
+| UPD-03 | Windows dispatcher (done). Linux `update`/`validate` | CI smoke (Linux), review | **Planned v1.1 (Linux)** |
+| BAK-01–05 | `cmd_backup`/`cmd_restore`, `Invoke-Backup`/`Invoke-Restore`, timers | CI smoke | Done |
+| RCN-01–04 | `tools/isle_rcon.py`, `cmd_rcon`/`cmd_save`, `Invoke-PyRcon` | Mock test, manual | Done, field test pending |
+| CLI-01/04/05/06 | managers, `.bat` launchers | Review | Done |
+| CLI-02 | Linux usage header is missing `validate` | Review | **Planned v1.1** |
+| CLI-03 | `VERSION` file, `version` commands | CI smoke | **Planned v1.1** |
+
+## 13. Risks and mitigations
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| A game patch renames ini keys or changes RCON bytes | Medium | Medium | `EXTRA_GAME_SESSION_SETTINGS`, `MANAGE_INI_FILES=false`, `rcon raw`. Documented |
+| EOS credentials rotate | Low | High (server not listed) | `EOS_CLIENT_ID`/`SECRET` in config. `check` errors when empty |
+| SteamCMD is flaky | High | Low | 3 retries. Start the existing build if the update fails |
+| Distro package names drift | Medium | Low | Per-package, non-fatal installs. Manual fallback in INSTALL.md |
+| No graceful exit signal for a detached Windows process | Certain | Medium | RCON save before close or kill |
+| Windows scripts not yet run on real hardware | — | Medium | CI parser, linter and smoke on windows-latest. M6 field validation |
+
+## 14. Assumptions and open questions
+
+| # | Item | Current assumption | Resolution |
+|---|---|---|---|
+| Q1 | Reference guide (xgamingserver.com) wasn't reachable when this was written | Values follow the commonly documented Evrima setup (app 412680, `evrima`, ports 7777/10000/8888) | Owner to compare with the guide. Changes go into `server.conf.example` |
+| Q2 | Section holding `AdminsSteamIDs`/`WhitelistIDs` | Written to both `TIGameSession` and `TIGameStateBase` | Confirm on a live server (M6) |
+| Q3 | RCON command bytes | Community-documented values | Confirm on a live server (M6) |
+| Q4 | Does Evrima need TCP on the game port? | Opened to be safe | Confirm (M6), then close it if not needed |
+
+## 15. Future (v1.2+)
+
+- Scheduled restarts with RCON countdown announcements (S)
+- Restart only when Steam reports a new build ID (S)
+- Discord webhook notifications for start, stop, crash and update (C)
+- Several instances per host: per-instance config, unit and task names (C)
+- Docker image and compose example (C)
