@@ -16,6 +16,7 @@ mkdir -p "$T/repo"
 (cd "$SRC" && tar --exclude=.git --exclude='config/server.conf' -cf - .) | (cd "$T/repo" && tar -xf -)
 R="$T/repo"
 export ISLE_CONF="$T/server.conf" ISLE_NO_SYSTEMD=1 ISLE_RUNTIME=native HOME="$T/home"
+export ISLE_ALLOW_ROOT=1   # lets the backup steps run when the test itself runs as root
 sed -e "s|^SERVER_DIR=|SERVER_DIR=$T/srv|" -e "s|^BACKUP_DIR=|BACKUP_DIR=$T/bk|" \
     -e 's|^RCON_PASSWORD=|RCON_PASSWORD=test-password|' -e 's|^UPDATE_ON_START=true|UPDATE_ON_START=false|' \
     "$R/config/server.conf.example" > "$ISLE_CONF"
@@ -104,6 +105,12 @@ echo "## validation"
 sed -i 's|^NET_TICK_RATE=.*|NET_TICK_RATE=fast|' "$ISLE_CONF"
 ck "bad NET_TICK_RATE rejected"   "! out check >/dev/null"
 sed -i 's|^NET_TICK_RATE=.*|NET_TICK_RATE=|' "$ISLE_CONF"
+
+echo "## plugins via the launcher (hooks fire on launcher actions)"
+ck "plugins list"                 "out plugins list | grep -q offsite-backup"
+ck "install + config"             "out plugins install offsite-backup >/dev/null && out plugins config offsite-backup DEST_DIR=$T/nas >/dev/null"
+ck "backup fires post-backup hook" "out backup >/dev/null && ls $T/nas/theisle-*.tar.gz >/dev/null 2>&1"
+ck "disabled plugin does not run" "rm -rf -- $T/nas && out plugins disable offsite-backup >/dev/null && out backup >/dev/null && [ ! -e $T/nas ]"
 
 if [[ $EUID -eq 0 ]] && id nobody >/dev/null 2>&1; then
   echo "## ownership"

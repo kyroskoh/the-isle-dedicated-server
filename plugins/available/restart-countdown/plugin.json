@@ -1,0 +1,17 @@
+{
+  "name": "restart-countdown",
+  "version": "1.0.0",
+  "description": "Announce a restart in-game (e.g. 15/10/5/1 min), save, then restart",
+  "author": "the-isle-dedicated-server",
+  "commands": {"run": "plugin.py"},
+  "settings": {
+    "WARNINGS": {"default": "15,10,5,1", "description": "Minutes before the restart at which to announce"},
+    "MESSAGE": {"default": "Server restart in {minutes} minute(s) - find a safe spot!", "description": "Announcement text ({minutes} is replaced)"},
+    "FINAL_MESSAGE": {"default": "Restarting now - back in a few minutes.", "description": "Last announcement before the restart"}
+  },
+  "usage": [
+    "isle-server plugins run restart-countdown           # countdown from the largest WARNINGS value",
+    "isle-server plugins run restart-countdown run 5     # 5-minute countdown",
+    "Schedule it, e.g. cron:  0 6 * * *  isle-server plugins run restart-countdown"
+  ]
+}
