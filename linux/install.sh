@@ -108,7 +108,7 @@ firewall_rules() {  # $1 = add | remove
     done
     ok "ufw: ${action} ${rules[*]}"
   elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    local r flag; [[ "$action" == add ]] && flag="--add-port" || flag="--remove-port"
+    local r flag="--remove-port"; [[ "$action" == add ]] && flag="--add-port"
     for r in "${rules[@]}"; do firewall-cmd --permanent "$flag=$r" >/dev/null 2>&1 || true; done
     firewall-cmd --reload >/dev/null
     ok "firewalld: ${action} ${rules[*]}"

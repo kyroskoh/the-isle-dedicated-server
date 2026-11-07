@@ -141,7 +141,7 @@ check_config() {
     fi
   fi
   v="$(cfg MAX_PLAYERS)"
-  [[ "$v" =~ ^[0-9]+$ ]] && (( 10#$v > 0 )) || errors+=("MAX_PLAYERS='$v' must be a positive integer")
+  if ! [[ "$v" =~ ^[0-9]+$ ]] || (( 10#$v < 1 )); then errors+=("MAX_PLAYERS='$v' must be a positive integer"); fi
   for k in "${BOOL_KEYS[@]}"; do
     v="$(cfg "$k")"
     [[ -z "$v" ]] && continue
@@ -398,7 +398,7 @@ sysctl_do() {
 }
 
 pid_alive() { [[ -n "${1:-}" ]] && kill -0 "$1" 2>/dev/null; }
-read_pid()  { [[ -f "$1" ]] && cat "$1" 2>/dev/null || true; }
+read_pid()  { if [[ -f "$1" ]]; then cat "$1" 2>/dev/null || true; fi; }
 
 cmd_run() {  # foreground; systemd ExecStart
   prepare_launch
@@ -480,10 +480,10 @@ cmd_stop() {
   log "Stopping server (timeout ${timeout}s)"
   # Unreal treats SIGTERM as a graceful exit request (SIGINT is ignored by
   # background jobs started from a non-interactive shell).
-  pid_alive "$spid" && kill -TERM "$spid" 2>/dev/null || true
+  if pid_alive "$spid"; then kill -TERM "$spid" 2>/dev/null || true; fi
   while { pid_alive "$spid" || pid_alive "$wpid"; } && (( t < timeout )); do sleep 1; t=$((t + 1)); done
   if pid_alive "$spid"; then warn "Graceful stop timed out - killing"; kill -KILL "$spid" 2>/dev/null || true; fi
-  pid_alive "$wpid" && kill -TERM "$wpid" 2>/dev/null || true
+  if pid_alive "$wpid"; then kill -TERM "$wpid" 2>/dev/null || true; fi
   rm -f "$STATE_DIR/server.pid" "$STATE_DIR/watchdog.pid"
   ok "Server stopped"
 }
@@ -549,7 +549,7 @@ Backup dir    : $BACKUP_DIR
 App / branch  : $(cfg STEAM_APP_ID) / $(cfg STEAM_BRANCH)
 Ports         : game $(cfg GAME_PORT)/udp, queue $(cfg QUEUE_PORT)/tcp, rcon $(cfg RCON_PORT)/tcp
 Server name   : $(cfg SERVER_NAME)
-systemd unit  : $(service_installed && echo "$ISLE_SERVICE (installed)" || echo "not installed")
+systemd unit  : $(if service_installed; then echo "$ISLE_SERVICE (installed)"; else echo "not installed"; fi)
 EOF
 }
 
