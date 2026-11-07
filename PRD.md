@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Document version** | 1.3 |
-| **Product version** | 1.3.0 (released) |
+| **Document version** | 1.4 |
+| **Product version** | 1.4.0 (planned), 1.3.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -79,6 +79,8 @@ cover ongoing operation or offer a single workflow for both Windows and Linux.
 | US-8 | P3 | use the same commands on Windows and Linux | my runbooks work on both |
 | US-9 | P3 | uninstall cleanly while keeping my data | I can migrate or rebuild safely |
 | US-10 | P1/P2 | use the **same launcher commands and `server.conf`** whether the server runs natively or in Docker | I can switch runtimes without learning a second workflow |
+| US-11 | P1/P2 | choose native or Docker when I install, and switch later by re-running the installer | I'm not locked into my first choice |
+| US-12 | P1/P2/P3 | uninstall and later reinstall (or wipe everything and start fresh) | a broken or abandoned setup can always be recovered |
 
 ## 5. Platform support
 
@@ -111,6 +113,12 @@ Priority: **M** = must, **S** = should, **C** = could.
 | INS-10 | S | Windows installer installs Python 3 with winget when it's available | Skipped with a warning when winget is missing (Server Core) |
 | INS-11 | M | Installers are idempotent | Re-running keeps the config and data and updates the scripts |
 | INS-12 | M | Installers have an uninstall mode | Removes services, tasks, sudoers rule and firewall rules. Keeps all files and the user |
+| INS-13 | M | **Installers offer both modes** | Linux `install.sh --native\|--docker`, Windows `Install.ps1 -Native\|-Docker` (and `Install.bat` with the same switches). With neither flag on an interactive terminal, ask: 1 = native (default), 2 = docker. Non-interactive defaults to native. The installer always writes the chosen `RUNTIME` into `server.conf` |
+| INS-14 | M | **Install state is recorded** | Linux `/etc/theisle-server/install.state`, Windows `<InstallRoot>\install-state.txt`: mode, scripts dir, user, version, date. Uninstall and mode switches read it |
+| INS-15 | M | **Switching modes is safe** | Installing docker over native stops and disables the native service/task. Installing native over docker stops and removes the container. Data is kept on both sides, and settings carry over (the previous `server.conf` seeds the new one). The installer prints how to move the world (backup → restore) |
+| INS-16 | M | **Reinstall after uninstall** | `uninstall` followed by `install` (same or other mode) succeeds with no manual cleanup and reuses kept data. Uninstall without a mode flag removes whatever is installed (both modes if both are present) |
+| INS-17 | M | **Purge** | `--uninstall --purge` / `-Uninstall -Purge` also deletes server files, backups, the docker volume, the scripts copy and (Linux) the service user. It asks for confirmation unless `--yes` / `-Yes` is given. After a purge, a reinstall starts from scratch |
+| INS-18 | M | **Stable Docker identity** | Compose project `theisle` and volume `theisle-data` are fixed names, so a reinstall from another folder or clone finds the same world |
 
 ### 6.2 Configuration (CFG)
 
@@ -293,6 +301,8 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | docker (ubuntu-latest) | hadolint. `docker build`. Run the container with a fake server binary in `/data` and `UPDATE_ON_START=false`. Assert: env override reaches `Game.ini`, health turns `healthy`, `exec isle-server status` returns 0, `docker stop` exits cleanly within the grace period, data survives a new container. A bad env value (`GAME_PORT=99999`) makes the container exit non-zero |
 | windows (windows-latest) | PS 5.1 `Parser::ParseFile` on every `.ps1`. PSScriptAnalyzer (Error). Smoke test: `Version`, `Check`, `Configure`, `Info`, `Backup`. `Check` must fail on a bad port |
 
+| installer-cycle (ubuntu-latest, root) | Native install (`--no-deps`, fake SteamCMD/server via `ISLE_TEST_FAKE_STEAMCMD`) → uninstall → reinstall → switch to docker → switch back → `--uninstall --purge --yes` → reinstall. Each step checks the state file, `RUNTIME`, and that only one mode is active |
+
 ### 10.2 Manual release checklist (per Tier-1 OS, real game server)
 
 1. Clean VM → run the installer → the server appears in the in-game browser within 5 minutes.
@@ -317,6 +327,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M6 Field validation | §10.2 checklist on each Tier-1 OS | ⏳ Planned. Needs real hosts |
 | M7 Docker (v1.2.0) | DKR-01 – DKR-10: Dockerfile, entrypoint, compose file, CI job, DOCKER.md | ✅ Done (v1.2.0). Full image build verified in CI only |
 | M8 Launcher runtime modes (v1.3.0) | LCH-01 – LCH-08: native/docker in both launchers and installers, compose `env_file`, CI job | ✅ Done (v1.3.0). Windows docker mode tested with PowerShell 7 on Linux; Docker Desktop field test pending (M6) |
+| **M9 Installer modes & reinstall (v1.4.0)** | **INS-13 – INS-18**: mode prompt and flags, install state, safe mode switching, uninstall/reinstall/purge, fixed compose names, CI reinstall cycle | 🔜 In progress |
 
 ## 12. Traceability matrix
 
@@ -331,6 +342,10 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | INS-08/09/11 | both installers | Manual | Done |
 | INS-10 | `Install.ps1` Python section | Manual | Done |
 | INS-12 | `install.sh --uninstall`, `Install.ps1 -Uninstall` | Manual | Done |
+| INS-13/14 | `install.sh` (`choose_mode`, `write_state`), `Install.ps1` (`Select-Mode`, `Write-InstallState`) | CI (non-interactive default, flags) | **Planned v1.4** |
+| INS-15 | `install.sh` `retire_native`/`retire_docker`, `Install.ps1` equivalents | CI (Linux switch cycle), manual | **Planned v1.4** |
+| INS-16/17 | uninstall paths in both installers | CI (Linux: install → uninstall → reinstall → purge → reinstall) | **Planned v1.4** |
+| INS-18 | `docker-compose.yml` `name:` + volume `name:` | CI | **Planned v1.4** |
 | CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |
 | CFG-03/04 | `render_*_ini`/`configure`, `Get-*Ini`/`Set-ServerConfig` | CI smoke (grep sections) | Done |
 | CFG-05 | `check_config` / `Test-ServerConfig`, called by configure/run/start/install | CI smoke (positive + negative) | Done (v1.1) |
