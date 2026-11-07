@@ -9,6 +9,9 @@
 
     Settings are read from ..\config\server.conf (shared with the Linux scripts).
 
+    The same commands work natively and with Docker Desktop. The runtime comes
+    from -Runtime, else $env:ISLE_RUNTIME, else RUNTIME in server.conf.
+
 .PARAMETER Command
     Install        Install prerequisites, SteamCMD, the server and generate config
     Update         Update server files through SteamCMD
@@ -32,8 +35,12 @@
     Info           Print resolved paths and settings
     Version        Print the script version
 
+.PARAMETER Runtime
+    Native or Docker. Overrides RUNTIME in server.conf for this command.
+
 .EXAMPLE
     .\IsleServer.ps1 Install
+    .\IsleServer.ps1 Start -Runtime Docker
     .\IsleServer.ps1 Start
     .\IsleServer.ps1 Logs -Follow
     .\IsleServer.ps1 Rcon -RconArgs announce,'Restart in 5 minutes'
@@ -51,7 +58,9 @@ param(
     [string[]]$RconArgs,
     [switch]$Follow,
     [ValidateSet('LocalService', 'System')]
-    [string]$ServiceAccount = 'LocalService'
+    [string]$ServiceAccount = 'LocalService',
+    [ValidateSet('Native', 'Docker')]
+    [string]$Runtime
 )
 
 Set-StrictMode -Version 2.0
@@ -112,7 +121,7 @@ function Import-ServerConfig {
         MAX_PLAYERS = '100'; MAP_NAME = 'Gateway'; SERVER_NAME = 'The Isle Evrima Server'; STOP_TIMEOUT = '60'
         BACKUP_RETENTION = '10'; UPDATE_ON_START = 'true'; VALIDATE_ON_UPDATE = 'false'; AUTO_RESTART = 'true'
         MANAGE_INI_FILES = 'true'; SAVE_BEFORE_STOP = 'true'; RCON_ENABLED = 'true'; QUEUE_ENABLED = 'true'
-        EXTRA_ARGS = '-log'
+        EXTRA_ARGS = '-log'; RUNTIME = 'native'; DOCKER_BUILD = 'true'; DOCKER_IMAGE = 'theisle-server:latest'
     }
     $script:RawServerName = C 'SERVER_NAME'
     foreach ($k in $defaults.Keys) {
@@ -151,13 +160,19 @@ function Test-ServerConfig {
             if ((Test-True (C 'QUEUE_ENABLED')) -and (C 'RCON_PORT') -eq (C 'QUEUE_PORT')) { $errors.Add("RCON_PORT and QUEUE_PORT are both $(C 'RCON_PORT')") }
         }
     }
+    $rt = Get-Runtime
+    if (@('native', 'docker') -notcontains $rt) { $errors.Add("RUNTIME='$rt' must be native or docker") }
+    foreach ($k in 'PUID', 'PGID') {
+        $v = C $k
+        if ($v -and $v -notmatch '^\d+$') { $errors.Add("$k='$v' must be a numeric id") }
+    }
     $mp = C 'MAX_PLAYERS'
     $mpn = 0
     if (-not ($mp -match '^\d+$' -and [int]::TryParse($mp, [ref]$mpn) -and $mpn -gt 0)) { $errors.Add("MAX_PLAYERS='$mp' must be a positive integer") }
     $boolKeys = 'UPDATE_ON_START', 'VALIDATE_ON_UPDATE', 'FIREWALL_OPEN_RCON', 'WHITELIST_ENABLED', 'QUEUE_ENABLED',
         'RCON_ENABLED', 'GLOBAL_CHAT', 'ENABLE_HUMANS', 'DYNAMIC_WEATHER', 'ENABLE_MUTATIONS', 'ENABLE_DIETS',
         'ENABLE_PATROL_ZONES', 'ALLOW_RECORDING_REPLAY', 'SPAWN_PLANTS', 'SPAWN_AI', 'ENABLE_MIGRATION',
-        'ENABLE_MASS_MIGRATION', 'MANAGE_INI_FILES', 'AUTO_RESTART', 'SAVE_BEFORE_STOP'
+        'ENABLE_MASS_MIGRATION', 'MANAGE_INI_FILES', 'AUTO_RESTART', 'SAVE_BEFORE_STOP', 'DOCKER_BUILD'
     foreach ($k in $boolKeys) {
         $v = C $k
         if ($v -and (@('true', 'false', 'yes', 'no', '1', '0', 'on', 'off') -notcontains $v.ToLowerInvariant())) { $errors.Add("$k='$v' must be true or false") }
@@ -631,6 +646,7 @@ function Remove-ServerService {
 function Show-Info {
 @"
 Scripts       : v$ScriptVersion
+Runtime       : native
 Config file   : $ConfigPath
 SteamCMD dir  : $SteamCmdDir
 Server dir    : $ServerDir
@@ -643,22 +659,195 @@ Service task  : $(if (Test-TaskInstalled) { "$TaskName (installed)" } else { 'no
 "@ | Write-Host
 }
 
+# ----------------------------------------------------------- docker mode ---
+# RUNTIME=docker: the same commands drive the container defined in
+# docker-compose.yml. The host server.conf is passed in as env_file and used
+# for port interpolation, so one config file serves both runtimes.
+function Get-Runtime {
+    $r = $Runtime
+    if (-not $r) { $r = $env:ISLE_RUNTIME }
+    if (-not $r) { $r = C 'RUNTIME' 'native' }
+    return $r.ToLowerInvariant()
+}
+
+function Initialize-RconPassword {
+    if ((Test-True (C 'RCON_ENABLED')) -and -not (C 'RCON_PASSWORD')) {
+        $chars = [char[]]'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+        $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+        $bytes = New-Object byte[] 24; $rng.GetBytes($bytes)
+        Set-ConfigValue 'RCON_PASSWORD' (-join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] }))
+        Write-Ok "Generated a random RCON password (saved in $ConfigPath)"
+    }
+}
+
+function Assert-Docker {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        throw "RUNTIME=docker but 'docker' was not found. Install Docker Desktop (https://docs.docker.com/desktop/) or set RUNTIME=native."
+    }
+    & docker compose version *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Docker Compose v2 ('docker compose') is required. Update Docker Desktop." }
+    $os = (& docker info --format '{{.OSType}}' 2> $null)
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot talk to the Docker engine. Start Docker Desktop and wait until it is running.' }
+    if ("$os".Trim() -ne 'linux') { throw "Docker is in '$os' container mode. Switch Docker Desktop to Linux containers." }
+    if (-not (Test-Path (Join-Path $RepoDir 'docker-compose.yml'))) { throw "docker-compose.yml not found in $RepoDir" }
+}
+
+# Always pass docker arguments as one array: a bare "--rm" would be parsed as a
+# PowerShell parameter name. Docker output goes to the host, not the pipeline.
+function Invoke-Dc([string[]]$DcArgs) {
+    $env:ISLE_CONF_FILE = $ConfigPath
+    $base = @('compose', '--project-directory', $RepoDir, '-f', (Join-Path $RepoDir 'docker-compose.yml'), '--env-file', $ConfigPath)
+    & docker @base @DcArgs | Out-Host
+    return $LASTEXITCODE
+}
+function Invoke-DcChecked([string[]]$DcArgs) {
+    $rc = Invoke-Dc $DcArgs
+    if ($rc -ne 0) { throw ("docker compose {0} failed (exit {1})" -f ($DcArgs -join ' '), $rc) }
+}
+
+function Test-DockerRunning {
+    $env:ISLE_CONF_FILE = $ConfigPath
+    $id = & docker compose --project-directory $RepoDir -f (Join-Path $RepoDir 'docker-compose.yml') --env-file $ConfigPath ps --status running -q theisle 2> $null
+    return [bool]("$id".Trim())
+}
+function Assert-DockerStopped([string]$what) {
+    if (Test-DockerRunning) { throw "The container is running - stop it before you $what" }
+}
+
+function Get-NoBuildArgs {
+    if (Test-True (C 'DOCKER_BUILD' 'true')) { return @() }
+    return @('--no-build')
+}
+
+function Invoke-DockerImage {
+    if (Test-True (C 'DOCKER_BUILD' 'true')) {
+        Write-Step ("Building image {0} from {1}" -f (C 'DOCKER_IMAGE' 'theisle-server:latest'), $RepoDir)
+        Invoke-DcChecked @('build')
+    } else {
+        & docker image inspect (C 'DOCKER_IMAGE' 'theisle-server:latest') *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Step ("Pulling image {0}" -f (C 'DOCKER_IMAGE'))
+            Invoke-DcChecked @('pull')
+        }
+    }
+}
+
+function Show-DockerInfo {
+    $state = 'unknown (docker not available)'
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        & docker info *> $null
+        if ($LASTEXITCODE -eq 0) {
+            $env:ISLE_CONF_FILE = $ConfigPath
+            $s = & docker compose --project-directory $RepoDir -f (Join-Path $RepoDir 'docker-compose.yml') --env-file $ConfigPath ps -a --format '{{.State}} ({{.Status}})' theisle 2> $null | Select-Object -First 1
+            if ("$s".Trim()) { $state = "$s".Trim() } else { $state = 'not created' }
+        }
+    }
+    $src = 'prebuilt'
+    if (Test-True (C 'DOCKER_BUILD' 'true')) { $src = 'built from this repo' }
+@"
+Scripts       : v$ScriptVersion
+Runtime       : docker
+Config file   : $ConfigPath (passed to the container)
+Compose file  : $(Join-Path $RepoDir 'docker-compose.yml')
+Image         : $(C 'DOCKER_IMAGE' 'theisle-server:latest') ($src)
+Container     : theisle - $state
+Data          : Docker volume theisle-data (mounted at /data)
+Ports         : game $(C 'GAME_PORT')/udp+tcp, queue $(C 'QUEUE_PORT')/tcp, rcon 127.0.0.1:$(C 'RCON_PORT')/tcp
+Server name   : $(C 'SERVER_NAME')
+"@ | Write-Host
+}
+
+function Invoke-DockerCommand([string]$cmd) {
+    switch ($cmd) {
+        'Check' { if (Test-ServerConfig) { Write-Ok "Configuration OK ($ConfigPath, runtime docker)"; return } else { exit 1 } }
+        'Info'  { Show-DockerInfo; return }
+        'InstallService' {
+            Write-Warn 'RUNTIME=docker: no scheduled task is needed. The container uses restart: unless-stopped.'
+            Write-Warn "Enable 'Start Docker Desktop when you sign in' in Docker Desktop settings so it starts with Windows."
+            return
+        }
+        'RemoveService' { Remove-ServerService; return }
+    }
+    Assert-Docker
+    $nb = @(Get-NoBuildArgs)
+    switch ($cmd) {
+        'Install' {
+            Initialize-RconPassword; Assert-ServerConfig
+            Invoke-DockerImage
+            Invoke-DcChecked (@('up', '--no-start') + $nb)
+            Write-Ok 'Install complete (Docker). The game downloads on first start: .\IsleServer.ps1 Start'
+        }
+        { $_ -in 'Update', 'Validate' } {
+            Assert-DockerStopped $cmd.ToLowerInvariant(); Assert-ServerConfig
+            Invoke-DockerImage
+            Invoke-DcChecked @('run', '--rm', 'theisle', $cmd.ToLowerInvariant())
+        }
+        'Configure' { Assert-ServerConfig; Invoke-DcChecked @('run', '--rm', 'theisle', 'configure') }
+        'Start' {
+            Initialize-RconPassword; Assert-ServerConfig
+            Invoke-DcChecked (@('up', '-d') + $nb)
+            Write-Ok 'Container started - follow the startup with: .\IsleServer.ps1 Logs -Follow'
+        }
+        'Stop' { Invoke-DcChecked @('stop'); Write-Ok 'Container stopped' }
+        'Restart' {
+            Invoke-DcChecked @('stop')
+            Initialize-RconPassword; Assert-ServerConfig
+            Invoke-DcChecked (@('up', '-d') + $nb)
+            Write-Ok 'Container restarted'
+        }
+        'Status' {
+            if (Test-DockerRunning) { $rc = Invoke-Dc @('exec', '-T', 'theisle', 'isle-server', 'status'); exit $rc }
+            Write-Warn 'Not running (container stopped or not created)'; exit 3
+        }
+        'Run' { Initialize-RconPassword; Assert-ServerConfig; [void](Invoke-Dc (@('up') + $nb)) }
+        'Logs' {
+            if ($Follow) { [void](Invoke-Dc @('logs', '--tail', '100', '-f', 'theisle')) } else { [void](Invoke-Dc @('logs', '--tail', '200', 'theisle')) }
+        }
+        'Backup' {
+            if (Test-DockerRunning) { Invoke-DcChecked @('exec', '-T', 'theisle', 'isle-server', 'backup') }
+            else { Invoke-DcChecked @('run', '--rm', 'theisle', 'backup') }
+        }
+        'Restore' {
+            if (-not $Path) { throw 'Usage: IsleServer.ps1 Restore -Path <backup.tar.gz | name in /data/backups>' }
+            Assert-DockerStopped 'restore'
+            if (Test-Path $Path) {
+                $name = Split-Path -Leaf $Path
+                Invoke-DcChecked (@('up', '--no-start') + $nb)
+                Invoke-DcChecked @('cp', (Resolve-Path $Path).Path, "theisle:/data/backups/$name")
+                $target = "/data/backups/$name"
+            } elseif ($Path.StartsWith('/data/')) { $target = $Path }
+            else { $target = "/data/backups/$Path" }
+            Invoke-DcChecked @('run', '--rm', 'theisle', 'restore', $target)
+        }
+        { $_ -in 'Rcon', 'Save' } {
+            if (-not (Test-DockerRunning)) { throw 'The container is not running' }
+            $extra = @()
+            if ($cmd -eq 'Rcon') {
+                if (-not $RconArgs -or $RconArgs.Count -eq 0) { throw 'Usage: IsleServer.ps1 Rcon -RconArgs <command>,[args]' }
+                $extra = $RconArgs
+            }
+            $rc = Invoke-Dc (@('exec', '-T', 'theisle', 'isle-server', $cmd.ToLowerInvariant()) + $extra)
+            exit $rc
+        }
+    }
+}
+
 # ------------------------------------------------------------------ main ---
 if ($Command -eq 'Help') { Get-Help $MyInvocation.MyCommand.Path -Detailed; exit 0 }
 if ($Command -eq 'Version') { Write-Host "IsleServer.ps1 $ScriptVersion"; exit 0 }
 Import-ServerConfig
 
 try {
+    $rt = Get-Runtime
+    if ($rt -eq 'docker' -and @('Firewall', 'RemoveFirewall') -notcontains $Command) {
+        Invoke-DockerCommand $Command
+        exit 0
+    }
+    if ($rt -ne 'native') { [void](Test-ServerConfig); Fail "Unknown runtime '$rt' (use native or docker)" }
     switch ($Command) {
         'Install' {
             Install-VcRedist
-            if (-not (C 'RCON_PASSWORD')) {
-                $chars = [char[]]'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
-                $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-                $bytes = New-Object byte[] 24; $rng.GetBytes($bytes)
-                Set-ConfigValue 'RCON_PASSWORD' (-join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] }))
-                Write-Ok 'Generated a random RCON password (see config\server.conf)'
-            }
+            Initialize-RconPassword
             if (Get-ServerProcess) { Fail 'Stop the server before installing/updating' }
             Assert-ServerConfig
             Update-Server

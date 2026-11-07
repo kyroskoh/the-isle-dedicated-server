@@ -35,6 +35,19 @@ Run `isle-server check` (Linux) or `IsleServer.ps1 Check` (Windows) after you ed
 
 Exit code: `0` = OK (warnings allowed), `1` = errors.
 
+## Runtime
+
+| Key | Default | Description |
+|---|---|---|
+| `RUNTIME` | `native` | `native` = run on this machine. `docker` = the launcher manages a container ([DOCKER.md](DOCKER.md)) |
+| `DOCKER_BUILD` | `true` | Docker: build the image from this repo. `false` = use `DOCKER_IMAGE` as is (pulled if missing) |
+| `DOCKER_IMAGE` | `theisle-server:latest` | Docker: image name / reference |
+| `PUID` / `PGID` | `1000` | Docker: uid/gid the server runs as inside the container |
+
+To override per command: `isle-server.sh --docker|--native <cmd>`, `IsleServer.ps1 <Cmd> -Runtime Docker|Native`,
+or the `ISLE_RUNTIME` environment variable (precedence: flag > env > config).
+In docker mode, `STEAMCMD_DIR`, `SERVER_DIR` and `BACKUP_DIR` are ignored. The container always uses `/data`.
+
 ## Install and update
 
 | Key | Default | Description |

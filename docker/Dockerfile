@@ -38,10 +38,8 @@ RUN sed -i 's/\r$//' /opt/theisle-scripts/linux/*.sh /usr/local/bin/theisle-entr
 # Paths are written into /data/config/server.conf by the entrypoint (env overrides).
 ENV ISLE_CONF=/data/config/server.conf \
     ISLE_NO_SYSTEMD=1 \
+    ISLE_RUNTIME=native \
     HOME=/data/home \
-    STEAMCMD_DIR=/data/steamcmd \
-    SERVER_DIR=/data/server \
-    BACKUP_DIR=/data/backups \
     PUID=1000 \
     PGID=1000
 

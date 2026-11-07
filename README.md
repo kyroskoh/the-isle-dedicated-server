@@ -18,6 +18,7 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 ## Features
 
 - **One config for both OSes.** `config/server.conf` produces `Game.ini` and `Engine.ini` for you.
+- **Native or Docker, same launcher.** Set `RUNTIME=docker` (or pass `--docker` / `-Runtime Docker`) and the same commands and `.bat` files manage a container instead.
 - **Config validation.** `check` catches bad ports, typos in true/false values, a missing RCON password and malformed SteamIDs before the server launches.
 - **Installers** that set up the dependencies, SteamCMD, the server (Steam app `412680`, branch `evrima`), firewall rules, and a service that starts at boot.
 - **Launchers** for start, stop, restart, status, logs and a console mode.
@@ -37,13 +38,16 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 3. Edit **`C:\TheIsle\scripts\config\server.conf`**: set the server name, admins and so on.
 4. Run **`C:\TheIsle\scripts\windows\Restart.bat`**, or reboot. The server starts at boot.
 
-### Docker
+### Docker (same launcher)
 
 ```bash
 git clone https://github.com/kyroskoh/the-isle-dedicated-server.git
 cd the-isle-dedicated-server
-docker compose up -d --build       # settings via .env - see DOCKER.md
+sudo ./linux/install.sh --docker --start      # Linux
+# Windows: windows\Install.bat -Docker -Start  (Docker Desktop, Linux containers)
 ```
+
+After that, use the same commands as a native install. See [DOCKER.md](DOCKER.md).
 
 ### Linux
 
@@ -82,6 +86,8 @@ Then forward these ports on your router or cloud firewall:
 | Script version | `isle-server version` | `IsleServer.ps1 Version` |
 
 On Linux, run `isle-server` as the service user: `sudo -u theisle isle-server <cmd>`.
+With `RUNTIME=docker` the **same commands** manage the container. Run them as a user who can use Docker (`sudo isle-server <cmd>`).
+To override the runtime per command, use `isle-server --docker|--native <cmd>` or `IsleServer.ps1 <Cmd> -Runtime Docker|Native`.
 
 ## Repository layout
 

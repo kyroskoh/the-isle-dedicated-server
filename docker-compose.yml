@@ -4,8 +4,12 @@
 #   docker compose logs -f
 #   docker compose exec theisle isle-server status
 #
-# Settings: any key from config/server.conf.example can be set below or in a
-# ".env" file next to this one. They are saved into /data/config/server.conf.
+# Settings - pick one:
+#  * Launcher (recommended): set RUNTIME=docker in config/server.conf and use
+#    isle-server.sh / IsleServer.ps1 / *.bat. The whole server.conf is passed
+#    to the container (env_file below) and used for the port mappings.
+#  * Plain compose: put keys from config/server.conf.example in a ".env" file
+#    next to this one, or edit the environment block below.
 # See DOCKER.md for details.
 
 services:
@@ -13,12 +17,16 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: theisle-server:latest
+    image: "${DOCKER_IMAGE:-theisle-server:latest}"
     container_name: theisle
     platform: linux/amd64
     restart: unless-stopped
     # Must be longer than STOP_TIMEOUT (default 60s) so the server can save and exit.
     stop_grace_period: 90s
+    # The launcher points this at config/server.conf (ISLE_CONF_FILE).
+    env_file:
+      - path: "${ISLE_CONF_FILE:-./config/server.conf}"
+        required: false
     environment:
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"

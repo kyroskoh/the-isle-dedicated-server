@@ -11,8 +11,23 @@
 #    Lists use commas, e.g. ADMIN_STEAM_IDS=7656119xxxxxxxxx1,7656119xxxxxxxxx2
 # =============================================================================
 
+# ---------------------------------------------------------------- Runtime ----
+# How the launcher (isle-server.sh / IsleServer.ps1 / *.bat) runs the server:
+#   native = directly on this machine (SteamCMD + service/scheduled task)
+#   docker = in a container via "docker compose" (see DOCKER.md)
+# Override per command: isle-server.sh --docker|--native <cmd>,
+# IsleServer.ps1 -Runtime Docker|Native, or env ISLE_RUNTIME.
+RUNTIME=native
+# Docker only: build the image from this repo (true) or use DOCKER_IMAGE as is.
+DOCKER_BUILD=true
+DOCKER_IMAGE=theisle-server:latest
+# Docker only: uid/gid the server runs as inside the container.
+PUID=1000
+PGID=1000
+
 # ---------------------------------------------------------------- Install ----
-# Where SteamCMD and the server files live. Leave empty for the defaults:
+# Where SteamCMD and the server files live (native only; Docker always uses
+# the /data volume). Leave empty for the defaults:
 #   Linux  : <home of the service user>/steamcmd  and  .../theisle-server
 #   Windows: C:\TheIsle\steamcmd                  and  C:\TheIsle\server
 STEAMCMD_DIR=

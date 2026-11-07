@@ -2,7 +2,10 @@
 # =============================================================================
 #  isle-server.sh - The Isle (Evrima) dedicated server manager for Linux
 #
-#  Usage: isle-server.sh <command> [args]
+#  Usage: isle-server.sh [--docker|--native] <command> [args]
+#
+#  The same commands work for a native install and for Docker. The runtime
+#  comes from --docker/--native, else $ISLE_RUNTIME, else RUNTIME in server.conf.
 #
 #  Commands:
 #    install      Install SteamCMD + server files and generate config
@@ -28,6 +31,7 @@
 #    ISLE_CONF          path to server.conf (default: <repo>/config/server.conf)
 #    ISLE_NO_SYSTEMD=1  never delegate start/stop/status to systemd
 #    ISLE_SERVICE       systemd unit name (default: theisle-server)
+#    ISLE_RUNTIME       native | docker (overrides RUNTIME in server.conf)
 # =============================================================================
 set -Eeuo pipefail
 
@@ -87,7 +91,8 @@ load_config() {
            MAX_PLAYERS:100 MAP_NAME:Gateway STOP_TIMEOUT:60 BACKUP_RETENTION:10 \
            "SERVER_NAME:The Isle Evrima Server" UPDATE_ON_START:true VALIDATE_ON_UPDATE:false \
            AUTO_RESTART:true MANAGE_INI_FILES:true SAVE_BEFORE_STOP:true RCON_ENABLED:true \
-           QUEUE_ENABLED:true EXTRA_ARGS:-log; do
+           QUEUE_ENABLED:true EXTRA_ARGS:-log RUNTIME:native DOCKER_BUILD:true \
+           DOCKER_IMAGE:theisle-server:latest; do
     [[ -z "${CFG[${k%%:*}]:-}" ]] && CFG[${k%%:*}]="${k#*:}"
   done
   STEAMCMD_DIR="${CFG[STEAMCMD_DIR]}"
@@ -116,7 +121,7 @@ set_conf() {  # persist KEY=VALUE into server.conf (value must not contain newli
 BOOL_KEYS=(UPDATE_ON_START VALIDATE_ON_UPDATE FIREWALL_OPEN_RCON WHITELIST_ENABLED QUEUE_ENABLED
            RCON_ENABLED GLOBAL_CHAT ENABLE_HUMANS DYNAMIC_WEATHER ENABLE_MUTATIONS ENABLE_DIETS
            ENABLE_PATROL_ZONES ALLOW_RECORDING_REPLAY SPAWN_PLANTS SPAWN_AI ENABLE_MIGRATION
-           ENABLE_MASS_MIGRATION MANAGE_INI_FILES AUTO_RESTART SAVE_BEFORE_STOP)
+           ENABLE_MASS_MIGRATION MANAGE_INI_FILES AUTO_RESTART SAVE_BEFORE_STOP DOCKER_BUILD)
 NUMBER_KEYS=(GROWTH_MULTIPLIER CORPSE_DECAY_MULTIPLIER PLANT_SPAWN_MULTIPLIER AI_DENSITY
              DAY_LENGTH_MINUTES NIGHT_LENGTH_MINUTES)
 INT_KEYS=(MAX_MIGRATION_TIME MASS_MIGRATION_TIME MASS_MIGRATION_DISABLE_TIME STOP_TIMEOUT BACKUP_RETENTION)
@@ -140,6 +145,14 @@ check_config() {
         && errors+=("RCON_PORT and QUEUE_PORT are both $(cfg RCON_PORT)")
     fi
   fi
+  case "${RUNTIME:-$(cfg RUNTIME native)}" in
+    native|docker) ;;
+    *) errors+=("RUNTIME='${RUNTIME:-$(cfg RUNTIME)}' must be native or docker") ;;
+  esac
+  for k in PUID PGID; do
+    v="$(cfg "$k")"
+    [[ -z "$v" || "$v" =~ ^[0-9]+$ ]] || errors+=("$k='$v' must be a numeric id")
+  done
   v="$(cfg MAX_PLAYERS)"
   if ! [[ "$v" =~ ^[0-9]+$ ]] || (( 10#$v < 1 )); then errors+=("MAX_PLAYERS='$v' must be a positive integer"); fi
   for k in "${BOOL_KEYS[@]}"; do
@@ -545,6 +558,7 @@ cmd_rcon() {
 cmd_info() {
   cat <<EOF
 Scripts       : v$SCRIPT_VERSION
+Runtime       : native
 Config file   : $ISLE_CONF
 SteamCMD dir  : $STEAMCMD_DIR
 Server dir    : $SERVER_DIR
@@ -557,18 +571,159 @@ systemd unit  : $(if service_installed; then echo "$ISLE_SERVICE (installed)"; e
 EOF
 }
 
+# ------------------------------------------------------------- docker mode ---
+# RUNTIME=docker: the same commands drive the container defined in
+# docker-compose.yml. The host server.conf is passed in as env_file and used
+# for port interpolation, so one config file serves both runtimes.
+RUNTIME_FLAG=""
+resolve_runtime() {
+  RUNTIME="${RUNTIME_FLAG:-${ISLE_RUNTIME:-$(cfg RUNTIME native)}}"
+  RUNTIME="${RUNTIME,,}"
+}
+
+docker_require() {
+  command -v docker >/dev/null 2>&1 \
+    || die "RUNTIME=docker but the 'docker' command was not found. Install Docker Engine (https://docs.docker.com/engine/install/) or set RUNTIME=native."
+  docker compose version >/dev/null 2>&1 \
+    || die "Docker Compose v2 ('docker compose') is required. Install the docker-compose-plugin package."
+  docker info >/dev/null 2>&1 \
+    || die "Cannot talk to the Docker daemon. Start it (sudo systemctl start docker) or add your user to the 'docker' group."
+  [[ -f "$REPO_DIR/docker-compose.yml" ]] || die "docker-compose.yml not found in $REPO_DIR"
+}
+
+dc() {  # docker compose bound to this repo and the host server.conf
+  ISLE_CONF_FILE="$ISLE_CONF" docker compose --project-directory "$REPO_DIR" \
+    -f "$REPO_DIR/docker-compose.yml" --env-file "$ISLE_CONF" "$@"
+}
+
+docker_running() { [[ -n "$(dc ps --status running -q theisle 2>/dev/null)" ]]; }
+docker_require_stopped() {
+  if docker_running; then die "The container is running - stop it before you $1"; fi
+}
+
+docker_image() {
+  if is_true "$(cfg DOCKER_BUILD)"; then
+    log "Building image $(cfg DOCKER_IMAGE) from $REPO_DIR"
+    dc build
+  elif ! docker image inspect "$(cfg DOCKER_IMAGE)" >/dev/null 2>&1; then
+    log "Pulling image $(cfg DOCKER_IMAGE)"
+    dc pull
+  fi
+}
+
+docker_check() { check_config || die "Fix the configuration errors above, then try again"; }
+
+docker_main() {
+  local cmd="$1"; shift
+  local -a nb=()
+  is_true "$(cfg DOCKER_BUILD)" || nb=(--no-build)
+  case "$cmd" in
+    check) check_config && ok "Configuration OK ($ISLE_CONF, runtime docker)"; return ;;
+    info)  docker_info; return ;;
+  esac
+  docker_require
+  case "$cmd" in
+    install)
+      ensure_rcon_password; docker_check
+      docker_image
+      dc up --no-start "${nb[@]}"
+      ok "Install complete (Docker). The game downloads on first start: $0 start" ;;
+    update|validate)
+      docker_require_stopped "$cmd"; docker_check
+      docker_image
+      dc run --rm theisle "$cmd" ;;
+    configure)
+      docker_check
+      dc run --rm theisle configure ;;
+    start)
+      ensure_rcon_password; docker_check
+      dc up -d "${nb[@]}"
+      ok "Container started - follow the startup with: $0 logs -f" ;;
+    stop)
+      dc stop
+      ok "Container stopped" ;;
+    restart)
+      dc stop
+      ensure_rcon_password; docker_check
+      dc up -d "${nb[@]}"
+      ok "Container restarted" ;;
+    status)
+      if docker_running; then dc exec -T theisle isle-server status
+      else warn "Not running (container stopped or not created)"; return 3; fi ;;
+    run)
+      ensure_rcon_password; docker_check
+      dc up "${nb[@]}" ;;
+    logs)
+      if [[ "${1:-}" == "-f" ]]; then dc logs --tail 100 -f theisle; else dc logs --tail 200 theisle; fi ;;
+    backup)
+      if docker_running; then dc exec -T theisle isle-server backup
+      else dc run --rm theisle backup; fi ;;
+    restore)
+      local file="${1:-}" target
+      [[ -n "$file" ]] || die "Usage: $0 restore <backup.tar.gz | name in /data/backups>"
+      docker_require_stopped restore
+      if [[ -f "$file" ]]; then
+        dc up --no-start "${nb[@]}"
+        dc cp "$file" "theisle:/data/backups/$(basename "$file")"
+        target="/data/backups/$(basename "$file")"
+      elif [[ "$file" == /data/* ]]; then
+        target="$file"
+      else
+        target="/data/backups/$file"
+      fi
+      dc run --rm theisle restore "$target" ;;
+    rcon|save)
+      docker_running || die "The container is not running"
+      dc exec -T theisle isle-server "$cmd" "$@" ;;
+    *) usage; die "Unknown command: $cmd" ;;
+  esac
+}
+
+docker_info() {
+  local state="unknown (docker not available)" image_src="prebuilt"
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    state="$(dc ps -a --format '{{.State}} ({{.Status}})' theisle 2>/dev/null | head -n1)"
+    [[ -n "$state" ]] || state="not created"
+  fi
+  is_true "$(cfg DOCKER_BUILD)" && image_src="built from this repo"
+  printf '%-14s: %s\n' \
+    "Scripts" "v$SCRIPT_VERSION" \
+    "Runtime" "docker" \
+    "Config file" "$ISLE_CONF (passed to the container)" \
+    "Compose file" "$REPO_DIR/docker-compose.yml" \
+    "Image" "$(cfg DOCKER_IMAGE) ($image_src)" \
+    "Container" "theisle - $state" \
+    "Data" "Docker volume theisle-data (mounted at /data)" \
+    "Ports" "game $(cfg GAME_PORT)/udp+tcp, queue $(cfg QUEUE_PORT)/tcp, rcon 127.0.0.1:$(cfg RCON_PORT)/tcp" \
+    "Server name" "$(cfg SERVER_NAME)"
+}
+
 usage() { sed -n '2,/^# =====/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '/^=====/d'; }
 
 main() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --docker)    RUNTIME_FLAG=docker; shift ;;
+      --native)    RUNTIME_FLAG=native; shift ;;
+      --runtime=*) RUNTIME_FLAG="${1#*=}"; shift ;;
+      *) break ;;
+    esac
+  done
   local cmd="${1:-help}"; shift || true
-  if [[ $EUID -eq 0 && "$cmd" =~ ^(install|update|run|_watchdog|backup|restore)$ && -z "${ISLE_ALLOW_ROOT:-}" ]]; then
-    die "Do not run the game server as root. Use the service user (e.g. 'sudo -u theisle $0 $cmd') or set ISLE_ALLOW_ROOT=1."
-  fi
   case "$cmd" in
     help|-h|--help) usage; return 0 ;;
     version|--version) printf 'isle-server.sh %s\n' "$SCRIPT_VERSION"; return 0 ;;
   esac
   load_config
+  resolve_runtime
+  case "$RUNTIME" in
+    docker) docker_main "$cmd" "$@"; return ;;
+    native) ;;
+    *) check_config || true; die "Unknown runtime '$RUNTIME' (use native or docker)" ;;
+  esac
+  if [[ $EUID -eq 0 && "$cmd" =~ ^(install|update|run|_watchdog|backup|restore)$ && -z "${ISLE_ALLOW_ROOT:-}" ]]; then
+    die "Do not run the game server as root. Use the service user (e.g. 'sudo -u theisle $0 $cmd') or set ISLE_ALLOW_ROOT=1."
+  fi
   case "$cmd" in
     install)   require_stopped install; ensure_rcon_password; check_config || die "Fix the configuration errors above, then try again"
                update_server "$@"; configure; ok "Install complete. Start with: $0 start" ;;

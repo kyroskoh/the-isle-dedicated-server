@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.3 |
-| **Product version** | 1.3.0 (planned), 1.2.0 (released) |
+| **Product version** | 1.3.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -316,7 +316,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M5 Hardening (v1.1.0) | CFG-05 config validation, UPD-03 on Linux, CLI-02 help completeness, CLI-03 version | ✅ Done (v1.1.0) |
 | M6 Field validation | §10.2 checklist on each Tier-1 OS | ⏳ Planned. Needs real hosts |
 | M7 Docker (v1.2.0) | DKR-01 – DKR-10: Dockerfile, entrypoint, compose file, CI job, DOCKER.md | ✅ Done (v1.2.0). Full image build verified in CI only |
-| **M8 Launcher runtime modes (v1.3.0)** | **LCH-01 – LCH-08**: native/docker in both launchers and installers, compose `env_file`, CI job | 🔜 In progress |
+| M8 Launcher runtime modes (v1.3.0) | LCH-01 – LCH-08: native/docker in both launchers and installers, compose `env_file`, CI job | ✅ Done (v1.3.0). Windows docker mode tested with PowerShell 7 on Linux; Docker Desktop field test pending (M6) |
 
 ## 12. Traceability matrix
 
@@ -352,12 +352,12 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | DKR-06 | Dockerfile `HEALTHCHECK` | CI (healthy) | Done (v1.2) |
 | DKR-07 | `docker/isle-server` wrapper | CI (`exec isle-server status`) | Done (v1.2) |
 | DKR-08/09/10 | `docker-compose.yml`, DOCKER.md | Review, manual §10.2-8 | Done (v1.2) |
-| LCH-01/02 | `resolve_runtime` (Linux), `Get-Runtime` (Windows), `check_config`/`Test-ServerConfig` | CI (bad value rejected) | **Planned v1.3** |
-| LCH-03 | `docker_*` dispatch in `isle-server.sh`, `Invoke-Docker*` in `IsleServer.ps1` | CI launcher-docker job (Linux), parser (Windows) | **Planned v1.3** |
-| LCH-04 | `docker-compose.yml` `env_file`, entrypoint path/runtime forcing | CI launcher-docker (setting reaches Game.ini) | **Planned v1.3** |
-| LCH-05/06 | launchers | CI, review | **Planned v1.3** |
-| LCH-07 | `install.sh --docker`, `Install.ps1 -Docker` | Manual | **Planned v1.3** |
-| LCH-08 | compose `image:`, `--no-build` | CI (local image, `DOCKER_BUILD=false`) | **Planned v1.3** |
+| LCH-01/02 | `resolve_runtime` (Linux), `Get-Runtime` (Windows), `check_config`/`Test-ServerConfig` | CI (bad value rejected) | Done (v1.3) |
+| LCH-03 | `docker_*` dispatch in `isle-server.sh`, `Invoke-Docker*` in `IsleServer.ps1` | CI launcher-docker job (Linux), parser (Windows) | Done (v1.3) |
+| LCH-04 | `docker-compose.yml` `env_file`, entrypoint path/runtime forcing | CI launcher-docker (setting reaches Game.ini) | Done (v1.3) |
+| LCH-05/06 | launchers | CI, review | Done (v1.3) |
+| LCH-07 | `install.sh --docker`, `Install.ps1 -Docker` | Manual | Done (v1.3) |
+| LCH-08 | compose `image:`, `--no-build` | CI (local image, `DOCKER_BUILD=false`) | Done (v1.3) |
 
 ## 13. Risks and mitigations
 

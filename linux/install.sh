@@ -17,6 +17,9 @@
 #    5. Opens firewall ports (ufw / firewalld) when a firewall is active
 #    6. Installs + enables a systemd service and a daily backup timer
 #
+#  With --docker it instead checks Docker, sets RUNTIME=docker, builds the
+#  image and creates the container (no SteamCMD, user or systemd unit).
+#
 #  Options:
 #    --user NAME        service user                     (default: theisle)
 #    --home DIR         home directory of that user      (default: /home/NAME)
@@ -25,8 +28,10 @@
 #    --no-firewall      do not touch the firewall
 #    --no-deps          skip package installation
 #    --no-sudoers       do not let the user control its own service via sudo
+#    --docker           run the server in Docker instead of natively
 #    --start            start the server when finished
-#    --uninstall        remove service/timer/sudoers/firewall rules (keeps files)
+#    --uninstall        remove service/timer/sudoers/firewall rules (keeps files);
+#                       with --docker: remove the container (keeps the data volume)
 #    -h | --help        show this help
 # =============================================================================
 set -Eeuo pipefail
@@ -35,7 +40,7 @@ SRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 SVC_USER="theisle"
 SVC_HOME=""
 BRANCH=""; BRANCH_SET=0
-DO_SERVICE=1; DO_FIREWALL=1; DO_DEPS=1; DO_SUDOERS=1; DO_START=0; DO_UNINSTALL=0
+DO_SERVICE=1; DO_FIREWALL=1; DO_DEPS=1; DO_SUDOERS=1; DO_START=0; DO_UNINSTALL=0; DO_DOCKER=0
 SERVICE="theisle-server"
 
 if [[ -t 1 ]]; then C_RED=$'\e[31m'; C_GRN=$'\e[32m'; C_YLW=$'\e[33m'; C_BLU=$'\e[36m'; C_RST=$'\e[0m'
@@ -57,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --no-sudoers)  DO_SUDOERS=0; shift ;;
     --start)       DO_START=1; shift ;;
     --uninstall)   DO_UNINSTALL=1; shift ;;
+    --docker)      DO_DOCKER=1; shift ;;
     -h|--help)     usage; exit 0 ;;
     *)             usage; die "Unknown option: $1" ;;
   esac
@@ -89,6 +95,71 @@ conf_set() {
     printf '%s=%s\n' "$key" "$val" >> "$file"
   fi
 }
+
+# ------------------------------------------------------------ docker mode ----
+# --docker: no SteamCMD, service user or systemd unit. The repo stays where it
+# is (it is the compose project), RUNTIME=docker is set in server.conf and the
+# same launcher (isle-server) drives the container.
+if (( DO_DOCKER )); then
+  SCRIPTS_DIR="$SRC_DIR"
+  launcher="$SCRIPTS_DIR/linux/isle-server.sh"
+  if (( DO_UNINSTALL )); then
+    step "Stopping and removing the container (the theisle-data volume is kept)"
+    if command -v docker >/dev/null 2>&1 && [[ -f "$SCRIPTS_DIR/config/server.conf" ]]; then
+      "$launcher" --docker stop || true
+      ISLE_CONF_FILE="$SCRIPTS_DIR/config/server.conf" docker compose --project-directory "$SCRIPTS_DIR" \
+        -f "$SCRIPTS_DIR/docker-compose.yml" --env-file "$SCRIPTS_DIR/config/server.conf" down || true
+    fi
+    [[ "$(readlink -f /usr/local/bin/isle-server 2>/dev/null)" == "$(readlink -f "$launcher")" ]] && rm -f /usr/local/bin/isle-server
+    ok "Uninstalled. World data is kept in the Docker volume (see: docker volume ls | grep theisle-data)."
+    exit 0
+  fi
+
+  step "Checking Docker"
+  if ! command -v docker >/dev/null 2>&1; then
+    die "Docker is not installed. Install Docker Engine + the compose plugin for your distro (https://docs.docker.com/engine/install/), then re-run: sudo $0 --docker"
+  fi
+  docker compose version >/dev/null 2>&1 \
+    || die "Docker Compose v2 is missing. Install the 'docker-compose-plugin' (or 'docker-compose-v2') package, then re-run."
+  boot_note="make sure the Docker daemon starts at boot (no systemd detected)"
+  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    if systemctl enable --now docker >/dev/null 2>&1; then boot_note="the docker service is enabled at boot"
+    else warn "Could not enable the docker service at boot"; fi
+  fi
+  docker info >/dev/null 2>&1 || die "The Docker daemon is not running (try: systemctl start docker)"
+  ok "$(docker --version), $(docker compose version --short 2>/dev/null || echo compose v2)"
+
+  step "Preparing config/server.conf"
+  if [[ ! -f "$SCRIPTS_DIR/config/server.conf" ]]; then
+    cp "$SCRIPTS_DIR/config/server.conf.example" "$SCRIPTS_DIR/config/server.conf"
+    ok "Created config/server.conf"
+  fi
+  conf_set RUNTIME docker
+  if (( BRANCH_SET )); then conf_set STEAM_BRANCH "$BRANCH"; fi
+  chmod 600 "$SCRIPTS_DIR/config/server.conf"
+  if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]]; then
+    chown "$SUDO_USER:" "$SCRIPTS_DIR/config/server.conf"
+  fi
+  ln -sf "$launcher" /usr/local/bin/isle-server 2>/dev/null || true
+
+  step "Building the image and creating the container"
+  "$launcher" --docker install
+  if (( DO_START )); then step "Starting the container"; "$launcher" --docker start; fi
+
+  cat <<EOF
+
+${C_GRN}The Isle dedicated server is installed (Docker).${C_RST}
+
+  Config file : $SCRIPTS_DIR/config/server.conf   (RUNTIME=docker; edit, then: sudo isle-server restart)
+  Manage      : sudo isle-server <start|stop|restart|status|logs -f|update|backup|rcon>
+  Boot        : $boot_note; the container uses restart: unless-stopped
+  Ports       : $(conf_get GAME_PORT)/udp+tcp (game), $(conf_get QUEUE_PORT)/tcp (queue); RCON only on 127.0.0.1:$(conf_get RCON_PORT)
+
+  Note: Docker publishes ports through its own iptables rules (ufw/firewalld rules are
+  not needed). Remember to forward the game and queue ports on your router / cloud firewall.
+EOF
+  exit 0
+fi
 
 # ------------------------------------------------------------- uninstall ----
 firewall_rules() {  # $1 = add | remove

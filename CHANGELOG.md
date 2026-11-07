@@ -6,6 +6,27 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-07
+
+Planned in [PRD.md](PRD.md) as milestone M8 (requirements LCH-01 to LCH-08).
+
+### Added
+- **The launcher supports native and Docker runtimes.** `RUNTIME=native|docker` in `server.conf`, overridden with
+  `isle-server.sh --docker|--native`, `IsleServer.ps1 -Runtime Docker|Native` (so the `.bat` launchers work too), or
+  `ISLE_RUNTIME`. Every command (install, update, validate, check, configure, start, stop, restart, status, run, logs,
+  backup, restore, rcon, save, info, version) works in both modes, with the same exit codes.
+- The host `server.conf` drives the container through compose `env_file` / `--env-file` (including port mappings).
+  The RCON password is generated into the host file.
+- `DOCKER_BUILD` / `DOCKER_IMAGE` settings for using a prebuilt or registry image, plus `PUID` / `PGID` in `server.conf`.
+- `install.sh --docker` (checks Docker, enables the daemon at boot, builds, links `isle-server`) and
+  `install.sh --docker --uninstall`. `Install.ps1 -Docker` for Docker Desktop.
+- `check` validates `RUNTIME`, `DOCKER_BUILD` and `PUID`/`PGID`.
+- CI: a launcher-in-docker-mode test on Linux, and docker-mode Info/Check/error tests on Windows.
+
+### Changed
+- The container entrypoint always runs its manager natively and pins `STEAMCMD_DIR`/`SERVER_DIR`/`BACKUP_DIR` to `/data`.
+  With more than 8 env overrides it logs a count instead of every key.
+
 ## [1.2.0] - 2026-11-07
 
 Planned in [PRD.md](PRD.md) as milestone M7 (requirements DKR-01 to DKR-10).
@@ -76,7 +97,8 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kyroskoh/the-isle-dedicated-server/releases/tag/v1.0.0

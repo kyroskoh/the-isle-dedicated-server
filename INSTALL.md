@@ -164,6 +164,25 @@ Cloud providers (AWS, GCP, Azure, Oracle, Hetzner and others) also need matching
 
 ---
 
+---
+
+## Docker (Linux or Windows)
+
+Both installers have a docker mode. It doesn't install SteamCMD, create a service user, or add a
+systemd unit or scheduled task. It sets `RUNTIME=docker` in `config/server.conf`, builds the image and
+creates the container. After that the same launcher commands manage the container.
+
+```bash
+sudo ./linux/install.sh --docker --start        # Linux: needs Docker Engine + compose plugin
+sudo ./linux/install.sh --docker --uninstall    # removes the container, keeps the data volume
+```
+
+```powershell
+.\windows\Install.ps1 -Docker -Start            # Windows: needs Docker Desktop (Linux containers)
+```
+
+Details: [DOCKER.md](DOCKER.md).
+
 ## Updating
 
 - **Game:** the server updates itself on every start when `UPDATE_ON_START=true`, so a restart is enough.

@@ -16,7 +16,7 @@ SCRIPTS=/opt/theisle-scripts
 MANAGER="$SCRIPTS/linux/isle-server.sh"
 EXAMPLE="$SCRIPTS/config/server.conf.example"
 CONF="${ISLE_CONF:-/data/config/server.conf}"
-export ISLE_CONF="$CONF" ISLE_NO_SYSTEMD=1
+export ISLE_CONF="$CONF" ISLE_NO_SYSTEMD=1 ISLE_RUNTIME=native
 
 log()  { printf '[entrypoint] %s\n' "$*"; }
 fail() { printf '[entrypoint] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -41,12 +41,24 @@ prepare_data() {
   # Env overrides: every KEY present in the example file may be set as an env var.
   local key applied=()
   while IFS= read -r key; do
+    case "$key" in
+      # Host-side launcher keys; paths are fixed to the /data volume below.
+      RUNTIME|DOCKER_BUILD|DOCKER_IMAGE|PUID|PGID|STEAMCMD_DIR|SERVER_DIR|BACKUP_DIR) continue ;;
+    esac
     if [[ -v "$key" ]]; then
       conf_set "$key" "${!key}"
       applied+=("$key")
     fi
   done < <(grep -oE '^[A-Z_][A-Z0-9_]*=' "$EXAMPLE" | tr -d '=' | sort -u)
-  if (( ${#applied[@]} )) && [[ "${1:-}" != "--quiet" ]]; then log "Applied env overrides: ${applied[*]}"; fi
+  if (( ${#applied[@]} )) && [[ "${1:-}" != "--quiet" ]]; then
+    if (( ${#applied[@]} > 8 )); then log "Applied ${#applied[@]} settings from the environment"
+    else log "Applied env overrides: ${applied[*]}"; fi
+  fi
+  # Inside the container the manager always runs natively on the /data volume.
+  conf_set RUNTIME native
+  conf_set STEAMCMD_DIR /data/steamcmd
+  conf_set SERVER_DIR /data/server
+  conf_set BACKUP_DIR /data/backups
   # Generate an RCON password on first start (needed for save-before-stop).
   local rcon_enabled rcon_pw
   rcon_enabled="$(grep -E '^RCON_ENABLED=' "$CONF" | tail -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')"

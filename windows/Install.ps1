@@ -16,12 +16,18 @@
 .PARAMETER InstallRoot
     Base folder for scripts, SteamCMD, server files and backups. Default C:\TheIsle
 
+.PARAMETER Docker
+    Run the server in Docker Desktop (Linux containers) instead of natively:
+    sets RUNTIME=docker, builds the image and creates the container. Skips the
+    VC++ runtime, Python, SteamCMD and the scheduled task.
+
 .PARAMETER Branch
     Steam beta branch. Default: value in server.conf (evrima). Pass '' for public.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\Install.ps1
     powershell -ExecutionPolicy Bypass -File .\Install.ps1 -InstallRoot D:\Games\TheIsle -Start
+    powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Docker -Start
     powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Uninstall
 #>
 [CmdletBinding()]
@@ -33,6 +39,7 @@ param(
     [switch]$NoService,
     [switch]$NoFirewall,
     [switch]$NoPython,
+    [switch]$Docker,
     [switch]$Start,
     [switch]$Uninstall
 )
@@ -118,7 +125,13 @@ Set-Conf 'BACKUP_DIR' (Join-Path $InstallRoot 'backups') -OnlyIfEmpty
 if ($PSBoundParameters.ContainsKey('Branch')) { Set-Conf 'STEAM_BRANCH' $Branch }
 
 # --------------------------------------------------------------- python ----
-if (-not $NoPython) {
+if ($Docker) {
+    Set-Conf 'RUNTIME' 'docker'
+    Write-Ok 'RUNTIME=docker (the server runs in a Docker Desktop container)'
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        Fail 'Docker Desktop was not found. Install it from https://docs.docker.com/desktop/ (WSL 2 backend), start it, then re-run with -Docker.'
+    }
+} elseif (-not $NoPython) {
     $hasPy = $false
     foreach ($c in 'py', 'python') {
         $cmd = Get-Command $c -ErrorAction SilentlyContinue
@@ -150,7 +163,7 @@ if (-not $NoFirewall) {
     Write-Step 'Configuring Windows Defender Firewall'
     & $Manager Firewall -ConfigPath $Conf
 }
-if (-not $NoService) {
+if (-not $NoService -and -not $Docker) {
     Write-Step 'Registering the boot-time scheduled task'
     & $Manager InstallService -ConfigPath $Conf -ServiceAccount $ServiceAccount
 }
@@ -167,4 +180,7 @@ Write-Host "  Config file : $Conf   (edit, then restart)"
 Write-Host "  Manage      : $ScriptsDir\windows\Start.bat | Stop.bat | Update.bat | Backup.bat | Status.bat"
 Write-Host "  PowerShell  : & '$Manager' <Start|Stop|Restart|Status|Logs|Update|Backup|Rcon>"
 Write-Host ("  Ports       : {0}/udp+tcp (game), {1}/tcp (queue), {2}/tcp (RCON, keep private)" -f (Get-Conf 'GAME_PORT' '7777'), (Get-Conf 'QUEUE_PORT' '10000'), (Get-Conf 'RCON_PORT' '8888'))
+if ($Docker) {
+    Write-Host '  Runtime     : Docker (container restarts automatically; enable "Start Docker Desktop when you sign in")'
+}
 Write-Host '  Remember to forward the game and queue ports on your router / cloud firewall.'

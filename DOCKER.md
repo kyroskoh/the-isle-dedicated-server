@@ -8,7 +8,58 @@ Requirements: Docker Engine 24+ or Docker Desktop (Windows, macOS, Linux) on an
 **x86_64 / amd64** host. ARM hosts (Apple Silicon, Raspberry Pi, Graviton) aren't supported,
 because the game server is x86_64 only.
 
-## Quick start (Docker Compose)
+## Quick start with the launcher (recommended)
+
+The same launcher and `config/server.conf` you'd use for a native install also drive Docker.
+Set `RUNTIME=docker` and every command (`start`, `stop`, `status`, `logs`, `update`, `backup`,
+`restore`, `rcon`, ...) manages the container instead.
+
+**Linux**
+
+```bash
+git clone https://github.com/kyroskoh/the-isle-dedicated-server.git
+cd the-isle-dedicated-server
+sudo ./linux/install.sh --docker --start   # checks Docker, sets RUNTIME=docker, builds, starts
+sudo nano config/server.conf               # edit settings
+sudo isle-server restart                   # recreates the container with the new settings
+sudo isle-server logs -f
+```
+
+**Windows (Docker Desktop, Linux containers)**
+
+```powershell
+.\windows\Install.ps1 -Docker -Start          # or: Install.bat -Docker -Start
+# edit C:\TheIsle\scripts\config\server.conf, then
+C:\TheIsle\scripts\windows\Restart.bat
+```
+
+To switch an existing setup, set `RUNTIME=docker` (or `native`) in `server.conf`. To override it for a
+single command, use `isle-server.sh --docker <cmd>`, `IsleServer.ps1 <Cmd> -Runtime Docker`,
+`Start.bat -Runtime Docker`, or the `ISLE_RUNTIME` environment variable.
+
+| Launcher command | What it does in docker mode |
+|---|---|
+| `install` | Builds the image (or pulls `DOCKER_IMAGE` when `DOCKER_BUILD=false`) and creates the container |
+| `start` / `restart` | `docker compose up -d`. Applies `server.conf` changes by recreating the container |
+| `stop` | `docker compose stop` (RCON save, then a clean shutdown) |
+| `status` | `0` if the server process in the container is running, `3` if not |
+| `run` | `docker compose up` in the foreground (Ctrl+C stops) |
+| `logs [-f]` / `Logs -Follow` | Container logs |
+| `update` / `validate` | Refused while running. Otherwise rebuilds the image and runs SteamCMD in a one-off container |
+| `configure` | Regenerates `Game.ini`/`Engine.ini` in a one-off container |
+| `backup` | Backs up into `/data/backups` (works running or stopped) |
+| `restore <file>` | Accepts a host file (copied in), a name in `/data/backups`, or a `/data/...` path |
+| `rcon` / `save` | Runs inside the running container |
+| `check` / `info` / `version` | Run on the host |
+
+How the config gets in: the launcher passes your **host** `server.conf` to compose as `env_file` and
+`--env-file` (port mappings), so one file controls both runtimes. Paths are always `/data/...` inside the
+container. The RCON password is generated into the host file, so it stays the same across restarts.
+
+> Values in `server.conf` that contain `$` are interpolated by Docker Compose. Avoid `$` in passwords,
+> or write it as `$$`, when you use docker mode.
+
+## Quick start (plain Docker Compose)
 
 ```bash
 git clone https://github.com/kyroskoh/the-isle-dedicated-server.git
@@ -30,6 +81,8 @@ ADMIN_STEAM_IDS=76561198000000001,76561198000000002
 ```
 
 Apply them with `docker compose up -d`, which recreates the container. The world is kept.
+
+Without the launcher, compose reads settings from `.env` (above) and the `environment:` block.
 
 ## Plain `docker run`
 

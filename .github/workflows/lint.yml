@@ -102,6 +102,43 @@ jobs:
           if docker run --rm -v isle-ci:/data -e UPDATE_ON_START=false -e GAME_PORT=99999 theisle-server:ci; then
             echo "container accepted GAME_PORT=99999"; exit 1
           fi
+      - name: Launcher in docker mode (LCH-01..08)
+        run: |
+          set -eux
+          conf="$RUNNER_TEMP/launcher.conf"
+          sed -e 's/^RUNTIME=native/RUNTIME=docker/' -e 's/^DOCKER_BUILD=true/DOCKER_BUILD=false/' \
+              -e 's/^DOCKER_IMAGE=.*/DOCKER_IMAGE=theisle-server:ci/' -e 's/^UPDATE_ON_START=true/UPDATE_ON_START=false/' \
+              -e 's/^SERVER_NAME=.*/SERVER_NAME="Launcher CI"/' config/server.conf.example > "$conf"
+          export ISLE_CONF="$conf"
+          L=linux/isle-server.sh
+          $L info | grep -q 'Runtime *: docker'
+          $L install                                            # generates RCON password on the host
+          grep -qE '^RCON_PASSWORD=.{24}$' "$conf"
+          ISLE_CONF_FILE="$conf" docker compose --env-file "$conf" run --rm --entrypoint bash theisle -c '
+            mkdir -p /data/server/TheIsle/Binaries/Linux
+            printf "%s\n" "#!/bin/bash" "trap \"exit 0\" TERM" "while :; do sleep 1; done" \
+              > /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping
+            chmod +x /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping'
+          $L start
+          for i in $(seq 1 20); do $L status && break; sleep 2; done
+          $L status
+          docker exec theisle grep -q '^ServerName=Launcher CI$' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini
+          test "$(grep '^RCON_PASSWORD=' "$conf" | cut -d= -f2)" = \
+               "$(docker exec theisle grep '^RconPassword=' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini | cut -d= -f2)"
+          $L rcon serverdetails || true                         # no real RCON server behind the fake binary
+          $L backup
+          if $L update; then echo "update ran while the container was running"; exit 1; fi
+          sed -i 's/^SERVER_NAME=.*/SERVER_NAME="Launcher CI 2"/' "$conf"
+          $L restart
+          sleep 5
+          docker exec theisle grep -q '^ServerName=Launcher CI 2$' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini
+          $L logs | tail -5
+          $L stop
+          rc=0; $L status || rc=$?; test "$rc" = 3
+          backup="$(docker run --rm -v the-isle-dedicated-server_theisle-data:/data theisle-server:ci bash -c 'ls /data/backups/*.tar.gz | head -1')"
+          $L restore "$(basename "$backup")"
+          $L --native info | grep -q 'Runtime *: native'
+          if ISLE_RUNTIME=podman $L status; then echo "accepted RUNTIME=podman"; exit 1; fi
 
   windows:
     runs-on: windows-latest
@@ -148,3 +185,22 @@ jobs:
           .\windows\IsleServer.ps1 Info -ConfigPath $conf
           .\windows\IsleServer.ps1 Backup -ConfigPath $conf
           if (-not (Get-ChildItem "$tmp\bk\theisle-*.zip")) { exit 1 }
+      - name: Docker runtime mode (LCH-02/06)
+        shell: powershell
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP 'isle-docker'
+          $conf = Join-Path $tmp 'server.conf'
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          (Get-Content config\server.conf.example) -replace '^RCON_PASSWORD=$', 'RCON_PASSWORD=ci-test-password' | Set-Content $conf
+          $info = .\windows\IsleServer.ps1 Info -Runtime Docker -ConfigPath $conf 6>&1 | Out-String
+          Write-Host $info
+          if ($info -notmatch 'Runtime\s+: docker') { Write-Host 'Info did not report docker runtime'; exit 1 }
+          .\windows\IsleServer.ps1 Check -Runtime Docker -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # The hosted runner only has Windows containers: Status must fail with a clear message.
+          $out = .\windows\IsleServer.ps1 Status -Runtime Docker -ConfigPath $conf 6>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 1 -or $out -notmatch 'Linux containers|Docker') { Write-Host 'expected a clear docker error'; exit 1 }
+          $env:ISLE_RUNTIME = 'podman'
+          .\windows\IsleServer.ps1 Status -ConfigPath $conf
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted RUNTIME=podman'; exit 1 }
