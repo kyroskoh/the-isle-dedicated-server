@@ -1,0 +1,74 @@
+name: lint
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck
+        run: shellcheck -x linux/*.sh
+      - name: Python syntax
+        run: python3 -m py_compile tools/isle_rcon.py
+      - name: Render config with a fake server
+        run: |
+          set -e
+          tmp="$(mktemp -d)"
+          mkdir -p "$tmp/srv/TheIsle/Binaries/Linux"
+          printf '#!/bin/sh\ntrap "exit 0" TERM\nwhile :; do sleep 1; done\n' > "$tmp/srv/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping"
+          chmod +x "$tmp/srv/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping"
+          sed -e "s|^SERVER_DIR=|SERVER_DIR=$tmp/srv|" -e "s|^BACKUP_DIR=|BACKUP_DIR=$tmp/bk|" \
+              -e 's|^UPDATE_ON_START=true|UPDATE_ON_START=false|' -e 's|^SAVE_BEFORE_STOP=true|SAVE_BEFORE_STOP=false|' \
+              config/server.conf.example > "$tmp/server.conf"
+          export ISLE_CONF="$tmp/server.conf" ISLE_NO_SYSTEMD=1
+          linux/isle-server.sh configure
+          grep -q '^\[/Script/TheIsle.TIGameSession\]' "$tmp/srv/TheIsle/Saved/Config/LinuxServer/Game.ini"
+          grep -q '^DedicatedServerClientId=' "$tmp/srv/TheIsle/Saved/Config/LinuxServer/Engine.ini"
+          linux/isle-server.sh start
+          linux/isle-server.sh status
+          linux/isle-server.sh stop
+          linux/isle-server.sh backup
+          ls "$tmp/bk"/theisle-*.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem windows -Filter *.ps1 | ForEach-Object {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) { $failed = $true; $errors | ForEach-Object { Write-Host "$($_.Extent.File):$($_.Extent.StartLineNumber) $($_.Message)" } }
+          }
+          if ($failed) { exit 1 }
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $r = Invoke-ScriptAnalyzer -Path windows -Severity Error
+          $r | Format-Table -AutoSize
+          if ($r) { exit 1 }
+      - name: Render config with a fake server (5.1)
+        shell: powershell
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP 'isle'
+          $conf = Join-Path $tmp 'server.conf'
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          (Get-Content config\server.conf.example) `
+            -replace '^SERVER_DIR=$', "SERVER_DIR=$tmp\srv" `
+            -replace '^BACKUP_DIR=$', "BACKUP_DIR=$tmp\bk" | Set-Content $conf
+          .\windows\IsleServer.ps1 Configure -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not (Select-String -Path "$tmp\srv\TheIsle\Saved\Config\WindowsServer\Game.ini" -Pattern 'TIGameSession' -Quiet)) { exit 1 }
+          .\windows\IsleServer.ps1 Info -ConfigPath $conf
+          .\windows\IsleServer.ps1 Backup -ConfigPath $conf
+          if (-not (Get-ChildItem "$tmp\bk\theisle-*.zip")) { exit 1 }

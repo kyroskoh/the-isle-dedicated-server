@@ -1,0 +1,122 @@
+# =============================================================================
+#  The Isle (Evrima) Dedicated Server - shared configuration
+# -----------------------------------------------------------------------------
+#  Copy this file to "server.conf" (same folder) and edit it.
+#  The SAME file is read by the Linux (bash) and Windows (PowerShell) scripts.
+#
+#  Format rules (keep it simple so both shells parse it identically):
+#    KEY=value            one per line, no spaces around "="
+#    # comment            whole-line comments only
+#    Values may be wrapped in double quotes; quotes are stripped.
+#    Lists use commas, e.g. ADMIN_STEAM_IDS=7656119xxxxxxxxx1,7656119xxxxxxxxx2
+# =============================================================================
+
+# ---------------------------------------------------------------- Install ----
+# Where SteamCMD and the server files live. Leave empty for the defaults:
+#   Linux  : <home of the service user>/steamcmd  and  .../theisle-server
+#   Windows: C:\TheIsle\steamcmd                  and  C:\TheIsle\server
+STEAMCMD_DIR=
+SERVER_DIR=
+BACKUP_DIR=
+
+# Steam app ID of "The Isle Dedicated Server" and the branch to install.
+# Evrima lives on the "evrima" beta branch. Leave BRANCH empty for public.
+STEAM_APP_ID=412680
+STEAM_BRANCH=evrima
+# Only needed if the branch is password protected (normally it is not).
+STEAM_BRANCH_PASSWORD=
+# Validate all files on every update (slower, but repairs corruption).
+VALIDATE_ON_UPDATE=false
+# Run SteamCMD update automatically before every start.
+UPDATE_ON_START=true
+
+# ----------------------------------------------------------------- Network ---
+# Game port (UDP, Unreal "-Port"). Open UDP+TCP in your firewall/router.
+GAME_PORT=7777
+# Queue port (TCP). Only used when QUEUE_ENABLED=true.
+QUEUE_PORT=10000
+# RCON port (TCP). Do NOT expose publicly unless you need remote RCON.
+RCON_PORT=8888
+# Bind to a specific local IP (multi-homed hosts). Empty = all interfaces.
+MULTIHOME_IP=
+# Open RCON in the OS firewall too (installer). Default: keep it closed.
+FIREWALL_OPEN_RCON=false
+
+# ------------------------------------------------------------ Server info ----
+SERVER_NAME="My Evrima Server"
+# Map name. "Gateway" is the current Evrima map.
+MAP_NAME=Gateway
+MAX_PLAYERS=100
+# Leave empty for a public server.
+SERVER_PASSWORD=
+# Comma separated SteamID64 list of admins.
+ADMIN_STEAM_IDS=
+# Whitelist (only listed SteamID64s can join).
+WHITELIST_ENABLED=false
+WHITELIST_IDS=
+
+# ---------------------------------------------------------------- Queue ------
+QUEUE_ENABLED=true
+
+# ----------------------------------------------------------------- RCON ------
+RCON_ENABLED=true
+# REQUIRED when RCON_ENABLED=true. The installer generates a random one.
+RCON_PASSWORD=
+
+# ------------------------------------------------------------- Gameplay ------
+GLOBAL_CHAT=true
+ENABLE_HUMANS=false
+DYNAMIC_WEATHER=true
+DAY_LENGTH_MINUTES=45
+NIGHT_LENGTH_MINUTES=20
+GROWTH_MULTIPLIER=1
+CORPSE_DECAY_MULTIPLIER=1
+ENABLE_MUTATIONS=true
+ENABLE_DIETS=true
+ENABLE_PATROL_ZONES=true
+ALLOW_RECORDING_REPLAY=true
+# Spawn plants / food and their density multiplier.
+SPAWN_PLANTS=true
+PLANT_SPAWN_MULTIPLIER=1
+# AI creatures.
+SPAWN_AI=true
+AI_DENSITY=1
+# Comma separated list of AI classes to disable, e.g. Compsognathus,Pterodactylus
+DISABLED_AI_CLASSES=
+# Migration zones.
+ENABLE_MIGRATION=true
+MAX_MIGRATION_TIME=5400
+ENABLE_MASS_MIGRATION=true
+MASS_MIGRATION_TIME=43200
+MASS_MIGRATION_DISABLE_TIME=7200
+# Comma separated list of playable classes. Empty = game default (all).
+# Example: Dryosaurus,Hypsilophodon,Pachycephalosaurus,Stegosaurus,Tenontosaurus,
+#          Carnotaurus,Ceratosaurus,Deinosuchus,Omniraptor,Pteranodon,Troodon,
+#          Beipiaosaurus,Gallimimus,Dilophosaurus,Herrerasaurus,Maiasaura,Triceratops,Tyrannosaurus
+ALLOWED_CLASSES=
+
+# -------------------------------------------------- Epic Online Services -----
+# Evrima servers authenticate through EOS. These are the publicly documented
+# dedicated-server client credentials used by community guides. Change only
+# if the developers publish new ones.
+EOS_CLIENT_ID=xyza7891gk5PRo3J7G9puCJGFJjmEguW
+EOS_CLIENT_SECRET=pKWl6t5i9NJK8gTpVlAxzENZ65P8hYzodV8Dqe5Rlc8
+
+# --------------------------------------------------------------- Scripts -----
+# true  = Game.ini / Engine.ini are regenerated from this file on every start
+#         (previous copies are kept as *.bak).
+# false = only generated once if missing; edit the .ini files by hand.
+MANAGE_INI_FILES=true
+# Extra keys appended verbatim to [/Script/TheIsle.TIGameSession] in Game.ini.
+# Separate multiple entries with "|", e.g.  bFoo=true|SomeValue=3
+EXTRA_GAME_SESSION_SETTINGS=
+# Extra command-line arguments passed to the server executable.
+EXTRA_ARGS=-log
+# Seconds to wait for a graceful shutdown before force-killing.
+STOP_TIMEOUT=60
+# Automatically restart the server if it crashes (watchdog / service mode).
+AUTO_RESTART=true
+# Number of backups to keep (0 = keep all).
+BACKUP_RETENTION=10
+# Send "save" via RCON before stopping / backing up (needs RCON + python3).
+SAVE_BEFORE_STOP=true

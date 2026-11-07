@@ -1,0 +1,20 @@
+# Local configuration (contains passwords)
+config/server.conf
+config/*.bak
+
+# Server data if someone installs inside the repo
+steamcmd/
+server/
+theisle-server/
+backups/
+*.tar.gz
+*.zip
+.isle-scripts/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+__pycache__/
