@@ -44,6 +44,65 @@ jobs:
           linux/isle-server.sh backup
           ls "$tmp/bk"/theisle-*.tar.gz
 
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: hadolint
+        run: docker run --rm -i hadolint/hadolint:v2.12.0 < docker/Dockerfile
+      - name: ShellCheck container scripts
+        run: shellcheck -x docker/entrypoint.sh docker/isle-server
+      - name: Validate compose file
+        run: docker compose config -q
+      - name: Build image
+        run: docker build -f docker/Dockerfile -t theisle-server:ci .
+      - name: Image size under 500 MB (DKR-01)
+        run: |
+          size=$(docker image inspect theisle-server:ci --format '{{.Size}}')
+          echo "image size: $((size / 1024 / 1024)) MB"
+          test "$size" -lt $((500 * 1024 * 1024))
+      - name: Smoke test with a fake server binary
+        run: |
+          set -eux
+          docker volume create isle-ci
+          # Fake server: logs its uid, exits cleanly on SIGTERM.
+          docker run --rm --entrypoint bash -v isle-ci:/data theisle-server:ci -c '
+            mkdir -p /data/server/TheIsle/Binaries/Linux
+            printf "%s\n" "#!/bin/bash" "echo FAKE uid=\$(id -u)" "trap \"echo FAKE got TERM; exit 0\" TERM" "while :; do sleep 1; done" \
+              > /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping
+            chmod +x /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping'
+          run() { docker run -d --name isle-ci -v isle-ci:/data -e UPDATE_ON_START=false -e PUID=1234 -e PGID=1234 \
+                    --health-interval=2s --health-start-period=5s "$@" theisle-server:ci; }
+
+          # DKR-03: env override reaches Game.ini; RCON password generated
+          run -e SERVER_NAME="CI Server"
+          for i in $(seq 1 30); do [ "$(docker inspect -f '{{.State.Health.Status}}' isle-ci)" = healthy ] && break; sleep 2; done
+          docker logs isle-ci
+          test "$(docker inspect -f '{{.State.Health.Status}}' isle-ci)" = healthy                      # DKR-06
+          docker exec isle-ci grep -q '^ServerName=CI Server$' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini
+          docker exec isle-ci grep -qE '^RconPassword=.{24}$' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini
+          docker logs isle-ci 2>&1 | grep -q 'FAKE uid=1234'                                              # DKR-04
+          docker exec isle-ci isle-server status                                                          # DKR-07
+          docker exec isle-ci isle-server backup
+          docker exec isle-ci sh -c 'ls /data/backups/theisle-*.tar.gz'                                   # DKR-09
+
+          # DKR-05: graceful stop
+          docker stop -t 90 isle-ci
+          test "$(docker inspect -f '{{.State.ExitCode}}' isle-ci)" = 0
+          docker logs isle-ci 2>&1 | grep -q 'FAKE got TERM'
+          docker rm isle-ci
+
+          # DKR-02: a new container keeps the config
+          run
+          sleep 8
+          docker exec isle-ci grep -q '^ServerName=CI Server$' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini
+          docker rm -f isle-ci
+
+          # CFG-05 in Docker: a bad env value makes the container fail
+          if docker run --rm -v isle-ci:/data -e UPDATE_ON_START=false -e GAME_PORT=99999 theisle-server:ci; then
+            echo "container accepted GAME_PORT=99999"; exit 1
+          fi
+
   windows:
     runs-on: windows-latest
     steps:

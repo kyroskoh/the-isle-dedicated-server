@@ -1,0 +1,54 @@
+# The Isle (Evrima) dedicated server - Docker Compose
+#
+#   docker compose up -d --build     # first start downloads the server (several GB)
+#   docker compose logs -f
+#   docker compose exec theisle isle-server status
+#
+# Settings: any key from config/server.conf.example can be set below or in a
+# ".env" file next to this one. They are saved into /data/config/server.conf.
+# See DOCKER.md for details.
+
+services:
+  theisle:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: theisle-server:latest
+    container_name: theisle
+    platform: linux/amd64
+    restart: unless-stopped
+    # Must be longer than STOP_TIMEOUT (default 60s) so the server can save and exit.
+    stop_grace_period: 90s
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      SERVER_NAME: "${SERVER_NAME:-My Evrima Server}"
+      SERVER_PASSWORD: "${SERVER_PASSWORD:-}"
+      MAX_PLAYERS: "${MAX_PLAYERS:-100}"
+      ADMIN_STEAM_IDS: "${ADMIN_STEAM_IDS:-}"
+      GAME_PORT: "${GAME_PORT:-7777}"
+      QUEUE_PORT: "${QUEUE_PORT:-10000}"
+      RCON_PORT: "${RCON_PORT:-8888}"
+      STEAM_BRANCH: "${STEAM_BRANCH:-evrima}"
+      UPDATE_ON_START: "${UPDATE_ON_START:-true}"
+      # RCON_PASSWORD is generated on first start if left empty.
+      # Add more keys here, e.g.:
+      # ENABLE_HUMANS: "false"
+      # AI_DENSITY: "1"
+    ports:
+      # Host and container ports must match - the server advertises its own port.
+      - "${GAME_PORT:-7777}:${GAME_PORT:-7777}/udp"
+      - "${GAME_PORT:-7777}:${GAME_PORT:-7777}/tcp"
+      - "${QUEUE_PORT:-10000}:${QUEUE_PORT:-10000}/tcp"
+      # RCON is only reachable from the Docker host itself.
+      - "127.0.0.1:${RCON_PORT:-8888}:${RCON_PORT:-8888}/tcp"
+    volumes:
+      - theisle-data:/data
+      # Or use a host folder (set PUID/PGID to its owner):
+      # - ./data:/data
+    # If the server doesn't show up in the browser behind Docker NAT, try host
+    # networking instead of the "ports" section:
+    # network_mode: host
+
+volumes:
+  theisle-data:

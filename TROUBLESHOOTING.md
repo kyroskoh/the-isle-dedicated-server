@@ -67,6 +67,10 @@ stop it from an **elevated** prompt. Right-click `Stop.bat` and choose **Run as 
 - Use an SSD and a CPU with high single-thread performance.
 - On Linux, `isle-server.sh` raises the open-file limit (`ulimit -n`). The systemd unit sets `LimitNOFILE=100000`.
 
+## Docker
+
+See the troubleshooting section in [DOCKER.md](DOCKER.md#troubleshooting).
+
 ## Restoring after a bad update
 
 ```bash

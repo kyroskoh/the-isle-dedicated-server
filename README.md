@@ -1,7 +1,7 @@
 # The Isle (Evrima) Dedicated Server Scripts
 
 Scripts to install, configure, run, update and back up a **The Isle – Evrima**
-dedicated server on **Windows** and **Linux**, all driven from one shared config file.
+dedicated server on **Windows**, **Linux** and **Docker**, all driven from one shared config file.
 
 | Platform | Supported | Entry point |
 |---|---|---|
@@ -12,6 +12,7 @@ dedicated server on **Windows** and **Linux**, all driven from one shared config
 | Arch / Manjaro / EndeavourOS | ✅ (enables `[multilib]`) | `sudo linux/install.sh` |
 | openSUSE Leap / Tumbleweed / SLES | ✅ | `sudo linux/install.sh` |
 | Other glibc x86_64 distros | ⚠️ Manual dependencies | `linux/isle-server.sh install` |
+| Docker / Docker Desktop (x86_64 host) | ✅ | `docker compose up -d` |
 | Alpine / musl, ARM | ❌ Not supported (the server is x86_64 glibc only) | — |
 
 ## Features
@@ -35,6 +36,14 @@ dedicated server on **Windows** and **Linux**, all driven from one shared config
 2. Double-click **`windows\Install.bat`** and accept the Administrator prompt.
 3. Edit **`C:\TheIsle\scripts\config\server.conf`**: set the server name, admins and so on.
 4. Run **`C:\TheIsle\scripts\windows\Restart.bat`**, or reboot. The server starts at boot.
+
+### Docker
+
+```bash
+git clone https://github.com/kyroskoh/the-isle-dedicated-server.git
+cd the-isle-dedicated-server
+docker compose up -d --build       # settings via .env - see DOCKER.md
+```
 
 ### Linux
 
@@ -84,11 +93,14 @@ windows/Install.ps1 (.bat)   Elevated installer: VC++ runtime, SteamCMD, server,
 windows/IsleServer.ps1       Manager with the same commands as the Linux script
 windows/*.bat                Double-click launchers (Start, Stop, Restart, Update, Backup, ...)
 tools/isle_rcon.py           Cross-platform Evrima RCON client
+docker/                      Dockerfile, entrypoint and exec wrapper
+docker-compose.yml           Compose service (ports, volume, env settings)
 ```
 
 ## Documentation
 
 - [INSTALL.md](INSTALL.md): step-by-step installation, manual installs, and uninstalling
+- [DOCKER.md](DOCKER.md): running in Docker / Docker Compose
 - [CONFIGURATION.md](CONFIGURATION.md): every `server.conf` key and the `Game.ini` key it maps to
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): common problems and fixes
 - [PRD.md](PRD.md): product requirements, plan and traceability (start here before contributing)

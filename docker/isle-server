@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# isle-server - wrapper for `docker exec <container> isle-server <command>`.
+# `docker exec` runs as root by default; drop to the owner of /data so the
+# manager (which refuses to run as root) works and files keep the right owner.
+set -euo pipefail
+export ISLE_CONF="${ISLE_CONF:-/data/config/server.conf}" ISLE_NO_SYSTEMD=1 HOME=/data/home
+MANAGER=/opt/theisle-scripts/linux/isle-server.sh
+case "${1:-}" in
+  start|stop|restart)
+    echo "isle-server: inside Docker the container is the service - use 'docker compose $1' (or docker $1 <container>)." >&2
+    exit 2 ;;
+esac
+if [[ $EUID -eq 0 ]]; then
+  owner="$(stat -c '%u:%g' /data)"
+  if [[ "${owner%%:*}" == "0" ]]; then
+    echo "isle-server: /data is owned by root - start the container once so the entrypoint can fix ownership" >&2
+    exit 1
+  fi
+  exec setpriv --reuid "${owner%%:*}" --regid "${owner##*:}" --clear-groups "$MANAGER" "$@"
+fi
+exec "$MANAGER" "$@"

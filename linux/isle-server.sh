@@ -406,6 +406,8 @@ cmd_run() {  # foreground; systemd ExecStart
   local -a args; mapfile -t args < <(server_args)
   log "Launching: $bin ${args[*]}"
   cd "$SERVER_DIR"
+  # exec keeps this PID, so status/stop/healthchecks can find the server.
+  echo $$ > "$STATE_DIR/server.pid"
   exec "$bin" "${args[@]}"
 }
 
@@ -490,7 +492,9 @@ cmd_stop() {
 
 cmd_status() {
   if service_installed; then systemctl --no-pager status "$ISLE_SERVICE" || true; return; fi
-  if is_running; then ok "Running (server PID $(read_pid "$STATE_DIR/server.pid"), watchdog PID $(read_pid "$STATE_DIR/watchdog.pid"))"
+  if is_running; then
+    local wd; wd="$(read_pid "$STATE_DIR/watchdog.pid")"
+    ok "Running (server PID $(read_pid "$STATE_DIR/server.pid")${wd:+, watchdog PID $wd})"
   else warn "Not running"; return 3; fi
 }
 

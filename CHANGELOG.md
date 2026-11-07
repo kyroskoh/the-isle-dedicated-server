@@ -6,6 +6,29 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-07
+
+Planned in [PRD.md](PRD.md) as milestone M7 (requirements DKR-01 to DKR-10).
+
+### Added
+- **Docker support**
+  - `docker/Dockerfile`: Debian bookworm-slim (`linux/amd64`) with the SteamCMD 32-bit libraries, Python and tini.
+    The game downloads into the `/data` volume and isn't baked into the image.
+  - `docker/entrypoint.sh`: saves env vars named like `server.conf` keys into `/data/config/server.conf`, generates
+    an RCON password, remaps the user to `PUID`/`PGID`, fixes `/data` ownership, drops root with `setpriv`, validates
+    the config, and on `docker stop` saves via RCON before stopping the server.
+  - `docker/isle-server`: `docker exec` wrapper that drops to the `/data` owner. Points `start`/`stop`/`restart`
+    to `docker compose`.
+  - `docker-compose.yml`: game UDP/TCP and queue ports, RCON bound to localhost only, a named volume,
+    `stop_grace_period: 90s` and `restart: unless-stopped`.
+  - `HEALTHCHECK` using `isle-server status`, with a 30-minute start period for the first download.
+  - `DOCKER.md` guide, and a CI `docker` job (hadolint, build, size limit, fake-server smoke test for env overrides,
+    health, non-root uid, exec, backup, graceful stop, volume persistence, and bad-config failure).
+
+### Changed
+- `isle-server.sh run` writes its PID file before `exec`, so `status` works in foreground, systemd and Docker modes.
+- `status` no longer prints an empty watchdog PID.
+
 ## [1.1.0] - 2026-11-07
 
 The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
@@ -53,6 +76,7 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kyroskoh/the-isle-dedicated-server/releases/tag/v1.0.0

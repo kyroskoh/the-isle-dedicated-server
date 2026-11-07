@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.2 |
-| **Product version** | 1.2.0 (planned), 1.1.0 (released) |
+| **Product version** | 1.2.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -299,7 +299,7 @@ The container lifecycle (`docker compose up -d`, `stop`, `restart`, `logs -f`) r
 | M4 Docs and CI | README, INSTALL, CONFIGURATION, TROUBLESHOOTING, SECURITY, CONTRIBUTING, CHANGELOG, LICENSE, CI | ✅ Done (v1.0.0) |
 | M5 Hardening (v1.1.0) | CFG-05 config validation, UPD-03 on Linux, CLI-02 help completeness, CLI-03 version | ✅ Done (v1.1.0) |
 | M6 Field validation | §10.2 checklist on each Tier-1 OS | ⏳ Planned. Needs real hosts |
-| **M7 Docker (v1.2.0)** | **DKR-01 – DKR-10**: Dockerfile, entrypoint, compose file, CI job, DOCKER.md | 🔜 In progress |
+| M7 Docker (v1.2.0) | DKR-01 – DKR-10: Dockerfile, entrypoint, compose file, CI job, DOCKER.md | ✅ Done (v1.2.0). Full image build verified in CI only |
 
 ## 12. Traceability matrix
 
@@ -328,13 +328,13 @@ The container lifecycle (`docker compose up -d`, `stop`, `restart`, `logs -f`) r
 | CLI-01/04/05/06 | managers, `.bat` launchers | Review | Done |
 | CLI-02 | Usage headers list every dispatcher command | Review | Done (v1.1) |
 | CLI-03 | `VERSION` file, `version` / `Version` commands, shown in `info` | CI smoke | Done (v1.1) |
-| DKR-01/02 | `docker/Dockerfile`, `/data` volume | CI docker build + volume reuse | **Planned v1.2** |
-| DKR-03 | `docker/entrypoint.sh` env → `server.conf` | CI (env reaches Game.ini, bad value fails) | **Planned v1.2** |
-| DKR-04 | entrypoint PUID/PGID + `setpriv` | CI (process uid ≠ 0) | **Planned v1.2** |
-| DKR-05 | entrypoint TERM trap, compose `stop_grace_period` | CI (`docker stop` exit) | **Planned v1.2** |
-| DKR-06 | Dockerfile `HEALTHCHECK` | CI (healthy) | **Planned v1.2** |
-| DKR-07 | `docker/isle-server` wrapper | CI (`exec isle-server status`) | **Planned v1.2** |
-| DKR-08/09/10 | `docker-compose.yml`, DOCKER.md | Review, manual §10.2-8 | **Planned v1.2** |
+| DKR-01/02 | `docker/Dockerfile`, `/data` volume | CI docker build + volume reuse | Done (v1.2) |
+| DKR-03 | `docker/entrypoint.sh` env → `server.conf` | CI (env reaches Game.ini, bad value fails) | Done (v1.2) |
+| DKR-04 | entrypoint PUID/PGID + `setpriv` | CI (process uid ≠ 0) | Done (v1.2) |
+| DKR-05 | entrypoint TERM trap, compose `stop_grace_period` | CI (`docker stop` exit) | Done (v1.2) |
+| DKR-06 | Dockerfile `HEALTHCHECK` | CI (healthy) | Done (v1.2) |
+| DKR-07 | `docker/isle-server` wrapper | CI (`exec isle-server status`) | Done (v1.2) |
+| DKR-08/09/10 | `docker-compose.yml`, DOCKER.md | Review, manual §10.2-8 | Done (v1.2) |
 
 ## 13. Risks and mitigations
 
