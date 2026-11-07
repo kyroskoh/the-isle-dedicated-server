@@ -116,7 +116,7 @@ STOP_TIMEOUT="$(conf_get STOP_TIMEOUT)"; [[ "$STOP_TIMEOUT" =~ ^[0-9]+$ ]] || ST
 
 server_pid=""
 stopping=0
-# shellcheck disable=SC2329  # invoked via trap
+# shellcheck disable=SC2317,SC2329  # invoked via trap (code differs by shellcheck version)
 on_term() {
   (( stopping )) && return
   stopping=1
