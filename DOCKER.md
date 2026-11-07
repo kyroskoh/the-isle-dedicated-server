@@ -116,6 +116,13 @@ docker run -d --name theisle --restart unless-stopped --stop-timeout 90 \
 | `UPDATE_ON_START` | `true` | Update the game with SteamCMD on every start |
 | `STOP_TIMEOUT` | `60` | Seconds to wait for a clean exit (keep `stop_grace_period` 30 s longer) |
 
+## Names that stay the same
+
+The compose project is always `theisle` and the data volume is always `theisle-data`, whichever folder or clone
+you run it from. So uninstalling and reinstalling (or moving the scripts) finds the same world. Installs from
+before 1.4 used `<folder>_theisle-data`. The Linux installer copies that into `theisle-data` once and leaves
+the old volume in place.
+
 ## Volume layout
 
 ```

@@ -135,10 +135,19 @@ jobs:
           $L logs | tail -5
           $L stop
           rc=0; $L status || rc=$?; test "$rc" = 3
-          backup="$(docker run --rm -v the-isle-dedicated-server_theisle-data:/data theisle-server:ci bash -c 'ls /data/backups/*.tar.gz | head -1')"
+          backup="$(docker run --rm -v theisle-data:/data theisle-server:ci bash -c 'ls /data/backups/*.tar.gz | head -1')"
           $L restore "$(basename "$backup")"
           $L --native info | grep -q 'Runtime *: native'
           if ISLE_RUNTIME=podman $L status; then echo "accepted RUNTIME=podman"; exit 1; fi
+
+  installer-cycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck test script
+        run: shellcheck -x tests/installer-cycle.sh
+      - name: Install / uninstall / reinstall / switch / purge cycle (INS-13..18)
+        run: sudo ISLE_TEST_I_UNDERSTAND=1 bash tests/installer-cycle.sh
 
   windows:
     runs-on: windows-latest
@@ -204,3 +213,35 @@ jobs:
           $env:ISLE_RUNTIME = 'podman'
           .\windows\IsleServer.ps1 Status -ConfigPath $conf
           if ($LASTEXITCODE -ne 1) { Write-Host 'accepted RUNTIME=podman'; exit 1 }
+      - name: Restore accepts .zip and .tar.gz (native)
+        shell: powershell
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP 'isle-restore'
+          $conf = Join-Path $tmp 'server.conf'
+          New-Item -ItemType Directory -Force -Path "$tmp\src\Saved" | Out-Null
+          Set-Content "$tmp\src\Saved\marker.txt" 'from-tar'
+          (Get-Content config\server.conf.example) -replace '^SERVER_DIR=$', "SERVER_DIR=$tmp\srv" `
+            -replace '^RCON_PASSWORD=$', 'RCON_PASSWORD=x' | Set-Content $conf
+          tar -czf "$tmp\b.tar.gz" -C "$tmp\src" Saved
+          .\windows\IsleServer.ps1 Restore -Runtime Native -Path "$tmp\b.tar.gz" -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0 -or (Get-Content "$tmp\srv\TheIsle\Saved\marker.txt") -ne 'from-tar') { exit 1 }
+          Compress-Archive -Path "$tmp\src\Saved" -DestinationPath "$tmp\b.zip"
+          .\windows\IsleServer.ps1 Restore -Runtime Native -Path "$tmp\b.zip" -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Installer argument and uninstall handling (INS-13/16/17)
+        shell: powershell
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'isle-install'
+          .\windows\Install.ps1 -Native -Docker -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -Native -Docker'; exit 1 }
+          .\windows\Install.ps1 -Purge -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -Purge without -Uninstall'; exit 1 }
+          .\windows\Install.ps1 -Uninstall -InstallRoot $root
+          if ($LASTEXITCODE -ne 0) { Write-Host 'uninstall on a clean machine failed'; exit 1 }
+          New-Item -ItemType Directory -Force -Path "$root\scripts\windows" | Out-Null
+          Set-Content "$root\install-state.txt" "MODE=native`nSTATUS=uninstalled"
+          # stdin redirected => non-interactive: purge must refuse without -Yes
+          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\Install.ps1 -Uninstall -Purge -InstallRoot $root
+          if ($LASTEXITCODE -ne 1 -or -not (Test-Path $root)) { Write-Host 'purge ran without confirmation'; exit 1 }
+          .\windows\Install.ps1 -Uninstall -Purge -Yes -InstallRoot $root
+          if ($LASTEXITCODE -ne 0 -or (Test-Path $root)) { Write-Host 'purge -Yes did not remove the folder'; exit 1 }

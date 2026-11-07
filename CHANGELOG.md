@@ -6,6 +6,36 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-07
+
+Planned in [PRD.md](PRD.md) as milestone M9 (requirements INS-13 to INS-18).
+
+### Added
+- **Both installers support native and Docker modes**, with `--native` / `--docker` (Linux) and `-Native` / `-Docker`
+  (Windows, also through `Install.bat`). With no flag they ask (1 = native, 2 = docker). Non-interactive runs use the
+  previous mode, or native on a first install.
+- **Safe mode switching:** re-running the installer with the other mode stops and disables the old one (data kept),
+  carries `server.conf` over, takes a backup of the old world and prints the `restore` command to move it.
+- **Uninstall / reinstall:** uninstall keeps world data, settings and backups and remembers the mode, so running the
+  installer again simply reinstalls. Without a mode flag, uninstall removes whatever is installed.
+- **Purge:** `--uninstall --purge` / `-Uninstall -Purge` also deletes server files, backups, settings, the Docker volume
+  and (Linux) the service user. It asks you to type `yes` (or pass `--yes` / `-Yes`) and refuses when it can't ask.
+- Install state in `/etc/theisle-server/install.state` (Linux) and `<InstallRoot>\install-state.txt` (Windows).
+- `Restore.bat`. `restore` accepts `.zip` and `.tar.gz` in both runtimes on Windows (repacked for the container as needed).
+- `tests/installer-cycle.sh` end-to-end installer test and a CI `installer-cycle` job. Windows CI covers installer
+  argument handling, uninstall and purge, and cross-format restore.
+
+### Changed
+- Docker compose project and volume names are fixed (`theisle`, `theisle-data`). The Linux installer copies a pre-1.4
+  `<folder>_theisle-data` volume over once.
+- Linux docker mode installs the scripts to `/opt/theisle-scripts` (it used to run from the clone).
+- The Linux native installer writes resolved `STEAMCMD_DIR`/`SERVER_DIR`/`BACKUP_DIR` into `server.conf`, so `sudo isle-server`
+  and `sudo -u theisle isle-server` see the same paths. The native installer always sets `RUNTIME=native`.
+
+### Fixed
+- Restoring a host backup into a fresh Docker install failed because `/data/backups` didn't exist yet (both launchers).
+- The Windows scripts used `$env:TEMP`, which isn't set in every environment. They now use the .NET temp path.
+
 ## [1.3.0] - 2026-11-07
 
 Planned in [PRD.md](PRD.md) as milestone M8 (requirements LCH-01 to LCH-08).
@@ -97,7 +127,8 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.0.0...v1.1.0

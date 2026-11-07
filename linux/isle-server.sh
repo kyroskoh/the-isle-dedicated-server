@@ -664,6 +664,8 @@ docker_main() {
       docker_require_stopped restore
       if [[ -f "$file" ]]; then
         dc up --no-start "${nb[@]}"
+        # A one-off run lets the entrypoint create the /data layout (fresh volume).
+        dc run --rm theisle check >/dev/null
         dc cp "$file" "theisle:/data/backups/$(basename "$file")"
         target="/data/backups/$(basename "$file")"
       elif [[ "$file" == /data/* ]]; then

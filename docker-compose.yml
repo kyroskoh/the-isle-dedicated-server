@@ -12,6 +12,10 @@
 #    next to this one, or edit the environment block below.
 # See DOCKER.md for details.
 
+# Fixed project and volume names: a reinstall from any folder or clone finds
+# the same container and world data.
+name: theisle
+
 services:
   theisle:
     build:
@@ -60,3 +64,4 @@ services:
 
 volumes:
   theisle-data:
+    name: theisle-data

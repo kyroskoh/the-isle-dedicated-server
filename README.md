@@ -20,7 +20,7 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 - **One config for both OSes.** `config/server.conf` produces `Game.ini` and `Engine.ini` for you.
 - **Native or Docker, same launcher.** Set `RUNTIME=docker` (or pass `--docker` / `-Runtime Docker`) and the same commands and `.bat` files manage a container instead.
 - **Config validation.** `check` catches bad ports, typos in true/false values, a missing RCON password and malformed SteamIDs before the server launches.
-- **Installers** that set up the dependencies, SteamCMD, the server (Steam app `412680`, branch `evrima`), firewall rules, and a service that starts at boot.
+- **Installers with two modes, native or Docker** (you choose, or pick at the prompt). They set up dependencies, SteamCMD, the server (Steam app `412680`, branch `evrima`), firewall rules and a boot-time service, or a container. Re-run them to update or to switch modes. **Uninstall keeps your world** for a later reinstall, and `--purge` wipes everything.
 - **Launchers** for start, stop, restart, status, logs and a console mode.
 - **Watchdog** that restarts the server if it crashes. On Linux this is systemd `Restart=on-failure` or the built-in watchdog. On Windows it's a scheduled task plus a watchdog loop.
 - **Auto-update** through SteamCMD before each start (optional).
@@ -34,7 +34,7 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 ### Windows
 
 1. Download or clone this repository.
-2. Double-click **`windows\Install.bat`** and accept the Administrator prompt.
+2. Double-click **`windows\Install.bat`**, accept the Administrator prompt, and choose **1** (native) or **2** (Docker Desktop).
 3. Edit **`C:\TheIsle\scripts\config\server.conf`**: set the server name, admins and so on.
 4. Run **`C:\TheIsle\scripts\windows\Restart.bat`**, or reboot. The server starts at boot.
 
@@ -54,7 +54,7 @@ After that, use the same commands as a native install. See [DOCKER.md](DOCKER.md
 ```bash
 git clone https://github.com/kyroskoh/the-isle-dedicated-server.git
 cd the-isle-dedicated-server
-sudo ./linux/install.sh            # add --start to start right away
+sudo ./linux/install.sh            # asks: 1 = native, 2 = docker (or pass --native / --docker); add --start
 sudo nano /home/theisle/theisle-scripts/config/server.conf
 sudo systemctl restart theisle-server
 ```
@@ -78,7 +78,9 @@ Then forward these ports on your router or cloud firewall:
 | Follow the log | `isle-server logs -f` | `IsleServer.ps1 Logs -Follow` |
 | Update the game | `isle-server stop && isle-server update && isle-server start` | `Stop.bat`, then `Update.bat`, then `Start.bat` |
 | Backup | `isle-server backup` | `Backup.bat` |
-| Restore | `isle-server restore <file.tar.gz>` | `IsleServer.ps1 Restore -Path <file.zip>` |
+| Restore | `isle-server restore <file.tar.gz>` | `Restore.bat -Path <file.zip or .tar.gz>` |
+| Reinstall / switch mode | `sudo ./linux/install.sh [--native\|--docker]` | `Install.bat [-Native\|-Docker]` |
+| Uninstall (keep data) / purge | `sudo ./linux/install.sh --uninstall [--purge]` | `Install.bat -Uninstall [-Purge]` |
 | RCON announce | `isle-server rcon announce "Restart in 5 min"` | `IsleServer.ps1 Rcon -RconArgs announce,'Restart in 5 min'` |
 | Check the config | `isle-server check` | `IsleServer.ps1 Check` |
 | Re-generate ini | `isle-server configure` | `IsleServer.ps1 Configure` |

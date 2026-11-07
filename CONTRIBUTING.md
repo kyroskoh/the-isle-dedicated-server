@@ -17,7 +17,9 @@ Bug reports, distro fixes and new config keys are welcome.
      Keep `.ps1` files **ASCII-only**, because 5.1 misreads UTF-8 files that have no BOM.
    - Line endings are enforced by `.gitattributes` (LF for `.sh`, CRLF for `.ps1` and `.bat`).
 6. Add an entry under **[Unreleased]** in `CHANGELOG.md`.
-7. Open a pull request. CI runs ShellCheck, the PowerShell parser, PSScriptAnalyzer and smoke tests.
+7. If you touch an installer, run the end-to-end cycle on a **disposable** VM (it purges the local install):
+   `sudo ISLE_TEST_I_UNDERSTAND=1 bash tests/installer-cycle.sh`. CI runs it on every push.
+8. Open a pull request. CI runs ShellCheck, the PowerShell parser, PSScriptAnalyzer and smoke tests.
 
 When you report a bug, include your OS and version, the command you ran, and the last 50 lines of
 the server log or console output. Remove any passwords first.

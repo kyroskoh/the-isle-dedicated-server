@@ -1,5 +1,16 @@
 # Installation Guide
 
+Both installers support **two modes**:
+
+| Mode | What you get | Choose it with |
+|---|---|---|
+| **native** | SteamCMD and the server on this machine, plus a systemd service (Linux) or boot-time scheduled task (Windows) | `--native` / `-Native`, or answer **1** |
+| **docker** | The server in a Docker container. Nothing else is installed on the host | `--docker` / `-Docker`, or answer **2** |
+
+With no flag, the installer asks. If it can't ask (no terminal, for example in CI), it uses the previous mode, or
+native on a first install. Afterwards the **same launcher commands** work in both modes.
+See [Switching, uninstalling and reinstalling](#switching-uninstalling-and-reinstalling).
+
 This guide covers automated and manual installation on Windows and Linux.
 Read [CONFIGURATION.md](CONFIGURATION.md) afterwards to tune the server.
 
@@ -44,7 +55,9 @@ cd <repo>\windows
 .\Install.ps1 -NoFirewall -NoPython
 .\Install.ps1 -ServiceAccount System      # run the task as SYSTEM instead of LOCAL SERVICE
 .\Install.ps1 -Branch ''                  # install the public (Legacy) branch instead of evrima
-.\Install.ps1 -Uninstall                  # remove tasks + firewall rules (keeps files)
+.\Install.ps1 -Native                     # skip the mode prompt (or -Docker)
+.\Install.ps1 -Uninstall                  # remove tasks + firewall rules (keeps files, reinstall any time)
+.\Install.ps1 -Uninstall -Purge          # ALSO delete C:\TheIsle and the Docker volume (asks first)
 ```
 
 > **Windows Server Core:** everything works from `powershell.exe`. `winget` is usually
@@ -118,7 +131,9 @@ sudo ./linux/install.sh --start              # start when done
 sudo ./linux/install.sh --user isle --home /srv/isle
 sudo ./linux/install.sh --branch ""          # public/Legacy branch
 sudo ./linux/install.sh --no-firewall --no-service --no-sudoers --no-deps
-sudo ./linux/install.sh --uninstall          # remove units/sudoers/firewall rules (keeps files)
+sudo ./linux/install.sh --native             # skip the mode prompt (or --docker)
+sudo ./linux/install.sh --uninstall          # remove units/sudoers/firewall rules (keeps files, reinstall any time)
+sudo ./linux/install.sh --uninstall --purge  # ALSO delete the user, server files, backups (asks first; --yes skips)
 ```
 
 Re-running the installer is safe. It keeps your `server.conf` and updates the scripts.
@@ -189,7 +204,34 @@ Details: [DOCKER.md](DOCKER.md).
   To update by hand: stop, then `update` (or `Update.bat`), then start.
 - **These scripts:** `git pull` in your clone, then re-run the installer. Your `server.conf` is kept.
 
+## Switching, uninstalling and reinstalling
+
+Run the installer again at any time. It's safe:
+
+| You run | What happens |
+|---|---|
+| The same mode again | Scripts are updated. `server.conf`, the world and backups are kept. A running server is stopped, updated and started again |
+| The **other** mode | The old mode is stopped and disabled (its data is kept). `server.conf` carries over with `RUNTIME` switched. A backup of the old world is made so you can move it (the installer prints the exact `restore` command) |
+| `--uninstall` / `-Uninstall` | Removes the service, scheduled tasks, firewall rules and container. **Keeps** world data, settings and backups. It remembers the mode, so running the installer again (no flag needed) reinstalls the same way |
+| `--uninstall --purge` / `-Uninstall -Purge` | Also deletes server files, worlds, backups, settings, the `theisle-data` Docker volume and (Linux) the `theisle` user. Asks you to type `yes` (`--yes` / `-Yes` skips the prompt). A later install starts from scratch |
+
+`--uninstall` with no mode removes whatever is installed (both modes, if both are present). Add `--native` or
+`--docker` to remove only one.
+
+**Moving a world between modes.** Backups are portable. `restore` accepts `.tar.gz` (Linux/Docker) and `.zip`
+(native Windows) in either mode, and in docker mode a file on the host is copied into the container for you:
+
+```bash
+sudo isle-server restore /home/theisle/theisle-backups/theisle-20261107-120000.tar.gz   # Linux, into Docker
+```
+```powershell
+Restore.bat -Path "C:\TheIsle\backups\theisle-20261107-120000.zip"                     # Windows, either mode
+```
+
+The installer keeps its state in `/etc/theisle-server/install.state` (Linux) or `<InstallRoot>\install-state.txt`
+(Windows). It holds the mode, the scripts folder and whether the server is currently installed.
+
 ## Uninstalling
 
-- **Windows:** `Install.ps1 -Uninstall`, then delete `C:\TheIsle`.
-- **Linux:** `sudo ./linux/install.sh --uninstall`, then `sudo userdel -r theisle` and `sudo rm /usr/local/bin/isle-server`.
+- **Keep data (reinstall later):** `sudo ./linux/install.sh --uninstall` / `Install.ps1 -Uninstall`
+- **Remove everything:** `sudo ./linux/install.sh --uninstall --purge` / `Install.ps1 -Uninstall -Purge`

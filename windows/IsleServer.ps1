@@ -25,7 +25,7 @@
     Run            Run the server in this window with an auto-restart watchdog
     Logs           Show the server log (add -Follow to tail it)
     Backup         Zip save data and config into BACKUP_DIR
-    Restore        Restore a backup zip (-Path <zip>)
+    Restore        Restore a backup (-Path <.zip or .tar.gz>; both work in both runtimes)
     Rcon           Send an RCON command (-RconArgs 'announce','Hello')
     Save           Ask the server to save via RCON
     Firewall       Create Windows Firewall rules for the configured ports
@@ -232,7 +232,7 @@ function Install-VcRedist {
     if ($installed) { Write-Ok 'Visual C++ 2015-2022 x64 runtime present'; return }
     if (-not (Test-Admin)) { Write-Warn 'Visual C++ runtime missing - re-run as Administrator to install it.'; return }
     Write-Step 'Installing Visual C++ 2015-2022 x64 runtime'
-    $tmp = Join-Path $env:TEMP 'vc_redist.x64.exe'
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) 'vc_redist.x64.exe'
     Get-File $VcRedistUrl $tmp
     $proc = Start-Process -FilePath $tmp -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
@@ -245,7 +245,7 @@ function Install-SteamCmd {
     if (Test-Path $exe) { Write-Ok "SteamCMD present in $SteamCmdDir"; return }
     Write-Step "Installing SteamCMD into $SteamCmdDir"
     New-Item -ItemType Directory -Force -Path $SteamCmdDir | Out-Null
-    $zip = Join-Path $env:TEMP 'steamcmd.zip'
+    $zip = Join-Path ([IO.Path]::GetTempPath()) 'steamcmd.zip'
     Get-File $SteamCmdUrl $zip
     Expand-Archive -Path $zip -DestinationPath $SteamCmdDir -Force
     Remove-Item $zip -Force -ErrorAction SilentlyContinue
@@ -541,7 +541,7 @@ function Invoke-Backup {
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
     if ((Get-ServerProcess) -and (Test-True (C 'SAVE_BEFORE_STOP'))) { Invoke-Save }
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $stage = Join-Path $env:TEMP "theisle-backup-$stamp"
+    $stage = Join-Path ([IO.Path]::GetTempPath()) "theisle-backup-$stamp"
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     try {
         # robocopy copies files that the running server holds open (read-shared)
@@ -562,13 +562,28 @@ function Invoke-Backup {
     }
 }
 
+function Test-TarArchive([string]$file) { return ($file -match '\.(tar\.gz|tgz)$') }
+function Expand-Backup([string]$file, [string]$dest) {
+    # Native Windows backups are .zip; Linux/Docker backups are .tar.gz (tar.exe
+    # ships with Windows 10 1803+ and Server 2019+).
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    if (Test-TarArchive $file) {
+        & tar -xzf $file -C $dest
+        if ($LASTEXITCODE -ne 0) { throw "tar could not extract $file" }
+    } else {
+        Expand-Archive -Path $file -DestinationPath $dest
+    }
+    if (-not (Test-Path (Join-Path $dest 'Saved'))) { throw "$file does not contain a Saved folder - not a server backup?" }
+}
+
 function Invoke-Restore {
-    if (-not $Path -or -not (Test-Path $Path)) { Fail 'Usage: IsleServer.ps1 Restore -Path <backup.zip>' }
+    if (-not $Path -or -not (Test-Path $Path)) { Fail 'Usage: IsleServer.ps1 Restore -Path <backup.zip | backup.tar.gz>' }
     if (Get-ServerProcess) { Fail 'Stop the server before restoring' }
+    $stage = Join-Path ([IO.Path]::GetTempPath()) ("theisle-restore-" + [guid]::NewGuid())
+    Expand-Backup (Resolve-Path $Path).Path $stage
     $saved = Join-Path $ServerDir 'TheIsle\Saved'
+    New-Item -ItemType Directory -Force -Path (Join-Path $ServerDir 'TheIsle') | Out-Null
     if (Test-Path $saved) { Rename-Item $saved ("Saved.pre-restore-" + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
-    $stage = Join-Path $env:TEMP ("theisle-restore-" + [guid]::NewGuid())
-    Expand-Archive -Path $Path -DestinationPath $stage
     Move-Item (Join-Path $stage 'Saved') $saved
     Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
     Write-Ok "Restored $Path (previous data kept as Saved.pre-restore-*)"
@@ -811,9 +826,22 @@ function Invoke-DockerCommand([string]$cmd) {
             if (-not $Path) { throw 'Usage: IsleServer.ps1 Restore -Path <backup.tar.gz | name in /data/backups>' }
             Assert-DockerStopped 'restore'
             if (Test-Path $Path) {
-                $name = Split-Path -Leaf $Path
+                $file = (Resolve-Path $Path).Path
+                if (-not (Test-TarArchive $file)) {
+                    # A native Windows .zip backup: repack as .tar.gz for the Linux container.
+                    $stage = Join-Path ([IO.Path]::GetTempPath()) ("theisle-repack-" + [guid]::NewGuid())
+                    Expand-Backup $file $stage
+                    $file = Join-Path ([IO.Path]::GetTempPath()) (([IO.Path]::GetFileNameWithoutExtension($file)) + '.tar.gz')
+                    & tar -czf $file -C $stage Saved
+                    if ($LASTEXITCODE -ne 0) { throw 'tar could not repack the backup' }
+                    Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Ok "Repacked the .zip backup as $file"
+                }
+                $name = Split-Path -Leaf $file
                 Invoke-DcChecked (@('up', '--no-start') + $nb)
-                Invoke-DcChecked @('cp', (Resolve-Path $Path).Path, "theisle:/data/backups/$name")
+                # A one-off run lets the entrypoint create the /data layout (fresh volume).
+                Invoke-DcChecked @('run', '--rm', 'theisle', 'check')
+                Invoke-DcChecked @('cp', $file, "theisle:/data/backups/$name")
                 $target = "/data/backups/$name"
             } elseif ($Path.StartsWith('/data/')) { $target = $Path }
             else { $target = "/data/backups/$Path" }

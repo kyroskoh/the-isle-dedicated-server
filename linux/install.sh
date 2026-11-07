@@ -1,38 +1,40 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  install.sh - one-shot installer for The Isle (Evrima) dedicated server
+#  install.sh - installer for The Isle (Evrima) dedicated server (Linux)
 #
-#  Run as root (or with sudo) on any mainstream 64-bit Linux distribution:
-#    Debian / Ubuntu / Mint / Pop!_OS        (apt)
-#    Fedora / RHEL / Rocky / Alma / CentOS   (dnf / yum)
-#    Arch / Manjaro / EndeavourOS            (pacman, needs [multilib])
-#    openSUSE Leap / Tumbleweed / SLES       (zypper)
-#    Others                                  (install deps manually, see INSTALL.md)
+#  Two install modes - pick one with a flag, or answer the prompt:
+#    --native   SteamCMD + server on this machine, systemd service, service user
+#    --docker   the server runs in a Docker container (docker compose)
+#  Both use the same launcher afterwards: isle-server <start|stop|status|...>
 #
-#  What it does:
-#    1. Installs dependencies (curl, tar, python3, 32-bit libs for SteamCMD)
-#    2. Creates an unprivileged service user (default: theisle)
-#    3. Copies these scripts to the user's home and creates config/server.conf
-#    4. Installs SteamCMD + the server (app 412680, branch evrima)
-#    5. Opens firewall ports (ufw / firewalld) when a firewall is active
-#    6. Installs + enables a systemd service and a daily backup timer
+#  Supported distros (native mode): Debian/Ubuntu/Mint/Pop (apt), Fedora/RHEL/
+#  Rocky/Alma (dnf/yum), Arch/Manjaro (pacman + [multilib]), openSUSE (zypper).
+#  Docker mode needs Docker Engine + the compose plugin on any x86_64 distro.
 #
-#  With --docker it instead checks Docker, sets RUNTIME=docker, builds the
-#  image and creates the container (no SteamCMD, user or systemd unit).
+#  Re-running is safe: it updates the scripts and keeps your settings and data.
+#  Re-running with the other mode switches modes: the old one is stopped and
+#  disabled (its data is kept) and your settings carry over.
+#
+#  Usage:
+#    sudo ./linux/install.sh [--native|--docker] [options]
+#    sudo ./linux/install.sh --uninstall [--native|--docker] [--purge [--yes]]
 #
 #  Options:
-#    --user NAME        service user                     (default: theisle)
-#    --home DIR         home directory of that user      (default: /home/NAME)
-#    --branch NAME      Steam beta branch                (default: evrima)
-#    --no-service       do not install the systemd units
-#    --no-firewall      do not touch the firewall
-#    --no-deps          skip package installation
-#    --no-sudoers       do not let the user control its own service via sudo
-#    --docker           run the server in Docker instead of natively
-#    --start            start the server when finished
-#    --uninstall        remove service/timer/sudoers/firewall rules (keeps files);
-#                       with --docker: remove the container (keeps the data volume)
-#    -h | --help        show this help
+#    --native | --docker  install mode (default: ask; non-interactive: current mode, else native)
+#    --start              start the server when finished
+#    --branch NAME        Steam beta branch (default: evrima; "" = public)
+#    --user NAME          native: service user          (default: theisle)
+#    --home DIR           native: home of that user     (default: /home/NAME)
+#    --no-service         native: no systemd units
+#    --no-firewall        native: do not touch ufw/firewalld
+#    --no-deps            native: skip package installation
+#    --no-sudoers         native: no sudoers rule for the service user
+#    --uninstall          remove what is installed (both modes unless one is given);
+#                         keeps world data, settings and backups for a later reinstall
+#    --purge              with --uninstall: ALSO delete server files, backups, the
+#                         Docker volume, the scripts copy and the service user
+#    --yes                do not ask for confirmation (purge)
+#    -h | --help          show this help
 # =============================================================================
 set -Eeuo pipefail
 
@@ -40,8 +42,16 @@ SRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 SVC_USER="theisle"
 SVC_HOME=""
 BRANCH=""; BRANCH_SET=0
-DO_SERVICE=1; DO_FIREWALL=1; DO_DEPS=1; DO_SUDOERS=1; DO_START=0; DO_UNINSTALL=0; DO_DOCKER=0
+MODE=""
+DO_SERVICE=1; DO_FIREWALL=1; DO_DEPS=1; DO_SUDOERS=1; DO_START=0
+DO_UNINSTALL=0; DO_PURGE=0; ASSUME_YES=0
 SERVICE="theisle-server"
+STATE_DIR="/etc/theisle-server"
+STATE_FILE="$STATE_DIR/install.state"
+DOCKER_SCRIPTS_DIR="/opt/theisle-scripts"
+CONTAINER="theisle"
+VOLUME="theisle-data"
+VERSION="$(cat "$SRC_DIR/VERSION" 2>/dev/null || echo unknown)"
 
 if [[ -t 1 ]]; then C_RED=$'\e[31m'; C_GRN=$'\e[32m'; C_YLW=$'\e[33m'; C_BLU=$'\e[36m'; C_RST=$'\e[0m'
 else C_RED=""; C_GRN=""; C_YLW=""; C_BLU=""; C_RST=""; fi
@@ -53,6 +63,8 @@ usage() { sed -n '2,/^# =====/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --native)      MODE=native; shift ;;
+    --docker)      MODE=docker; shift ;;
     --user)        SVC_USER="${2:?}"; shift 2 ;;
     --home)        SVC_HOME="${2:?}"; shift 2 ;;
     --branch)      BRANCH="${2-}"; BRANCH_SET=1; shift 2 ;;
@@ -62,7 +74,8 @@ while [[ $# -gt 0 ]]; do
     --no-sudoers)  DO_SUDOERS=0; shift ;;
     --start)       DO_START=1; shift ;;
     --uninstall)   DO_UNINSTALL=1; shift ;;
-    --docker)      DO_DOCKER=1; shift ;;
+    --purge)       DO_PURGE=1; shift ;;
+    --yes|-y)      ASSUME_YES=1; shift ;;
     -h|--help)     usage; exit 0 ;;
     *)             usage; die "Unknown option: $1" ;;
   esac
@@ -71,106 +84,135 @@ done
 [[ $EUID -eq 0 ]] || die "Please run as root, e.g.: sudo $0 $*"
 [[ "$(uname -m)" == "x86_64" ]] || die "The Isle dedicated server requires x86_64 (detected $(uname -m))"
 [[ "$SVC_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Invalid user name: $SVC_USER"
-[[ -n "$SVC_HOME" ]] || SVC_HOME="/home/$SVC_USER"
-SCRIPTS_DIR="$SVC_HOME/theisle-scripts"
+if (( DO_PURGE && ! DO_UNINSTALL )); then die "--purge is only valid together with --uninstall"; fi
+
+# ------------------------------------------------------------------ state ---
+# KEY=VALUE file written by every install; parsed, never sourced.
+ST_MODE=""; ST_SCRIPTS_DIR=""; ST_USER=""; ST_HOME=""; ST_STATUS=""
+read_state() {
+  [[ -f "$STATE_FILE" ]] || return 0
+  local k v
+  while IFS='=' read -r k v; do
+    case "$k" in
+      MODE) ST_MODE="$v" ;; SCRIPTS_DIR) ST_SCRIPTS_DIR="$v" ;;
+      USER) ST_USER="$v" ;; HOME) ST_HOME="$v" ;; STATUS) ST_STATUS="$v" ;;
+    esac
+  done < "$STATE_FILE"
+}
+write_state() {  # MODE SCRIPTS_DIR [STATUS]
+  # After an uninstall the file is kept with STATUS=uninstalled, so a reinstall
+  # without a mode flag defaults to the previous mode. Only --purge deletes it.
+  mkdir -p "$STATE_DIR"
+  {
+    printf 'MODE=%s\nSCRIPTS_DIR=%s\nSTATUS=%s\nVERSION=%s\nUPDATED=%s\n' \
+      "$1" "$2" "${3:-installed}" "$VERSION" "$(date -u +%FT%TZ)"
+    if [[ "$1" == native ]]; then printf 'USER=%s\nHOME=%s\n' "$SVC_USER" "$SVC_HOME"; fi
+  } > "$STATE_FILE"
+  chmod 644 "$STATE_FILE"
+}
+read_state
+# Reuse the user/home of an existing native install unless overridden.
+if [[ -n "$ST_USER" && "$SVC_USER" == theisle ]]; then SVC_USER="$ST_USER"; fi
+if [[ -z "$SVC_HOME" ]]; then
+  if id "$SVC_USER" >/dev/null 2>&1; then SVC_HOME="$(getent passwd "$SVC_USER" | cut -d: -f6)"
+  elif [[ -n "$ST_HOME" ]]; then SVC_HOME="$ST_HOME"
+  else SVC_HOME="/home/$SVC_USER"; fi
+fi
+NATIVE_SCRIPTS_DIR="$SVC_HOME/theisle-scripts"
+
+have_docker_cli() { command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; }
+native_installed() {
+  [[ -f "/etc/systemd/system/$SERVICE.service" || -f "$NATIVE_SCRIPTS_DIR/linux/isle-server.sh" || "$ST_MODE" == native ]]
+}
+native_active() {  # an installed (not uninstalled) native setup that must be retired on a mode switch
+  [[ -f "/etc/systemd/system/$SERVICE.service" ]] || [[ "$ST_MODE" == native && "$ST_STATUS" != uninstalled ]]
+}
+docker_installed() {
+  have_docker_cli && [[ -n "$(docker ps -aq --filter "name=^${CONTAINER}\$" 2>/dev/null)" ]]
+}
+
+# ------------------------------------------------------------ helpers -------
+CONF=""   # path of the server.conf being edited
+conf_get() { grep -E "^$1=" "$CONF" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"\r' || true; }
+conf_set() {
+  local key="$1" val="$2" esc
+  if grep -qE "^$key=" "$CONF"; then
+    esc="$(printf '%s' "$val" | sed -e 's/[\\/&|]/\\&/g')"
+    sed -i "s|^$key=.*|$key=$esc|" "$CONF"
+  else
+    printf '%s=%s\n' "$key" "$val" >> "$CONF"
+  fi
+}
 
 as_user() {  # run a command as the service user with a login-like env
-  cd "$SVC_HOME" 2>/dev/null || cd /
-  if command -v runuser >/dev/null 2>&1; then
-    runuser -u "$SVC_USER" -- env HOME="$SVC_HOME" USER="$SVC_USER" "$@"
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo -u "$SVC_USER" -H "$@"
-  else
-    su -s /bin/bash "$SVC_USER" -c "$(printf '%q ' "$@")"
-  fi
+  ( cd "$SVC_HOME" 2>/dev/null || cd /
+    if command -v runuser >/dev/null 2>&1; then
+      runuser -u "$SVC_USER" -- env HOME="$SVC_HOME" USER="$SVC_USER" "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+      sudo -u "$SVC_USER" -H "$@"
+    else
+      su -s /bin/bash "$SVC_USER" -c "$(printf '%q ' "$@")"
+    fi )
 }
 
-conf_get() { grep -E "^$1=" "$SCRIPTS_DIR/config/server.conf" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"\r' || true; }
-conf_set() {
-  local key="$1" val="$2" file="$SCRIPTS_DIR/config/server.conf"
-  if grep -qE "^$key=" "$file"; then
-    local esc; esc="$(printf '%s' "$val" | sed -e 's/[\\/&|]/\\&/g')"
-    sed -i "s|^$key=.*|$key=$esc|" "$file"
-  else
-    printf '%s=%s\n' "$key" "$val" >> "$file"
+copy_scripts() {  # DEST - copy this repo (minus .git and server.conf) to DEST
+  local dest="$1"
+  if [[ "$(readlink -f "$SRC_DIR")" != "$(readlink -f "$dest" 2>/dev/null || echo /nonexistent)" ]]; then
+    mkdir -p "$dest"
+    (cd "$SRC_DIR" && tar --exclude='.git' --exclude='config/server.conf' --exclude='config/*.bak' -cf - .) \
+      | (cd "$dest" && tar -xf -)
   fi
+  sed -i 's/\r$//' "$dest"/linux/*.sh "$dest"/docker/entrypoint.sh "$dest"/docker/isle-server
+  chmod 755 "$dest"/linux/*.sh "$dest"/tools/*.py "$dest"/docker/entrypoint.sh "$dest"/docker/isle-server
 }
 
-# ------------------------------------------------------------ docker mode ----
-# --docker: no SteamCMD, service user or systemd unit. The repo stays where it
-# is (it is the compose project), RUNTIME=docker is set in server.conf and the
-# same launcher (isle-server) drives the container.
-if (( DO_DOCKER )); then
-  SCRIPTS_DIR="$SRC_DIR"
-  launcher="$SCRIPTS_DIR/linux/isle-server.sh"
-  if (( DO_UNINSTALL )); then
-    step "Stopping and removing the container (the theisle-data volume is kept)"
-    if command -v docker >/dev/null 2>&1 && [[ -f "$SCRIPTS_DIR/config/server.conf" ]]; then
-      "$launcher" --docker stop || true
-      ISLE_CONF_FILE="$SCRIPTS_DIR/config/server.conf" docker compose --project-directory "$SCRIPTS_DIR" \
-        -f "$SCRIPTS_DIR/docker-compose.yml" --env-file "$SCRIPTS_DIR/config/server.conf" down || true
+seed_conf() {  # DEST - create DEST/config/server.conf, carrying settings over
+  local dest="$1" cand
+  CONF="$dest/config/server.conf"
+  if [[ -f "$CONF" ]]; then ok "Keeping existing $CONF"; return; fi
+  for cand in "$ST_SCRIPTS_DIR/config/server.conf" "$NATIVE_SCRIPTS_DIR/config/server.conf" \
+              "$DOCKER_SCRIPTS_DIR/config/server.conf" "$SRC_DIR/config/server.conf"; do
+    if [[ -n "$cand" && -f "$cand" && "$cand" != "$CONF" ]]; then
+      cp "$cand" "$CONF"; ok "Carried settings over from $cand"; return
     fi
-    [[ "$(readlink -f /usr/local/bin/isle-server 2>/dev/null)" == "$(readlink -f "$launcher")" ]] && rm -f /usr/local/bin/isle-server
-    ok "Uninstalled. World data is kept in the Docker volume (see: docker volume ls | grep theisle-data)."
-    exit 0
-  fi
+  done
+  cp "$dest/config/server.conf.example" "$CONF"
+  ok "Created $CONF from the example"
+}
 
-  step "Checking Docker"
-  if ! command -v docker >/dev/null 2>&1; then
-    die "Docker is not installed. Install Docker Engine + the compose plugin for your distro (https://docs.docker.com/engine/install/), then re-run: sudo $0 --docker"
-  fi
-  docker compose version >/dev/null 2>&1 \
-    || die "Docker Compose v2 is missing. Install the 'docker-compose-plugin' (or 'docker-compose-v2') package, then re-run."
-  boot_note="make sure the Docker daemon starts at boot (no systemd detected)"
-  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
-    if systemctl enable --now docker >/dev/null 2>&1; then boot_note="the docker service is enabled at boot"
-    else warn "Could not enable the docker service at boot"; fi
-  fi
-  docker info >/dev/null 2>&1 || die "The Docker daemon is not running (try: systemctl start docker)"
-  ok "$(docker --version), $(docker compose version --short 2>/dev/null || echo compose v2)"
-
-  step "Preparing config/server.conf"
-  if [[ ! -f "$SCRIPTS_DIR/config/server.conf" ]]; then
-    cp "$SCRIPTS_DIR/config/server.conf.example" "$SCRIPTS_DIR/config/server.conf"
-    ok "Created config/server.conf"
-  fi
-  conf_set RUNTIME docker
+finish_conf() {  # MODE
+  sed -i 's/\r$//' "$CONF"
+  conf_set RUNTIME "$1"
   if (( BRANCH_SET )); then conf_set STEAM_BRANCH "$BRANCH"; fi
-  chmod 600 "$SCRIPTS_DIR/config/server.conf"
-  if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]]; then
-    chown "$SUDO_USER:" "$SCRIPTS_DIR/config/server.conf"
+  if [[ -z "$(conf_get RCON_PASSWORD)" ]]; then
+    conf_set RCON_PASSWORD "$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-24)"
+    ok "Generated a random RCON password (in $CONF)"
   fi
-  ln -sf "$launcher" /usr/local/bin/isle-server 2>/dev/null || true
+  chmod 600 "$CONF"
+}
 
-  step "Building the image and creating the container"
-  "$launcher" --docker install
-  if (( DO_START )); then step "Starting the container"; "$launcher" --docker start; fi
+link_launcher() { ln -sf "$1/linux/isle-server.sh" /usr/local/bin/isle-server 2>/dev/null || true; }
+unlink_launcher() {  # remove /usr/local/bin/isle-server if it points into DIR
+  local target; target="$(readlink -f /usr/local/bin/isle-server 2>/dev/null || true)"
+  if [[ -n "$target" && "$target" == "$1"/* ]]; then rm -f /usr/local/bin/isle-server; fi
+}
 
-  cat <<EOF
+confirm() {  # PROMPT - require typing "yes" unless --yes
+  (( ASSUME_YES )) && return 0
+  [[ -t 0 ]] || die "Refusing to $1 without confirmation - re-run with --yes"
+  local ans; read -r -p "$1? Type 'yes' to continue: " ans
+  [[ "$ans" == yes ]] || die "Aborted"
+}
 
-${C_GRN}The Isle dedicated server is installed (Docker).${C_RST}
-
-  Config file : $SCRIPTS_DIR/config/server.conf   (RUNTIME=docker; edit, then: sudo isle-server restart)
-  Manage      : sudo isle-server <start|stop|restart|status|logs -f|update|backup|rcon>
-  Boot        : $boot_note; the container uses restart: unless-stopped
-  Ports       : $(conf_get GAME_PORT)/udp+tcp (game), $(conf_get QUEUE_PORT)/tcp (queue); RCON only on 127.0.0.1:$(conf_get RCON_PORT)
-
-  Note: Docker publishes ports through its own iptables rules (ufw/firewalld rules are
-  not needed). Remember to forward the game and queue ports on your router / cloud firewall.
-EOF
-  exit 0
-fi
-
-# ------------------------------------------------------------- uninstall ----
-firewall_rules() {  # $1 = add | remove
+# ------------------------------------------------------------- firewall ----
+firewall_rules() {  # add | remove  (uses $CONF for the ports)
   local action="$1" gp qp rp open_rcon
   gp="$(conf_get GAME_PORT)"; gp="${gp:-7777}"
   qp="$(conf_get QUEUE_PORT)"; qp="${qp:-10000}"
   rp="$(conf_get RCON_PORT)"; rp="${rp:-8888}"
   open_rcon="$(conf_get FIREWALL_OPEN_RCON)"
   local -a rules=("$gp/udp" "$gp/tcp" "$qp/tcp")
-  [[ "${open_rcon,,}" == "true" ]] && rules+=("$rp/tcp")
-
+  if [[ "${open_rcon,,}" == "true" ]]; then rules+=("$rp/tcp"); fi
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
     local r
     for r in "${rules[@]}"; do
@@ -179,27 +221,210 @@ firewall_rules() {  # $1 = add | remove
     done
     ok "ufw: ${action} ${rules[*]}"
   elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    local r flag="--remove-port"; [[ "$action" == add ]] && flag="--add-port"
+    local r flag="--remove-port"
+    if [[ "$action" == add ]]; then flag="--add-port"; fi
     for r in "${rules[@]}"; do firewall-cmd --permanent "$flag=$r" >/dev/null 2>&1 || true; done
     firewall-cmd --reload >/dev/null
     ok "firewalld: ${action} ${rules[*]}"
-  else
-    [[ "$action" == add ]] && warn "No active ufw/firewalld found. If you use iptables/nftables or a cloud firewall, open: ${rules[*]}"
+  elif [[ "$action" == add ]]; then
+    warn "No active ufw/firewalld found. If you use iptables/nftables or a cloud firewall, open: ${rules[*]}"
   fi
 }
 
-if (( DO_UNINSTALL )); then
-  step "Removing systemd units, sudoers rule and firewall rules"
+# ------------------------------------------------- retire (keeps data) ------
+retire_native() {
+  step "Stopping and disabling the native server (data is kept)"
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl disable --now "$SERVICE.service" "$SERVICE-backup.timer" 2>/dev/null || true
-    rm -f "/etc/systemd/system/$SERVICE.service" "/etc/systemd/system/$SERVICE-backup.service" "/etc/systemd/system/$SERVICE-backup.timer"
-    systemctl daemon-reload || true
+    systemctl disable --now "$SERVICE.service" "$SERVICE-backup.timer" >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/system/$SERVICE.service" "/etc/systemd/system/$SERVICE-backup.service" \
+          "/etc/systemd/system/$SERVICE-backup.timer"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+  if id "$SVC_USER" >/dev/null 2>&1 && [[ -x "$NATIVE_SCRIPTS_DIR/linux/isle-server.sh" ]]; then
+    as_user env ISLE_NO_SYSTEMD=1 ISLE_RUNTIME=native ISLE_CONF="$NATIVE_SCRIPTS_DIR/config/server.conf" \
+      "$NATIVE_SCRIPTS_DIR/linux/isle-server.sh" stop >/dev/null 2>&1 || true
   fi
   rm -f "/etc/sudoers.d/$SERVICE"
-  firewall_rules remove
-  ok "Uninstalled. Server files in $SVC_HOME and the user '$SVC_USER' were kept."
-  echo "To remove everything: userdel -r $SVC_USER"
+  if [[ -f "$NATIVE_SCRIPTS_DIR/config/server.conf" ]]; then
+    local saved="$CONF"; CONF="$NATIVE_SCRIPTS_DIR/config/server.conf"; firewall_rules remove; CONF="$saved"
+  fi
+  unlink_launcher "$NATIVE_SCRIPTS_DIR"
+  ok "Native service removed"
+}
+
+retire_docker() {
+  step "Stopping and removing the container (the $VOLUME volume is kept)"
+  if have_docker_cli; then
+    docker stop -t 90 "$CONTAINER" >/dev/null 2>&1 || true
+    docker rm "$CONTAINER" >/dev/null 2>&1 || true
+  fi
+  unlink_launcher "$DOCKER_SCRIPTS_DIR"
+  ok "Container removed"
+}
+
+native_backup_hint() {  # before switching away from native, take a backup to move the world
+  if id "$SVC_USER" >/dev/null 2>&1 && [[ -x "$NATIVE_SCRIPTS_DIR/linux/isle-server.sh" ]]; then
+    local out
+    out="$(as_user env ISLE_NO_SYSTEMD=1 ISLE_RUNTIME=native ISLE_CONF="$NATIVE_SCRIPTS_DIR/config/server.conf" \
+           "$NATIVE_SCRIPTS_DIR/linux/isle-server.sh" backup 2>&1 | sed -n 's/.*Creating backup //p' | tail -n1)" || true
+    if [[ -n "$out" ]]; then
+      MIGRATE_HINT="Your native world was backed up to $out - to load it into Docker: sudo isle-server restore $out"
+    fi
+  fi
+}
+
+# --------------------------------------------------------------- uninstall --
+do_uninstall() {
+  local want="$MODE" any=0
+  if (( DO_PURGE )); then
+    confirm "PURGE: delete ALL server files, worlds, backups, settings and the service user"
+  fi
+  if [[ -z "$want" || "$want" == native ]] && native_installed; then
+    any=1; retire_native
+    if (( DO_PURGE )); then
+      step "Purging native data"
+      if id "$SVC_USER" >/dev/null 2>&1; then
+        userdel -r "$SVC_USER" >/dev/null 2>&1 || userdel "$SVC_USER" || true
+        ok "Removed user $SVC_USER and its home ($SVC_HOME)"
+      fi
+      if [[ -d "$SVC_HOME" && "$SVC_HOME" == /home/* ]]; then rm -rf -- "$SVC_HOME"; fi
+    fi
+  fi
+  if [[ -z "$want" || "$want" == docker ]] && { docker_installed || [[ "$ST_MODE" == docker || -d "$DOCKER_SCRIPTS_DIR" ]]; }; then
+    any=1; retire_docker
+    if (( DO_PURGE )); then
+      step "Purging Docker data"
+      if have_docker_cli; then
+        local vol
+        for vol in "$VOLUME" $(docker volume ls -q | grep -E '_theisle-data$' || true); do
+          if docker volume rm "$vol" >/dev/null 2>&1; then ok "Removed volume $vol"; fi
+        done
+        docker image rm theisle-server:latest >/dev/null 2>&1 || true
+      fi
+      if [[ -d "$DOCKER_SCRIPTS_DIR" ]]; then rm -rf -- "${DOCKER_SCRIPTS_DIR:?}"; ok "Removed $DOCKER_SCRIPTS_DIR"; fi
+    fi
+  fi
+  if (( DO_PURGE )); then
+    rm -f "$STATE_FILE"; rmdir "$STATE_DIR" 2>/dev/null || true
+  elif [[ -n "$ST_MODE" ]]; then
+    write_state "$ST_MODE" "$ST_SCRIPTS_DIR" uninstalled
+  fi
+  (( any )) || warn "Nothing to uninstall was found"
+  if (( DO_PURGE )); then
+    ok "Purged. A reinstall starts from scratch."
+  else
+    ok "Uninstalled. World data, settings and backups were kept - re-run this installer to reinstall."
+  fi
+}
+
+if (( DO_UNINSTALL )); then do_uninstall; exit 0; fi
+
+# ------------------------------------------------------------- choose mode --
+if [[ -z "$MODE" ]]; then
+  default="${ST_MODE:-native}"
+  if [[ -t 0 ]]; then
+    printf '\nHow should the server run?\n  1) native  - SteamCMD + systemd service on this machine\n  2) docker  - in a Docker container\n'
+    read -r -p "Choose 1 or 2 [$([[ "$default" == docker ]] && echo 2 || echo 1)]: " answer
+    case "${answer:-}" in
+      1|native) MODE=native ;; 2|docker) MODE=docker ;; "") MODE="$default" ;;
+      *) die "Please answer 1 or 2" ;;
+    esac
+  else
+    MODE="$default"
+  fi
+fi
+ok "Install mode: $MODE${ST_MODE:+ (previously: $ST_MODE)}"
+MIGRATE_HINT=""
+
+# ==================================================================== DOCKER
+if [[ "$MODE" == docker ]]; then
+  step "Checking Docker"
+  command -v docker >/dev/null 2>&1 \
+    || die "Docker is not installed. Install Docker Engine + the compose plugin (https://docs.docker.com/engine/install/), then re-run: sudo $0 --docker"
+  docker compose version >/dev/null 2>&1 \
+    || die "Docker Compose v2 is missing. Install the 'docker-compose-plugin' (or 'docker-compose-v2') package, then re-run."
+  boot_note="make sure the Docker daemon starts at boot (no systemd detected)"
+  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    if systemctl enable --now docker >/dev/null 2>&1; then boot_note="the docker service is enabled at boot"
+    else warn "Could not enable the docker service at boot"; fi
+  fi
+  docker info >/dev/null 2>&1 || die "The Docker daemon is not running (try: systemctl start docker)"
+  ok "$(docker --version)"
+
+  if native_active; then
+    step "Switching from native to docker"
+    native_backup_hint
+    retire_native
+  fi
+
+  step "Installing scripts to $DOCKER_SCRIPTS_DIR"
+  copy_scripts "$DOCKER_SCRIPTS_DIR"
+  seed_conf "$DOCKER_SCRIPTS_DIR"
+  finish_conf docker
+  link_launcher "$DOCKER_SCRIPTS_DIR"
+  launcher="$DOCKER_SCRIPTS_DIR/linux/isle-server.sh"
+  export ISLE_CONF="$CONF"
+
+  was_running=0
+  if [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || true)" == true ]]; then was_running=1; fi
+  "$launcher" --docker stop >/dev/null 2>&1 || true
+  # Containers from older versions used another compose project name; recreate.
+  docker rm "$CONTAINER" >/dev/null 2>&1 || true
+
+  step "Building the image and creating the container"
+  "$launcher" --docker install
+
+  # Pre-1.4 installs stored the world in "<folder>_theisle-data"; move it once.
+  if ! docker volume inspect "$VOLUME" >/dev/null 2>&1 || \
+     [[ -z "$(docker run --rm -v "$VOLUME:/v" --entrypoint sh "$(conf_get DOCKER_IMAGE)" -c 'ls -A /v/server 2>/dev/null' 2>/dev/null)" ]]; then
+    mapfile -t legacy < <(docker volume ls -q | grep -E '_theisle-data$' || true)
+    if (( ${#legacy[@]} == 1 )); then
+      step "Copying world data from legacy volume ${legacy[0]} to $VOLUME"
+      docker volume create "$VOLUME" >/dev/null
+      docker run --rm -v "${legacy[0]}:/from:ro" -v "$VOLUME:/to" --entrypoint sh "$(conf_get DOCKER_IMAGE)" \
+        -c 'cp -a /from/. /to/' && ok "Copied (the old volume was left in place)"
+    fi
+  fi
+
+  if (( DO_START || was_running )); then step "Starting the container"; "$launcher" --docker start; fi
+  write_state docker "$DOCKER_SCRIPTS_DIR"
+
+  cat <<EOF
+
+${C_GRN}The Isle dedicated server is installed (Docker).${C_RST}
+
+  Config file : $CONF   (edit, then: sudo isle-server restart)
+  Manage      : sudo isle-server <start|stop|restart|status|logs -f|update|backup|rcon>
+  Boot        : $boot_note; the container uses restart: unless-stopped
+  Data        : Docker volume $VOLUME (kept on uninstall; removed only with --purge)
+  Ports       : $(conf_get GAME_PORT)/udp+tcp (game), $(conf_get QUEUE_PORT)/tcp (queue); RCON only on 127.0.0.1:$(conf_get RCON_PORT)
+
+  Docker publishes ports through its own iptables rules (no ufw/firewalld rules needed).
+  Remember to forward the game and queue ports on your router / cloud firewall.
+EOF
+  if [[ -n "$MIGRATE_HINT" ]]; then printf '\n  %s\n' "$MIGRATE_HINT"; fi
   exit 0
+fi
+
+# ==================================================================== NATIVE
+[[ "$MODE" == native ]] || die "Unknown mode: $MODE"
+
+MIGRATE_FILE=""
+if docker_installed; then
+  step "Switching from docker to native"
+  # Take a backup inside the volume and copy it out, so the world can be restored natively.
+  if [[ -x "$DOCKER_SCRIPTS_DIR/linux/isle-server.sh" && -f "$DOCKER_SCRIPTS_DIR/config/server.conf" ]]; then
+    ISLE_CONF="$DOCKER_SCRIPTS_DIR/config/server.conf" "$DOCKER_SCRIPTS_DIR/linux/isle-server.sh" --docker stop >/dev/null 2>&1 || true
+    if ISLE_CONF="$DOCKER_SCRIPTS_DIR/config/server.conf" "$DOCKER_SCRIPTS_DIR/linux/isle-server.sh" --docker backup >/dev/null 2>&1; then
+      latest="$(docker run --rm -v "$VOLUME:/data" --entrypoint sh "$(docker inspect -f '{{.Config.Image}}' "$CONTAINER")" \
+                -c 'ls -t /data/backups/theisle-*.tar.gz 2>/dev/null | head -n1' 2>/dev/null || true)"
+      if [[ -n "$latest" ]]; then
+        MIGRATE_FILE="/var/tmp/$(basename "$latest")"
+        docker cp "$CONTAINER:$latest" "$MIGRATE_FILE" >/dev/null 2>&1 || MIGRATE_FILE=""
+      fi
+    fi
+  fi
+  retire_docker
 fi
 
 # ---------------------------------------------------------- dependencies ----
@@ -261,7 +486,7 @@ install_deps() {
     zypper --non-interactive refresh >/dev/null 2>&1 || true
     pkg_try zypper ca-certificates curl wget tar gzip python3 procps libgcc_s1-32bit glibc-32bit libstdc++6-32bit || true
   elif command -v apk >/dev/null 2>&1; then
-    die "Alpine (musl) is not supported: SteamCMD and the server need glibc. Use a glibc distro or a container image such as debian:stable."
+    die "Alpine (musl) is not supported natively: SteamCMD and the server need glibc. Use --docker instead."
   else
     warn "Unknown package manager. Make sure these are installed: curl tar python3 and 32-bit glibc + libgcc + libstdc++."
   fi
@@ -269,43 +494,39 @@ install_deps() {
   command -v tar  >/dev/null 2>&1 || die "tar is required"
 }
 
-(( DO_DEPS )) && install_deps
+if (( DO_DEPS )); then install_deps; fi
 
 # ------------------------------------------------------------------ user ----
 step "Preparing service user '$SVC_USER'"
 if id "$SVC_USER" >/dev/null 2>&1; then
   ok "User $SVC_USER already exists"
-  SVC_HOME="$(getent passwd "$SVC_USER" | cut -d: -f6)"; SCRIPTS_DIR="$SVC_HOME/theisle-scripts"
+  SVC_HOME="$(getent passwd "$SVC_USER" | cut -d: -f6)"; NATIVE_SCRIPTS_DIR="$SVC_HOME/theisle-scripts"
 else
   useradd --create-home --home-dir "$SVC_HOME" --shell /bin/bash --comment "The Isle dedicated server" "$SVC_USER" \
     || die "useradd failed"
   ok "Created user $SVC_USER ($SVC_HOME)"
 fi
 mkdir -p "$SVC_HOME"; chown "$SVC_USER:" "$SVC_HOME"
+if [[ -n "$MIGRATE_FILE" && -f "$MIGRATE_FILE" ]]; then
+  mkdir -p "$SVC_HOME/theisle-backups"
+  mv "$MIGRATE_FILE" "$SVC_HOME/theisle-backups/"
+  chown -R "$SVC_USER:" "$SVC_HOME/theisle-backups"
+  MIGRATE_HINT="Your Docker world was backed up to $SVC_HOME/theisle-backups/$(basename "$MIGRATE_FILE") - restore it with: sudo -u $SVC_USER isle-server restore $SVC_HOME/theisle-backups/$(basename "$MIGRATE_FILE")"
+fi
 
 # -------------------------------------------------------- copy scripts ------
-step "Installing management scripts to $SCRIPTS_DIR"
-if [[ "$(readlink -f "$SRC_DIR")" != "$(readlink -f "$SCRIPTS_DIR" 2>/dev/null || echo /nonexistent)" ]]; then
-  mkdir -p "$SCRIPTS_DIR"
-  # copy everything except git metadata and an existing server.conf
-  (cd "$SRC_DIR" && tar --exclude='.git' --exclude='config/server.conf' -cf - .) | (cd "$SCRIPTS_DIR" && tar -xf -)
-fi
-if [[ ! -f "$SCRIPTS_DIR/config/server.conf" ]]; then
-  if [[ -f "$SRC_DIR/config/server.conf" ]]; then cp "$SRC_DIR/config/server.conf" "$SCRIPTS_DIR/config/server.conf"
-  else cp "$SCRIPTS_DIR/config/server.conf.example" "$SCRIPTS_DIR/config/server.conf"; fi
-  ok "Created config/server.conf"
-fi
-sed -i 's/\r$//' "$SCRIPTS_DIR"/linux/*.sh "$SCRIPTS_DIR/config/server.conf"
-chmod 755 "$SCRIPTS_DIR"/linux/*.sh "$SCRIPTS_DIR"/tools/*.py
-chmod 600 "$SCRIPTS_DIR/config/server.conf"
-if (( BRANCH_SET )); then conf_set STEAM_BRANCH "$BRANCH"; fi
-if [[ -z "$(conf_get RCON_PASSWORD)" ]]; then
-  pw="$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-24)"
-  conf_set RCON_PASSWORD "$pw"
-  ok "Generated a random RCON password (see config/server.conf)"
-fi
-chown -R "$SVC_USER:" "$SCRIPTS_DIR"
-ln -sf "$SCRIPTS_DIR/linux/isle-server.sh" /usr/local/bin/isle-server 2>/dev/null || true
+step "Installing management scripts to $NATIVE_SCRIPTS_DIR"
+copy_scripts "$NATIVE_SCRIPTS_DIR"
+seed_conf "$NATIVE_SCRIPTS_DIR"
+finish_conf native
+# Pin the paths to the service user's home so every caller (root, sudo -u,
+# systemd) resolves the same directories.
+[[ -n "$(conf_get STEAMCMD_DIR)" ]] || conf_set STEAMCMD_DIR "$SVC_HOME/steamcmd"
+[[ -n "$(conf_get SERVER_DIR)" ]]   || conf_set SERVER_DIR "$SVC_HOME/theisle-server"
+[[ -n "$(conf_get BACKUP_DIR)" ]]   || conf_set BACKUP_DIR "$SVC_HOME/theisle-backups"
+chown -R "$SVC_USER:" "$NATIVE_SCRIPTS_DIR"
+link_launcher "$NATIVE_SCRIPTS_DIR"
+native_run() { as_user env ISLE_RUNTIME=native ISLE_CONF="$CONF" "$NATIVE_SCRIPTS_DIR/linux/isle-server.sh" "$@"; }
 
 # -------------------------------------------------------- install server ----
 step "Installing SteamCMD and The Isle server (this can take a while)"
@@ -313,12 +534,12 @@ WAS_RUNNING=0
 if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
   warn "$SERVICE is running - stopping it for the update (it will be started again)"
   systemctl stop "$SERVICE"; WAS_RUNNING=1
-elif as_user env ISLE_NO_SYSTEMD=1 "$SCRIPTS_DIR/linux/isle-server.sh" status >/dev/null 2>&1; then
+elif ISLE_NO_SYSTEMD=1 native_run status >/dev/null 2>&1; then
   warn "Server is running - stopping it for the update (it will be started again)"
-  as_user env ISLE_NO_SYSTEMD=1 "$SCRIPTS_DIR/linux/isle-server.sh" stop; WAS_RUNNING=1
+  ISLE_NO_SYSTEMD=1 native_run stop; WAS_RUNNING=1
 fi
-as_user "$SCRIPTS_DIR/linux/isle-server.sh" install
-(( WAS_RUNNING )) && DO_START=1
+native_run install
+if (( WAS_RUNNING )); then DO_START=1; fi
 
 # -------------------------------------------------------------- firewall ----
 if (( DO_FIREWALL )); then step "Configuring firewall"; firewall_rules add; fi
@@ -331,7 +552,7 @@ if (( DO_SERVICE )); then
     cat > "/etc/systemd/system/$SERVICE.service" <<EOF
 [Unit]
 Description=The Isle (Evrima) Dedicated Server
-Documentation=file://$SCRIPTS_DIR/README.md
+Documentation=file://$NATIVE_SCRIPTS_DIR/README.md
 Wants=network-online.target
 After=network-online.target
 
@@ -341,9 +562,10 @@ User=$SVC_USER
 Group=$(id -gn "$SVC_USER")
 WorkingDirectory=$SVC_HOME
 Environment=HOME=$SVC_HOME
-Environment=ISLE_CONF=$SCRIPTS_DIR/config/server.conf
-ExecStart=$SCRIPTS_DIR/linux/isle-server.sh run
-ExecStop=$SCRIPTS_DIR/linux/isle-server.sh save
+Environment=ISLE_CONF=$CONF
+Environment=ISLE_RUNTIME=native
+ExecStart=$NATIVE_SCRIPTS_DIR/linux/isle-server.sh run
+ExecStop=$NATIVE_SCRIPTS_DIR/linux/isle-server.sh save
 KillSignal=SIGTERM
 TimeoutStartSec=1800
 TimeoutStopSec=$((stop_timeout + 30))
@@ -364,9 +586,10 @@ Description=Backup The Isle server save data
 Type=oneshot
 User=$SVC_USER
 Environment=HOME=$SVC_HOME
-Environment=ISLE_CONF=$SCRIPTS_DIR/config/server.conf
+Environment=ISLE_CONF=$CONF
+Environment=ISLE_RUNTIME=native
 Environment=ISLE_NO_SYSTEMD=1
-ExecStart=$SCRIPTS_DIR/linux/isle-server.sh backup
+ExecStart=$NATIVE_SCRIPTS_DIR/linux/isle-server.sh backup
 EOF
     cat > "/etc/systemd/system/$SERVICE-backup.timer" <<EOF
 [Unit]
@@ -404,16 +627,17 @@ fi
 
 if (( DO_START )); then
   step "Starting server"
-  if (( DO_SERVICE )); then systemctl start "$SERVICE"; else as_user "$SCRIPTS_DIR/linux/isle-server.sh" start; fi
+  if (( DO_SERVICE )); then systemctl start "$SERVICE"; else native_run start; fi
 fi
+write_state native "$NATIVE_SCRIPTS_DIR"
 
 # --------------------------------------------------------------- summary ----
 cat <<EOF
 
-${C_GRN}The Isle dedicated server is installed.${C_RST}
+${C_GRN}The Isle dedicated server is installed (native).${C_RST}
 
-  Config file : $SCRIPTS_DIR/config/server.conf   (edit, then restart)
-  Server files: $(as_user "$SCRIPTS_DIR/linux/isle-server.sh" info | sed -n 's/^Server dir *: //p')
+  Config file : $CONF   (edit, then restart)
+  Server files: $(native_run info | sed -n 's/^Server dir *: //p')
   Manage      : sudo -u $SVC_USER isle-server <start|stop|restart|status|logs -f|update|backup|rcon>
 EOF
 if (( DO_SERVICE )); then
@@ -426,3 +650,4 @@ cat <<EOF
 
   Remember to forward the game and queue ports on your router / cloud firewall.
 EOF
+if [[ -n "$MIGRATE_HINT" ]]; then printf '\n  %s\n' "$MIGRATE_HINT"; fi
