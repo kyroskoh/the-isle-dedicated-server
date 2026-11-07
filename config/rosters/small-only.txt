@@ -1,0 +1,12 @@
+# Roster: small-only - small and medium species
+# One class per line. An empty roster means: all classes allowed (game default).
+Dilophosaurus
+Herrerasaurus
+Omniraptor
+Pteranodon
+Troodon
+Beipiaosaurus
+Gallimimus
+Dryosaurus
+Hypsilophodon
+Pachycephalosaurus

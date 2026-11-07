@@ -1,0 +1,18 @@
+# Roster: no-apex - everything except the apex species
+# One class per line. An empty roster means: all classes allowed (game default).
+Carnotaurus
+Ceratosaurus
+Dilophosaurus
+Herrerasaurus
+Omniraptor
+Pteranodon
+Troodon
+Beipiaosaurus
+Gallimimus
+Diabloceratops
+Dryosaurus
+Hypsilophodon
+Maiasaura
+Pachycephalosaurus
+Stegosaurus
+Tenontosaurus

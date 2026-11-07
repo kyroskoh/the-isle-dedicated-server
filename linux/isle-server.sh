@@ -23,6 +23,14 @@
 #    restore <f>  Restore a backup archive (server must be stopped)
 #    rcon <cmd>   Send an RCON command (see tools/isle_rcon.py)
 #    save         Ask the server to save via RCON
+#    admins       list|add|remove <SteamID64...>         (admins, applied on restart)
+#    whitelist    list|add|remove <SteamID64...>|on|off  (live via RCON when running)
+#    classes      list|known|set|add|remove <Class...>|reset|preset [roster]
+#    ai-classes   list|known|set|add|remove <Class...>|reset  (disabled AI)
+#    profile      list|show <name>|apply <name>          (whole play styles)
+#    preset       list|show <name>|apply <name...>       (stackable tweaks)
+#    plugins      list|search|info|install|remove|enable|disable|update|
+#                 preset|run|config|sources ...          (see PLUGINS.md)
 #    info         Print resolved paths and settings
 #    version      Print the script version
 #    help         This text
@@ -107,13 +115,18 @@ is_true()  { case "${1,,}" in true|yes|1|on) return 0 ;; *) return 1 ;; esac; }
 ue_bool()  { if is_true "$1"; then printf 'true'; else printf 'false'; fi; }
 
 set_conf() {  # persist KEY=VALUE into server.conf (value must not contain newlines)
-  local key="$1" val="$2" esc
+  local key="$1" val="$2" esc owner=""
+  [[ "$val" != *$'\n'* ]] || die "Value for $key must not contain newlines"
+  owner="$(stat -c '%u:%g' "$ISLE_CONF" 2>/dev/null || true)"
   if grep -qE "^$key=" "$ISLE_CONF"; then
     esc="$(printf '%s' "$val" | sed -e 's/[\\/&|]/\\&/g')"
     sed -i "s|^$key=.*|$key=$esc|" "$ISLE_CONF"
   else
     printf '%s=%s\n' "$key" "$val" >> "$ISLE_CONF"
   fi
+  # sed -i recreates the file: keep the original owner (e.g. root editing theisle's config)
+  if [[ $EUID -eq 0 && -n "$owner" ]]; then chown "$owner" "$ISLE_CONF" 2>/dev/null || true; fi
+  chmod 600 "$ISLE_CONF" 2>/dev/null || true
   CFG[$key]="$val"
 }
 
@@ -121,10 +134,12 @@ set_conf() {  # persist KEY=VALUE into server.conf (value must not contain newli
 BOOL_KEYS=(UPDATE_ON_START VALIDATE_ON_UPDATE FIREWALL_OPEN_RCON WHITELIST_ENABLED QUEUE_ENABLED
            RCON_ENABLED GLOBAL_CHAT ENABLE_HUMANS DYNAMIC_WEATHER ENABLE_MUTATIONS ENABLE_DIETS
            ENABLE_PATROL_ZONES ALLOW_RECORDING_REPLAY SPAWN_PLANTS SPAWN_AI ENABLE_MIGRATION
-           ENABLE_MASS_MIGRATION MANAGE_INI_FILES AUTO_RESTART SAVE_BEFORE_STOP DOCKER_BUILD)
+           ENABLE_MASS_MIGRATION MANAGE_INI_FILES AUTO_RESTART SAVE_BEFORE_STOP DOCKER_BUILD
+           REGION_SPAWNING REGION_SPAWN_COOLDOWN)
 NUMBER_KEYS=(GROWTH_MULTIPLIER CORPSE_DECAY_MULTIPLIER PLANT_SPAWN_MULTIPLIER AI_DENSITY
-             DAY_LENGTH_MINUTES NIGHT_LENGTH_MINUTES)
-INT_KEYS=(MAX_MIGRATION_TIME MASS_MIGRATION_TIME MASS_MIGRATION_DISABLE_TIME STOP_TIMEOUT BACKUP_RETENTION)
+             DAY_LENGTH_MINUTES NIGHT_LENGTH_MINUTES WEATHER_MIN_INTERVAL WEATHER_MAX_INTERVAL)
+INT_KEYS=(MAX_MIGRATION_TIME MASS_MIGRATION_TIME MASS_MIGRATION_DISABLE_TIME STOP_TIMEOUT BACKUP_RETENTION
+          REGION_SPAWN_COOLDOWN_SECONDS NET_TICK_RATE)
 
 # Validate server.conf (PRD CFG-05). Prints every problem; returns 1 on errors.
 check_config() {
@@ -318,6 +333,12 @@ render_game_ini() {
   printf 'bEnableMassMigration=%s\n' "$(ue_bool "$(cfg ENABLE_MASS_MIGRATION true)")"
   printf 'MassMigrationTime=%s\n' "$(cfg MASS_MIGRATION_TIME 43200)"
   printf 'MassMigrationDisableTime=%s\n' "$(cfg MASS_MIGRATION_DISABLE_TIME 7200)"
+  # Optional keys: only written when set (PRD CFX-03)
+  [[ -z "$(cfg REGION_SPAWNING)" ]] || printf 'bUseRegionSpawning=%s\n' "$(ue_bool "$(cfg REGION_SPAWNING)")"
+  [[ -z "$(cfg REGION_SPAWN_COOLDOWN)" ]] || printf 'bUseRegionSpawnCooldown=%s\n' "$(ue_bool "$(cfg REGION_SPAWN_COOLDOWN)")"
+  [[ -z "$(cfg REGION_SPAWN_COOLDOWN_SECONDS)" ]] || printf 'RegionSpawnCooldownTimeSeconds=%s\n' "$(cfg REGION_SPAWN_COOLDOWN_SECONDS)"
+  [[ -z "$(cfg WEATHER_MIN_INTERVAL)" ]] || printf 'MinWeatherVariationInterval=%s\n' "$(cfg WEATHER_MIN_INTERVAL)"
+  [[ -z "$(cfg WEATHER_MAX_INTERVAL)" ]] || printf 'MaxWeatherVariationInterval=%s\n' "$(cfg WEATHER_MAX_INTERVAL)"
   ini_list AllowedClasses "$(cfg ALLOWED_CLASSES)"
   ini_list DisallowedAIClasses "$(cfg DISABLED_AI_CLASSES)"
   ini_list AdminsSteamIDs "$(cfg ADMIN_STEAM_IDS)"
@@ -340,12 +361,15 @@ render_engine_ini() {
   printf 'DedicatedServerClientSecret=%s\n' "$(cfg EOS_CLIENT_SECRET)"
   printf '\n[/Script/OnlineSubsystemUtils.IpNetDriver]\n'
   printf 'MaxClientRate=100000\nMaxInternetClientRate=100000\n'
+  [[ -z "$(cfg NET_TICK_RATE)" ]] || printf 'NetServerMaxTickRate=%s\n' "$(cfg NET_TICK_RATE)"
 }
 
 write_ini() {  # $1 file, $2 render function
-  local file="$1" tmp
+  local file="$1" tmp ovr
   tmp="$(mktemp)"
   "$2" > "$tmp"
+  ovr="$(overrides_dir)/$(basename "$file")"
+  if [[ -f "$ovr" ]]; then merge_ini_overrides "$tmp" "$ovr"; log "Merged overrides from $ovr"; fi
   if [[ -f "$file" ]] && cmp -s "$tmp" "$file"; then
     rm -f "$tmp"; return
   fi
@@ -571,6 +595,257 @@ systemd unit  : $(if service_installed; then echo "$ISLE_SERVICE (installed)"; e
 EOF
 }
 
+# ----------------------------------------------------------- ini overrides --
+# config/overrides/{Game,Engine}.ini are merged into the generated files
+# (PRD CFX-01): a Key=Value replaces every generated line of that key in that
+# section, new keys/sections are appended, +/-/! lines pass through unchanged.
+overrides_dir() {
+  local d; d="$(cfg INI_OVERRIDES_DIR)"
+  printf '%s' "${d:-$(dirname "$ISLE_CONF")/overrides}"
+}
+merge_ini_overrides() {  # BASE_FILE (edited in place) OVERRIDE_FILE
+  [[ -f "$2" ]] || return 0
+  awk -v ovr="$2" '
+    function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+    function key(l,   k) { k = l; sub(/=.*/, "", k); return tolower(trim(k)) }
+    function flush(s,   i) { if ((s in seen) && !(s in done)) { for (i = 1; i <= cnt[s]; i++) print lines[s, i]; done[s] = 1 } }
+    BEGIN {
+      sec = ""
+      while ((getline line < ovr) > 0) {
+        line = trim(line)
+        if (line == "" || line ~ /^[;#]/) continue
+        if (line ~ /^\[.*\]$/) { sec = line; if (!(sec in seen)) { seen[sec] = 1; order[++ns] = sec }; continue }
+        if (sec == "" || index(line, "=") == 0 && line !~ /^[+!-]/) continue
+        lines[sec, ++cnt[sec]] = line
+        if (line !~ /^[+!-]/) replace[sec, key(line)] = 1
+      }
+    }
+    /^[ \t]*\[.*\][ \t\r]*$/ { flush(cur); cur = trim($0); print; next }
+    {
+      l = trim($0)
+      if (cur != "" && l != "" && l !~ /^[;#]/ && index(l, "=") > 0 && ((cur, key(l)) in replace)) next
+      print
+    }
+    END {
+      flush(cur)
+      for (i = 1; i <= ns; i++) { s = order[i]; if (!(s in done)) { print ""; print s; flush(s) } }
+    }' "$1" > "$1.merged" && mv -f "$1.merged" "$1"
+}
+
+# ------------------------------------------------------- list editing -------
+# Admins / whitelist / rosters (PRD CFX-06..08). They edit the HOST server.conf
+# and push a live change through RCON when the server is up.
+list_norm() { tr ',' '\n' | tr -d ' \t\r' | awk 'NF && !seen[$0]++' | paste -sd, -; }
+list_show() { if [[ -z "$1" ]]; then echo "${2:-(empty)}"; else tr ',' '\n' <<< "$1" | sed '/^$/d'; fi; }
+list_count() { if [[ -z "$1" ]]; then echo 0; else tr ',' '\n' <<< "$1" | sed '/^$/d' | wc -l | tr -d ' '; fi; }
+
+known_classes() {  # SECTION (playable|ai) -> one name per line
+  local file="$REPO_DIR/config/classes.txt"
+  [[ -f "$file" ]] || return 0
+  awk -v want="[$1]" '/^\[/ { on = ($0 == want); next } on && $1 !~ /^#/ && NF { print $1 }' "$file"
+}
+check_ids() {
+  local id
+  for id in "$@"; do
+    [[ "$id" =~ ^7656119[0-9]{10}$ ]] || die "'$id' is not a SteamID64 (17 digits starting with 7656119)"
+  done
+}
+check_classes() {  # SECTION names... (unknown names only warn)
+  local section="$1"; shift
+  local known c; known="$(known_classes "$section")"
+  for c in "$@"; do
+    [[ "$c" =~ ^[A-Za-z][A-Za-z0-9_]*$ ]] || die "'$c' is not a valid class name"
+    if [[ -n "$known" ]] && ! grep -qxi -- "$c" <<< "$known"; then
+      warn "'$c' is not in config/classes.txt - keeping it anyway (new or renamed species?)"
+    fi
+  done
+}
+
+live_rcon() {  # RCON command + args; only when the server is running; never fails
+  local pw; pw="$(cfg RCON_PASSWORD)"
+  if ! { is_true "$(cfg RCON_ENABLED)" && [[ -n "$pw" ]]; }; then
+    log "RCON disabled - the change applies on the next restart"; return 0
+  fi
+  if [[ "${RUNTIME:-native}" == docker ]]; then
+    if ! { command -v docker >/dev/null 2>&1 && docker_running 2>/dev/null; }; then
+      log "Server not running - the change applies on the next start"; return 0
+    fi
+    if dc exec -T theisle isle-server rcon "$@" >/dev/null 2>&1; then ok "Applied live via RCON ($1)"
+    else warn "Live RCON update failed - the change applies on the next restart"; fi
+  else
+    server_running 2>/dev/null || { log "Server not running - the change applies on the next start"; return 0; }
+    command -v python3 >/dev/null 2>&1 || { warn "python3 missing - the change applies on the next restart"; return 0; }
+    if ISLE_RCON_PASSWORD="$pw" python3 "$REPO_DIR/tools/isle_rcon.py" -p "$(cfg RCON_PORT)" "$@" >/dev/null 2>&1; then
+      ok "Applied live via RCON ($1)"
+    else
+      warn "Live RCON update failed - the change applies on the next restart"
+    fi
+  fi
+}
+
+edit_list() {  # KEY add|remove|set items... -> updates server.conf, prints the new value
+  local key="$1" op="$2"; shift 2
+  local cur new item
+  cur="$(cfg "$key")"
+  case "$op" in
+    set)    new="$(IFS=,; printf '%s' "$*")" ;;
+    add)    new="$cur,$(IFS=,; printf '%s' "$*")" ;;
+    remove) new="$cur"; for item in "$@"; do new="$(tr ',' '\n' <<< "$new" | grep -vxi -- "$item" | paste -sd, -)"; done ;;
+  esac
+  new="$(printf '%s' "$new" | list_norm)"
+  set_conf "$key" "$new"
+  printf '%s' "$new"
+}
+
+cmd_admins() {
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    list) list_show "$(cfg ADMIN_STEAM_IDS)" "(no admins)" ;;
+    add|remove)
+      [[ $# -gt 0 ]] || die "Usage: isle-server admins $sub <SteamID64> [...]"
+      check_ids "$@"
+      local v; v="$(edit_list ADMIN_STEAM_IDS "$sub" "$@")"
+      ok "Admins: $(list_count "$v") - restart the server to apply (the game reads admins at start)" ;;
+    *) die "Usage: isle-server admins list|add|remove <SteamID64> [...]" ;;
+  esac
+}
+
+cmd_whitelist() {
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    list)
+      printf 'Whitelist is %s\n' "$(is_true "$(cfg WHITELIST_ENABLED false)" && echo ON || echo OFF)"
+      list_show "$(cfg WHITELIST_IDS)" "(no whitelisted players)" ;;
+    add|remove)
+      [[ $# -gt 0 ]] || die "Usage: isle-server whitelist $sub <SteamID64> [...]"
+      check_ids "$@"
+      local v; v="$(edit_list WHITELIST_IDS "$sub" "$@")"
+      ok "Whitelist: $(list_count "$v") player(s)"
+      if [[ "$sub" == add ]]; then live_rcon addwhitelist "$(IFS=,; printf '%s' "$*")"
+      else live_rcon removewhitelist "$(IFS=,; printf '%s' "$*")"; fi ;;
+    on|off)
+      local was=false want=false
+      is_true "$(cfg WHITELIST_ENABLED false)" && was=true
+      [[ "$sub" == on ]] && want=true
+      set_conf WHITELIST_ENABLED "$want"
+      ok "Whitelist turned $sub"
+      if [[ "$was" != "$want" ]]; then live_rcon togglewhitelist; fi
+      if [[ "$want" == true && -z "$(cfg WHITELIST_IDS)" ]]; then warn "The whitelist is empty - nobody can join"; fi ;;
+    *) die "Usage: isle-server whitelist list|add|remove <SteamID64> [...]|on|off" ;;
+  esac
+}
+
+cmd_classes() {  # KEY SECTION RCON_CMD LABEL sub args...
+  local key="$1" section="$2" rcmd="$3" label="$4"; shift 4
+  local sub="${1:-list}"; shift || true
+  local v
+  case "$sub" in
+    list)  list_show "$(cfg "$key")" "$([[ "$section" == playable ]] && echo '(all classes allowed)' || echo '(none disabled)')"; return ;;
+    known) known_classes "$section"; return ;;
+    set|add|remove)
+      [[ $# -gt 0 ]] || die "Usage: isle-server $label $sub <Class> [...]"
+      check_classes "$section" "$@"
+      v="$(edit_list "$key" "$sub" "$@")" ;;
+    reset) v=""; set_conf "$key" "" ;;
+    preset)
+      [[ "$section" == playable ]] || die "Roster presets are for the playable roster (classes)"
+      local name="${1:-}" file
+      if [[ -z "$name" ]]; then
+        for file in "$REPO_DIR"/config/rosters/*.txt; do
+          printf '  %-12s %s\n' "$(basename "$file" .txt)" "$(sed -n '1s/^# Roster: [^ ]* - //p' "$file")"
+        done; return
+      fi
+      file="$REPO_DIR/config/rosters/$name.txt"
+      [[ -f "$file" ]] || die "Unknown roster '$name' (see: isle-server classes preset)"
+      mapfile -t items < <(grep -vE '^\s*(#|$)' "$file" | tr -d '\r ')
+      if (( ${#items[@]} )); then check_classes playable "${items[@]}"; v="$(edit_list "$key" set "${items[@]}")"
+      else v=""; set_conf "$key" ""; fi ;;
+    *) die "Usage: isle-server $label list|known|set|add|remove <Class> [...]|reset$([[ "$section" == playable ]] && echo '|preset [name]')" ;;
+  esac
+  if [[ -z "$v" ]]; then
+    ok "$label: $([[ "$section" == playable ]] && echo 'all classes allowed' || echo 'none disabled')"
+    if [[ "$section" == playable ]]; then log "Restart the server to apply an unrestricted roster"; fi
+  else
+    ok "$label: $v"
+    live_rcon "$rcmd" "$v"
+  fi
+}
+
+# ------------------------------------------------------ profiles / presets --
+overlay_desc() { sed -n '1s/^# [A-Za-z]*: [^ ]* - //p' "$1"; }
+apply_overlay() {  # FILE... - write their KEY=VALUE lines into server.conf, validate, roll back on error
+  local backup line key value file
+  backup="$ISLE_CONF.bak-$(date +%Y%m%d-%H%M%S)"
+  cp -p "$ISLE_CONF" "$backup"
+  for file in "$@"; do
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%$'\r'}"; line="${line#"${line%%[![:space:]]*}"}"
+      [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+      key="${line%%=*}"; value="${line#*=}"
+      [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]] || { warn "Skipping invalid line in $file: $line"; continue; }
+      if [[ "$value" == \"*\" ]]; then value="${value:1:${#value}-2}"; fi
+      set_conf "$key" "$value"
+    done < "$file"
+  done
+  if check_config >/dev/null 2>&1; then
+    ok "Applied $(for f in "$@"; do basename "$f" .conf; done | paste -sd' ' -) (previous config saved as $backup)"
+    log "Restart the server to apply: isle-server restart"
+  else
+    check_config || true
+    cp -p "$backup" "$ISLE_CONF"
+    die "The result did not validate - server.conf was restored from $backup"
+  fi
+}
+cmd_overlay() {  # KIND(profile|preset) sub args...
+  local kind="$1"; shift
+  local dir="$REPO_DIR/config/${kind}s" sub="${1:-list}" f
+  shift || true
+  case "$sub" in
+    list)
+      for f in "$dir"/*.conf; do printf '  %-18s %s\n' "$(basename "$f" .conf)" "$(overlay_desc "$f")"; done ;;
+    show)
+      [[ -n "${1:-}" && -f "$dir/$1.conf" ]] || die "Usage: isle-server $kind show <name> (see: isle-server $kind list)"
+      printf '%s: %s\n' "$1" "$(overlay_desc "$dir/$1.conf")"
+      grep -vE '^\s*(#|$)' "$dir/$1.conf" | while IFS='=' read -r k val; do
+        printf '  %-28s %s -> %s\n' "$k" "$(cfg "$k" '(empty)')" "${val:-(empty)}"
+      done ;;
+    apply)
+      [[ $# -gt 0 ]] || die "Usage: isle-server $kind apply <name>$([[ "$kind" == preset ]] && echo ' [<name> ...]')"
+      if [[ "$kind" == profile && $# -gt 1 ]]; then die "Apply one profile at a time (combine presets with: isle-server preset apply a b c)"; fi
+      local -a files=()
+      for f in "$@"; do [[ -f "$dir/$f.conf" ]] || die "Unknown $kind '$f' (see: isle-server $kind list)"; files+=("$dir/$f.conf"); done
+      apply_overlay "${files[@]}" ;;
+    *) die "Usage: isle-server $kind list|show <name>|apply <name>" ;;
+  esac
+}
+
+# ------------------------------------------------------------------ plugins --
+cmd_plugins() {
+  command -v python3 >/dev/null 2>&1 || die "python3 is required for plugins"
+  python3 "$REPO_DIR/tools/isle_plugins.py" --conf "$ISLE_CONF" --launcher "$SCRIPT_DIR/isle-server.sh" \
+    --runtime "${RUNTIME:-native}" "$@"
+}
+run_hooks() {  # EVENT - run enabled plugins' hooks; never fails
+  local enabled; enabled="$(dirname "$ISLE_CONF")/plugins/enabled.txt"
+  [[ -s "$enabled" ]] || return 0
+  command -v python3 >/dev/null 2>&1 || { warn "python3 missing - plugin hooks skipped"; return 0; }
+  cmd_plugins hook "$1" || warn "A plugin hook for $1 failed"
+}
+
+config_tool() {  # dispatch shared by both runtimes; returns 1 if CMD is not a config tool
+  local cmd="$1"; shift
+  case "$cmd" in
+    admins)     cmd_admins "$@" ;;
+    whitelist)  cmd_whitelist "$@" ;;
+    classes)    cmd_classes ALLOWED_CLASSES playable updateplayables classes "$@" ;;
+    ai-classes) cmd_classes DISABLED_AI_CLASSES ai disableaiclasses ai-classes "$@" ;;
+    profile)    cmd_overlay profile "$@" ;;
+    preset)     cmd_overlay preset "$@" ;;
+    plugins)    cmd_plugins "$@" ;;
+    *) return 1 ;;
+  esac
+}
+
 # ------------------------------------------------------------- docker mode ---
 # RUNTIME=docker: the same commands drive the container defined in
 # docker-compose.yml. The host server.conf is passed in as env_file and used
@@ -621,6 +896,7 @@ docker_main() {
     check) check_config && ok "Configuration OK ($ISLE_CONF, runtime docker)"; return ;;
     info)  docker_info; return ;;
   esac
+  if config_tool "$cmd" "$@"; then return; fi
   docker_require
   case "$cmd" in
     install)
@@ -631,22 +907,29 @@ docker_main() {
     update|validate)
       docker_require_stopped "$cmd"; docker_check
       docker_image
-      dc run --rm theisle "$cmd" ;;
+      dc run --rm theisle "$cmd"
+      run_hooks post-update ;;
     configure)
       docker_check
       dc run --rm theisle configure ;;
     start)
       ensure_rcon_password; docker_check
       dc up -d "${nb[@]}"
-      ok "Container started - follow the startup with: $0 logs -f" ;;
+      ok "Container started - follow the startup with: $0 logs -f"
+      run_hooks post-start ;;
     stop)
+      if docker_running; then run_hooks pre-stop; fi
       dc stop
-      ok "Container stopped" ;;
+      ok "Container stopped"
+      run_hooks post-stop ;;
     restart)
+      if docker_running; then run_hooks pre-stop; fi
       dc stop
+      run_hooks post-stop
       ensure_rcon_password; docker_check
       dc up -d "${nb[@]}"
-      ok "Container restarted" ;;
+      ok "Container restarted"
+      run_hooks post-start ;;
     status)
       if docker_running; then dc exec -T theisle isle-server status
       else warn "Not running (container stopped or not created)"; return 3; fi ;;
@@ -657,7 +940,8 @@ docker_main() {
       if [[ "${1:-}" == "-f" ]]; then dc logs --tail 100 -f theisle; else dc logs --tail 200 theisle; fi ;;
     backup)
       if docker_running; then dc exec -T theisle isle-server backup
-      else dc run --rm theisle backup; fi ;;
+      else dc run --rm theisle backup; fi
+      run_hooks post-backup ;;
     restore)
       local file="${1:-}" target
       [[ -n "$file" ]] || die "Usage: $0 restore <backup.tar.gz | name in /data/backups>"
@@ -723,25 +1007,26 @@ main() {
     native) ;;
     *) check_config || true; die "Unknown runtime '$RUNTIME' (use native or docker)" ;;
   esac
+  if config_tool "$cmd" "$@"; then return; fi
   if [[ $EUID -eq 0 && "$cmd" =~ ^(install|update|run|_watchdog|backup|restore)$ && -z "${ISLE_ALLOW_ROOT:-}" ]]; then
     die "Do not run the game server as root. Use the service user (e.g. 'sudo -u theisle $0 $cmd') or set ISLE_ALLOW_ROOT=1."
   fi
   case "$cmd" in
     install)   require_stopped install; ensure_rcon_password; check_config || die "Fix the configuration errors above, then try again"
                update_server "$@"; configure; ok "Install complete. Start with: $0 start" ;;
-    update)    require_stopped update; update_server "$@" ;;
-    validate)  require_stopped validate; update_server --validate ;;
+    update)    require_stopped update; update_server "$@"; run_hooks post-update ;;
+    validate)  require_stopped validate; update_server --validate; run_hooks post-update ;;
     check)     check_config && ok "Configuration OK ($ISLE_CONF)" ;;
     version)   printf 'isle-server.sh %s\n' "$SCRIPT_VERSION" ;;
     configure) configure --force ;;
-    start)     cmd_start ;;
-    stop)      cmd_stop ;;
-    restart)   cmd_stop; sleep 2; cmd_start ;;
+    start)     cmd_start; run_hooks post-start ;;
+    stop)      if server_running; then run_hooks pre-stop; fi; cmd_stop; run_hooks post-stop ;;
+    restart)   if server_running; then run_hooks pre-stop; fi; cmd_stop; run_hooks post-stop; sleep 2; cmd_start; run_hooks post-start ;;
     status)    cmd_status ;;
     run)       cmd_run ;;
     _watchdog) cmd_watchdog ;;
     logs)      cmd_logs "$@" ;;
-    backup)    cmd_backup ;;
+    backup)    cmd_backup; run_hooks post-backup ;;
     restore)   require_stopped restore; cmd_restore "$@" ;;
     rcon)      cmd_rcon "$@" ;;
     save)      cmd_save ;;

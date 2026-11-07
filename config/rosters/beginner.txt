@@ -1,0 +1,11 @@
+# Roster: beginner - forgiving species for new players
+# One class per line. An empty roster means: all classes allowed (game default).
+Dryosaurus
+Hypsilophodon
+Tenontosaurus
+Maiasaura
+Pachycephalosaurus
+Gallimimus
+Beipiaosaurus
+Omniraptor
+Herrerasaurus

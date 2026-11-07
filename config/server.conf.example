@@ -105,10 +105,25 @@ ENABLE_MASS_MIGRATION=true
 MASS_MIGRATION_TIME=43200
 MASS_MIGRATION_DISABLE_TIME=7200
 # Comma separated list of playable classes. Empty = game default (all).
+# Manage with: isle-server classes list|set|add|remove|preset <roster>
 # Example: Dryosaurus,Hypsilophodon,Pachycephalosaurus,Stegosaurus,Tenontosaurus,
 #          Carnotaurus,Ceratosaurus,Deinosuchus,Omniraptor,Pteranodon,Troodon,
 #          Beipiaosaurus,Gallimimus,Dilophosaurus,Herrerasaurus,Maiasaura,Triceratops,Tyrannosaurus
 ALLOWED_CLASSES=
+
+# ---------------------------------------------- Optional / advanced --------
+# Written to the ini files only when set (see config/reference/*.md).
+# Community-documented keys - names may change between game patches.
+REGION_SPAWNING=
+REGION_SPAWN_COOLDOWN=
+REGION_SPAWN_COOLDOWN_SECONDS=
+WEATHER_MIN_INTERVAL=
+WEATHER_MAX_INTERVAL=
+# Server tick rate in Hz (Engine.ini NetServerMaxTickRate). Empty = engine default.
+NET_TICK_RATE=
+# Folder with Game.ini / Engine.ini overrides merged into the generated files.
+# Empty = config/overrides next to this file. Docker always uses the mounted folder.
+INI_OVERRIDES_DIR=
 
 # -------------------------------------------------- Epic Online Services -----
 # Evrima servers authenticate through EOS. These are the publicly documented

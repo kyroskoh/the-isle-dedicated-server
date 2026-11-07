@@ -18,3 +18,8 @@ Thumbs.db
 .vscode/
 .idea/
 __pycache__/
+
+# ini overrides written by the user
+config/overrides/*.ini
+config/plugins/
+plugins/installed/
