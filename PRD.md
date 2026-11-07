@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.4 |
-| **Product version** | 1.5.0 (released) |
+| **Product version** | 1.6.0 (planned), 1.5.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -81,6 +81,7 @@ cover ongoing operation or offer a single workflow for both Windows and Linux.
 | US-10 | P1/P2 | use the **same launcher commands and `server.conf`** whether the server runs natively or in Docker | I can switch runtimes without learning a second workflow |
 | US-11 | P1/P2 | choose native or Docker when I install, and switch later by re-running the installer | I'm not locked into my first choice |
 | US-12 | P1/P2/P3 | uninstall and later reinstall (or wipe everything and start fresh) | a broken or abandoned setup can always be recovered |
+| US-13 | P1/P2 | choose at uninstall what to keep and what to delete (game files, worlds, backups, settings) | I can free disk space without losing my world, or wipe only what I want |
 
 ## 5. Platform support
 
@@ -120,6 +121,7 @@ Priority: **M** = must, **S** = should, **C** = could.
 | INS-17 | M | **Purge** | `--uninstall --purge` / `-Uninstall -Purge` also deletes server files, backups, the docker volume, the scripts copy and (Linux) the service user. It asks for confirmation unless `--yes` / `-Yes` is given. After a purge, a reinstall starts from scratch |
 | INS-18 | M | **Stable Docker identity** | Compose project `theisle` and volume `theisle-data` are fixed names, so a reinstall from another folder or clone finds the same world |
 | INS-19 | M | **Reinstall with retained data** | A reinstall uses the world kept by an earlier uninstall, in **either** mode. Docker reinstall: reuses volume `theisle-data` and says so. If the volume has no world but a retained native world exists, it is imported. Native reinstall: if the native server has no world but `theisle-data` holds one (with or without a container), it is exported to the native backups folder and restored. An existing world is never overwritten (the installer prints the restore command instead). `--no-import` / `-NoImport` turns this off. "World" means `TheIsle/Saved` with anything besides `Config`, `Logs` and `Crashes` |
+| INS-20 | M | **Choose what to keep at uninstall** | Data is split into: **game files** (server install, SteamCMD, Docker image: re-downloadable), **worlds** (`TheIsle/Saved`), **backups**, **settings** (`server.conf`, scripts copy). Flags: `--keep-data`, `--remove-game-files`, `--remove-worlds`, `--remove-backups`, `--remove-settings`, `--purge` (all of them + service user + Docker volume). Windows: `-KeepData`, `-RemoveGameFiles`, `-RemoveWorlds`, `-RemoveBackups`, `-RemoveSettings`, `-Purge`. With no data flag on an interactive terminal, a menu offers: 1 keep everything (default), 2 remove game files only, 3 remove game files + worlds (keep backups and settings), 4 delete everything, 5 choose each item. Non-interactive with no flag keeps everything. Removing worlds, backups or settings needs typed confirmation unless `--yes` / `-Yes`, and is refused when it can't ask. Removing worlds while keeping backups takes a final backup first. Paths from `server.conf` are only deleted after safety checks (absolute, not a system or top-level directory). A summary lists what was kept and removed, and a reinstall works after any choice |
 
 ### 6.2 Configuration (CFG)
 
@@ -330,6 +332,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M8 Launcher runtime modes (v1.3.0) | LCH-01 – LCH-08: native/docker in both launchers and installers, compose `env_file`, CI job | ✅ Done (v1.3.0). Windows docker mode tested with PowerShell 7 on Linux; Docker Desktop field test pending (M6) |
 | M9 Installer modes & reinstall (v1.4.0) | INS-13 – INS-18: mode prompt and flags, install state, safe mode switching, uninstall/reinstall/purge, fixed compose names, CI reinstall cycle | ✅ Done (v1.4.0). Linux cycle verified locally (no systemd) and in CI. Windows installer covered by CI for arguments, uninstall and purge only |
 | M10 Reinstall with retained data (v1.5.0) | INS-19: import retained worlds across modes on reinstall, both installers, CI | ✅ Done (v1.5.0). Linux verified by the cycle test. Windows import paths parse-checked only (they need Docker Desktop with Linux containers) |
+| **M11 Uninstall data choices (v1.6.0)** | **INS-20**: keep/remove per data category, menu, safety backup, both installers, CI | 🔜 In progress |
 
 ## 12. Traceability matrix
 
@@ -349,6 +352,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | INS-16/17 | uninstall paths in both installers | CI (Linux: full cycle; Windows: clean uninstall, purge refusal, purge -Yes) | Done (v1.4) |
 | INS-18 | `docker-compose.yml` `name:` + volume `name:` | CI | Done (v1.4) |
 | INS-19 | `install.sh` (`volume_has_world`, `export_volume_world`, `native_has_world`), `Install.ps1` equivalents | CI (Linux cycle steps 4-8 check world markers), manual (Windows) | Done (v1.5) |
+| INS-20 | `install.sh` (`choose_removals`, `remove_native_data`, `remove_docker_data`, `safe_rm`), `Install.ps1` equivalents | CI (Linux cycle: each flag, menu via a pseudo-terminal, safety backup, reinstall after each), Windows CI (flag validation, refusal) | **Planned v1.6** |
 | CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |
 | CFG-03/04 | `render_*_ini`/`configure`, `Get-*Ini`/`Set-ServerConfig` | CI smoke (grep sections) | Done |
 | CFG-05 | `check_config` / `Test-ServerConfig`, called by configure/run/start/install | CI smoke (positive + negative) | Done (v1.1) |
