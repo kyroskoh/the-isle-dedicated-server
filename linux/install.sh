@@ -19,7 +19,7 @@
 #
 #  Usage:
 #    sudo ./linux/install.sh [--native|--docker] [options]
-#    sudo ./linux/install.sh --uninstall [--native|--docker] [--purge [--yes]]
+#    sudo ./linux/install.sh --uninstall [--native|--docker] [data choice] [--yes]
 #
 #  Options:
 #    --native | --docker  install mode (default: ask; non-interactive: current mode, else native)
@@ -31,11 +31,16 @@
 #    --no-firewall        native: do not touch ufw/firewalld
 #    --no-deps            native: skip package installation
 #    --no-sudoers         native: no sudoers rule for the service user
-#    --uninstall          remove what is installed (both modes unless one is given);
-#                         keeps world data, settings and backups for a later reinstall
-#    --purge              with --uninstall: ALSO delete server files, backups, the
-#                         Docker volume, the scripts copy and the service user
-#    --yes                do not ask for confirmation (purge)
+#    --uninstall          remove the service/container (both modes unless one is
+#                         given). What happens to the data: pick below, or answer
+#                         the menu (non-interactive default: keep everything)
+#      --keep-data          keep game files, worlds, backups and settings
+#      --remove-game-files  delete re-downloadable files (server, SteamCMD, image)
+#      --remove-worlds      delete worlds (a final backup is taken if backups are kept)
+#      --remove-backups     delete backups
+#      --remove-settings    delete server.conf and the scripts copy
+#      --purge              delete everything above + the service user + Docker volume
+#    --yes                do not ask for confirmation (deleting worlds/backups/settings)
 #    --no-import          do not import a retained world from the other mode
 #    -h | --help          show this help
 # =============================================================================
@@ -48,6 +53,7 @@ BRANCH=""; BRANCH_SET=0
 MODE=""
 DO_SERVICE=1; DO_FIREWALL=1; DO_DEPS=1; DO_SUDOERS=1; DO_START=0
 DO_UNINSTALL=0; DO_PURGE=0; ASSUME_YES=0; DO_IMPORT=1
+RM_GAME=0; RM_WORLDS=0; RM_BACKUPS=0; RM_SETTINGS=0; DATA_FLAG=0; KEEP_DATA=0
 SERVICE="theisle-server"
 STATE_DIR="/etc/theisle-server"
 STATE_FILE="$STATE_DIR/install.state"
@@ -77,7 +83,12 @@ while [[ $# -gt 0 ]]; do
     --no-sudoers)  DO_SUDOERS=0; shift ;;
     --start)       DO_START=1; shift ;;
     --uninstall)   DO_UNINSTALL=1; shift ;;
-    --purge)       DO_PURGE=1; shift ;;
+    --purge)       DO_PURGE=1; DATA_FLAG=1; shift ;;
+    --keep-data)   KEEP_DATA=1; DATA_FLAG=1; shift ;;
+    --remove-game-files) RM_GAME=1; DATA_FLAG=1; shift ;;
+    --remove-worlds)     RM_WORLDS=1; DATA_FLAG=1; shift ;;
+    --remove-backups)    RM_BACKUPS=1; DATA_FLAG=1; shift ;;
+    --remove-settings)   RM_SETTINGS=1; DATA_FLAG=1; shift ;;
     --yes|-y)      ASSUME_YES=1; shift ;;
     --no-import)   DO_IMPORT=0; shift ;;
     -h|--help)     usage; exit 0 ;;
@@ -88,7 +99,10 @@ done
 [[ $EUID -eq 0 ]] || die "Please run as root, e.g.: sudo $0 $*"
 [[ "$(uname -m)" == "x86_64" ]] || die "The Isle dedicated server requires x86_64 (detected $(uname -m))"
 [[ "$SVC_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Invalid user name: $SVC_USER"
-if (( DO_PURGE && ! DO_UNINSTALL )); then die "--purge is only valid together with --uninstall"; fi
+if (( DATA_FLAG && ! DO_UNINSTALL )); then die "--purge/--keep-data/--remove-* are only valid together with --uninstall"; fi
+if (( KEEP_DATA && (DO_PURGE || RM_GAME || RM_WORLDS || RM_BACKUPS || RM_SETTINGS) )); then
+  die "--keep-data cannot be combined with --purge or --remove-*"
+fi
 
 # ------------------------------------------------------------------ state ---
 # KEY=VALUE file written by every install; parsed, never sourced.
@@ -313,36 +327,167 @@ export_native_world() {  # DEST_DIR -> prints the archive path
   printf '%s/%s' "$dest" "$name"
 }
 
+# ------------------------------------------------------- uninstall choices --
+# Data categories (PRD INS-20). RM_*=1 means delete on uninstall.
+#   game files : server install + SteamCMD (+ Docker image)  - re-downloadable
+#   worlds     : TheIsle/Saved
+#   backups    : BACKUP_DIR / volume /data/backups
+#   settings   : server.conf + the scripts copy
+choose_removals() {
+  if (( DO_PURGE )); then RM_GAME=1; RM_WORLDS=1; RM_BACKUPS=1; RM_SETTINGS=1; return; fi
+  if (( DATA_FLAG )) || [[ ! -t 0 ]]; then return; fi
+  printf '\nWhat should happen to the server data?\n'
+  printf '  1) Keep everything                 - a reinstall picks it up again (default)\n'
+  printf '  2) Remove game files only          - frees disk space; worlds, backups and settings are kept\n'
+  printf '  3) Remove game files and worlds    - backups and settings are kept (a final backup is taken)\n'
+  printf '  4) Delete everything (purge)       - game files, worlds, backups, settings, service user, Docker volume\n'
+  printf '  5) Choose each item\n'
+  local ans; read -r -p "Choose 1-5 [1]: " ans
+  case "${ans:-1}" in
+    1) ;;
+    2) RM_GAME=1 ;;
+    3) RM_GAME=1; RM_WORLDS=1 ;;
+    4) DO_PURGE=1; RM_GAME=1; RM_WORLDS=1; RM_BACKUPS=1; RM_SETTINGS=1 ;;
+    5) ask_yn "Remove game files (server install, SteamCMD, Docker image - re-downloadable)?" && RM_GAME=1
+       ask_yn "Remove worlds (TheIsle/Saved)?" && RM_WORLDS=1
+       ask_yn "Remove backups?" && RM_BACKUPS=1
+       ask_yn "Remove settings (server.conf and the scripts copy)?" && RM_SETTINGS=1
+       return 0 ;;
+    *) die "Please answer 1-5" ;;
+  esac
+}
+ask_yn() { local a; read -r -p "$1 [y/N]: " a; [[ "${a,,}" == y || "${a,,}" == yes ]]; }
+
+removal_list() {
+  local -a l=()
+  (( RM_GAME )) && l+=("game files"); (( RM_WORLDS )) && l+=("worlds")
+  (( RM_BACKUPS )) && l+=("backups"); (( RM_SETTINGS )) && l+=("settings")
+  if (( ${#l[@]} )); then local IFS=,; printf '%s' "${l[*]}" | sed 's/,/, /g'; else printf 'nothing'; fi
+}
+kept_list() {
+  local -a l=()
+  (( RM_GAME )) || l+=("game files"); (( RM_WORLDS )) || l+=("worlds")
+  (( RM_BACKUPS )) || l+=("backups"); (( RM_SETTINGS )) || l+=("settings")
+  if (( ${#l[@]} )); then local IFS=,; printf '%s' "${l[*]}" | sed 's/,/, /g'; else printf 'nothing'; fi
+}
+
+safe_rm() {  # delete a directory from server.conf only if the path is clearly not a system dir
+  local p="$1"
+  [[ -n "$p" && "$p" == /* ]] || { warn "Not deleting '$p' (not an absolute path)"; return 0; }
+  p="$(readlink -m "$p")"
+  if [[ "$p" =~ ^/(bin|boot|dev|etc|lib|lib32|lib64|libx32|proc|run|sbin|sys|usr)(/|$) ]] \
+     || [[ "$(dirname "$p")" == / || "$(dirname "$p")" == /home || "$p" == "$(readlink -m "$SVC_HOME")" ]]; then
+    warn "Not deleting '$p' (looks like a system or home directory) - remove it by hand if you really want to"
+    return 0
+  fi
+  if [[ -e "$p" ]]; then rm -rf -- "$p"; ok "Removed $p"; fi
+}
+
+native_path() {  # KEY DEFAULT - value from the native server.conf
+  local conf="$NATIVE_SCRIPTS_DIR/config/server.conf" v=""
+  if [[ -f "$conf" ]]; then v="$(grep -E "^$1=" "$conf" | tail -n1 | cut -d= -f2- | tr -d '"\r')"; fi
+  printf '%s' "${v:-$2}"
+}
+
+remove_native_data() {
+  (( RM_GAME || RM_WORLDS || RM_BACKUPS || RM_SETTINGS )) || return 0
+  local sdir scdir bdir
+  sdir="$(native_path SERVER_DIR "$SVC_HOME/theisle-server")"
+  scdir="$(native_path STEAMCMD_DIR "$SVC_HOME/steamcmd")"
+  bdir="$(native_path BACKUP_DIR "$SVC_HOME/theisle-backups")"
+  step "Removing native data: $(removal_list)"
+  if (( RM_WORLDS && ! RM_BACKUPS )) && native_has_world; then
+    mkdir -p "$bdir"
+    local f; f="$bdir/theisle-final-$(date +%Y%m%d-%H%M%S).tar.gz"
+    if tar -czf "$f" -C "$sdir/TheIsle" --exclude=Saved/Logs --exclude=Saved/Crashes Saved; then
+      chown -R "$SVC_USER:" "$bdir" 2>/dev/null || true
+      ok "Final backup of the world: $f"
+    else
+      die "Could not take a final backup - nothing was deleted"
+    fi
+  fi
+  if (( RM_GAME && RM_WORLDS )); then
+    safe_rm "$sdir"
+  else
+    if (( RM_GAME )) && [[ -d "$sdir" ]]; then
+      find "$sdir" -mindepth 1 -maxdepth 1 ! -name TheIsle -exec rm -rf -- {} +
+      if [[ -d "$sdir/TheIsle" ]]; then find "$sdir/TheIsle" -mindepth 1 -maxdepth 1 ! -name 'Saved*' -exec rm -rf -- {} +; fi
+      ok "Removed game files in $sdir (worlds kept)"
+    fi
+    if (( RM_WORLDS )) && [[ -d "$sdir/TheIsle" ]]; then
+      find "$sdir/TheIsle" -mindepth 1 -maxdepth 1 -name 'Saved*' -exec rm -rf -- {} +
+      ok "Removed worlds in $sdir/TheIsle"
+    fi
+  fi
+  if (( RM_GAME )); then safe_rm "$scdir"; rm -rf -- "${SVC_HOME:?}/.steam"; fi
+  if (( RM_BACKUPS )); then safe_rm "$bdir"; fi
+  if (( RM_SETTINGS )); then safe_rm "$NATIVE_SCRIPTS_DIR"; fi
+}
+
+remove_docker_data() {
+  (( RM_GAME || RM_WORLDS || RM_BACKUPS || RM_SETTINGS )) || return 0
+  step "Removing Docker data: $(removal_list)"
+  if ! have_docker_cli; then warn "Docker is not available - Docker data was not touched"; return 0; fi
+  if docker volume inspect "$VOLUME" >/dev/null 2>&1; then
+    if (( RM_GAME && RM_WORLDS && RM_BACKUPS && RM_SETTINGS )); then
+      docker volume rm "$VOLUME" >/dev/null && ok "Removed volume $VOLUME"
+    else
+      local img; img="$(helper_image)" || img=""
+      [[ -n "$img" ]] || die "No image available to edit volume $VOLUME - nothing was deleted"
+      local cmd="set -e"
+      if (( RM_WORLDS && ! RM_BACKUPS )) && volume_has_world; then
+        cmd+="; mkdir -p /data/backups; tar -czf /data/backups/theisle-final-\$(date +%Y%m%d-%H%M%S).tar.gz -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved"
+        ok "Taking a final backup of the world into /data/backups"
+      fi
+      if (( RM_GAME )); then
+        cmd+="; [ -d /data/server ] && find /data/server -mindepth 1 -maxdepth 1 ! -name TheIsle -exec rm -rf {} + || true"
+        cmd+="; [ -d /data/server/TheIsle ] && find /data/server/TheIsle -mindepth 1 -maxdepth 1 ! -name 'Saved*' -exec rm -rf {} + || true"
+        cmd+="; rm -rf /data/steamcmd /data/home"
+      fi
+      if (( RM_WORLDS )); then cmd+="; rm -rf /data/server/TheIsle/Saved /data/server/TheIsle/Saved.pre-restore-*"; fi
+      if (( RM_BACKUPS )); then cmd+="; rm -rf /data/backups"; fi
+      if (( RM_SETTINGS )); then cmd+="; rm -rf /data/config"; fi
+      if docker run --rm -v "$VOLUME:/data" --entrypoint sh "$img" -c "$cmd"; then
+        ok "Updated volume $VOLUME (kept: $(kept_list))"
+      else
+        die "Editing volume $VOLUME failed"
+      fi
+    fi
+  fi
+  if (( DO_PURGE )); then
+    local vol
+    for vol in $(docker volume ls -q | grep -E '_theisle-data$' || true); do
+      if docker volume rm "$vol" >/dev/null 2>&1; then ok "Removed legacy volume $vol"; fi
+    done
+  fi
+  if (( RM_GAME )) && docker image rm theisle-server:latest >/dev/null 2>&1; then ok "Removed image theisle-server:latest"; fi
+  if (( RM_SETTINGS )); then safe_rm "$DOCKER_SCRIPTS_DIR"; fi
+}
+
 # --------------------------------------------------------------- uninstall --
 do_uninstall() {
-  local want="$MODE" any=0
+  local want="$MODE" any=0 do_native=0 do_docker=0
+  choose_removals
+  if [[ -z "$want" || "$want" == native ]] && native_installed; then do_native=1; fi
+  if [[ -z "$want" || "$want" == docker ]] && { docker_installed || [[ "$ST_MODE" == docker || -d "$DOCKER_SCRIPTS_DIR" ]] \
+       || { have_docker_cli && docker volume inspect "$VOLUME" >/dev/null 2>&1; }; }; then do_docker=1; fi
   if (( DO_PURGE )); then
     confirm "PURGE: delete ALL server files, worlds, backups, settings and the service user"
+  elif (( RM_WORLDS || RM_BACKUPS || RM_SETTINGS )); then
+    confirm "Delete $(removal_list)"
   fi
-  if [[ -z "$want" || "$want" == native ]] && native_installed; then
+  if (( do_native )); then
     any=1; retire_native
-    if (( DO_PURGE )); then
-      step "Purging native data"
-      if id "$SVC_USER" >/dev/null 2>&1; then
-        userdel -r "$SVC_USER" >/dev/null 2>&1 || userdel "$SVC_USER" || true
-        ok "Removed user $SVC_USER and its home ($SVC_HOME)"
-      fi
+    remove_native_data
+    if (( DO_PURGE )) && id "$SVC_USER" >/dev/null 2>&1; then
+      userdel -r "$SVC_USER" >/dev/null 2>&1 || userdel "$SVC_USER" || true
       if [[ -d "$SVC_HOME" && "$SVC_HOME" == /home/* ]]; then rm -rf -- "$SVC_HOME"; fi
+      ok "Removed user $SVC_USER and its home ($SVC_HOME)"
     fi
   fi
-  if [[ -z "$want" || "$want" == docker ]] && { docker_installed || [[ "$ST_MODE" == docker || -d "$DOCKER_SCRIPTS_DIR" ]]; }; then
+  if (( do_docker )); then
     any=1; retire_docker
-    if (( DO_PURGE )); then
-      step "Purging Docker data"
-      if have_docker_cli; then
-        local vol
-        for vol in "$VOLUME" $(docker volume ls -q | grep -E '_theisle-data$' || true); do
-          if docker volume rm "$vol" >/dev/null 2>&1; then ok "Removed volume $vol"; fi
-        done
-        docker image rm theisle-server:latest >/dev/null 2>&1 || true
-      fi
-      if [[ -d "$DOCKER_SCRIPTS_DIR" ]]; then rm -rf -- "${DOCKER_SCRIPTS_DIR:?}"; ok "Removed $DOCKER_SCRIPTS_DIR"; fi
-    fi
+    remove_docker_data
   fi
   if (( DO_PURGE )); then
     rm -f "$STATE_FILE"; rmdir "$STATE_DIR" 2>/dev/null || true
@@ -353,7 +498,8 @@ do_uninstall() {
   if (( DO_PURGE )); then
     ok "Purged. A reinstall starts from scratch."
   else
-    ok "Uninstalled. World data, settings and backups were kept - re-run this installer to reinstall."
+    ok "Uninstalled. Removed: $(removal_list). Kept: $(kept_list)."
+    echo "  Re-run this installer to reinstall$( (( RM_WORLDS )) || echo ' - kept worlds are picked up again')."
   fi
 }
 

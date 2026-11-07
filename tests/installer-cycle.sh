@@ -7,7 +7,9 @@
 #  purge -> native install -> uninstall -> reinstall -> switch to docker (native
 #  world imported) -> uninstall -> reinstall (retained volume reused) -> switch
 #  to native (Docker world imported) -> uninstall -> reinstall native from the
-#  retained volume -> purge -> fresh reinstall (nothing imported)
+#  retained volume -> uninstall data choices (game files only, worlds with/without
+#  --yes, backups+settings, Docker volume parts, interactive menu), each followed
+#  by a reinstall -> purge -> fresh reinstall (nothing imported)
 #
 #  Uses a fake SteamCMD and a fake server binary, so nothing is downloaded from
 #  Steam. DESTRUCTIVE for this machine's The Isle install: it purges the
@@ -134,6 +136,59 @@ run 7c --no-deps
 ck "existing world not overwritten" "grep -q 'native world was left as is' $LOGS/7c.log"
 run 7d --no-deps --no-import
 ck "--no-import respected"     "! grep -q 'Exporting the world' $LOGS/7d.log"
+
+NBIN=/home/theisle/theisle-server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping
+vol_bin() { docker run --rm -v theisle-data:/data:ro --entrypoint sh theisle-server:latest -c "[ -x /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping ]"; }
+runtty() { local n="$1" answers="$2"; shift 2; printf '%b' "$answers" | script -qec "bash $I $*" /dev/null > "$LOGS/$n.log" 2>&1; }
+
+echo "## A uninstall --remove-game-files (both modes): game files gone, worlds kept"
+vol_put docker-world.txt
+run A --uninstall --remove-game-files
+use_prebuilt
+ck "native game files removed"  "[ ! -e $NBIN ] && [ ! -e /home/theisle/steamcmd ]"
+ck "native world kept"          "[ -f $NSAVED/SaveGames/docker-world.txt ]"
+ck "volume game files removed"  "! vol_bin"
+ck "volume world kept"          "vol_has docker-world.txt"
+ck "summary printed"            "grep -q 'Removed: game files. Kept: worlds, backups, settings' $LOGS/A.log"
+prep_native; run Ab --native --no-deps --start
+ck "reinstall re-downloads"     "[ -x $NBIN ] && waitfor nstat"
+ck "world still there"          "[ -f $NSAVED/SaveGames/docker-world.txt ]"
+
+echo "## B --remove-worlds without --yes is refused when non-interactive"
+run B --uninstall --native --remove-worlds
+ck "refused, world kept"        "grep -q 'without confirmation' $LOGS/B.log && [ -f $NSAVED/SaveGames/docker-world.txt ]"
+
+echo "## C --remove-worlds --yes keeps backups and takes a final backup"
+run C --uninstall --native --remove-worlds --yes
+ck "native world removed"       "[ ! -e $NSAVED ]"
+ck "final backup has the world" "tar -tzf \"\$(ls -t /home/theisle/theisle-backups/theisle-final-*.tar.gz | head -1)\" | grep -q docker-world.txt"
+ck "settings kept"              "[ -f $NC ]"
+run Cb --native --no-deps --start
+ck "reinstall imports retained volume world" "[ -f $NSAVED/SaveGames/docker-world.txt ] && waitfor nstat"
+
+echo "## D --remove-backups --remove-settings --yes"
+run D --uninstall --native --remove-backups --remove-settings --yes
+ck "backups removed"            "[ ! -e /home/theisle/theisle-backups ]"
+ck "settings removed"           "[ ! -e $NC ]"
+ck "world kept"                 "[ -f $NSAVED/SaveGames/docker-world.txt ]"
+run Db --native --no-deps --start
+ck "reinstall recreates settings" "[ -f $NC ] && grep -q '^RUNTIME=native' $NC && waitfor nstat"
+
+echo "## E docker: remove worlds + backups inside the retained volume"
+run E --uninstall --docker --remove-worlds --remove-backups --yes
+ck "volume kept"                "docker volume inspect theisle-data >/dev/null 2>&1"
+ck "volume world removed"       "! vol_has docker-world.txt"
+ck "native untouched"           "waitfor nstat"
+
+echo "## F interactive menu (pseudo-terminal): option 2 = game files only"
+runtty F '2\n' --uninstall --native
+ck "menu shown"                 "grep -q 'What should happen to the server data' $LOGS/F.log"
+ck "game files removed"         "[ ! -e $NBIN ]"
+ck "world kept"                 "[ -f $NSAVED/SaveGames/docker-world.txt ]"
+runtty F2 '5\nn\ny\nn\nn\nno\n' --uninstall --native
+ck "custom choice asks, 'no' aborts" "grep -q 'Aborted' $LOGS/F2.log && [ -f $NSAVED/SaveGames/docker-world.txt ]"
+prep_native; run Fb --native --no-deps --start
+ck "reinstall after menu"       "waitfor nstat"
 
 echo "## 8 purge, then fresh reinstall (nothing to import)"; run 8 --uninstall --purge --yes
 ck "user removed"              "! id theisle >/dev/null 2>&1"

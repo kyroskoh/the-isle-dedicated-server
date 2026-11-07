@@ -238,6 +238,26 @@ jobs:
           if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -Purge without -Uninstall'; exit 1 }
           .\windows\Install.ps1 -Uninstall -InstallRoot $root
           if ($LASTEXITCODE -ne 0) { Write-Host 'uninstall on a clean machine failed'; exit 1 }
+          .\windows\Install.ps1 -KeepData -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -KeepData without -Uninstall'; exit 1 }
+          .\windows\Install.ps1 -Uninstall -KeepData -RemoveWorlds -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -KeepData with -RemoveWorlds'; exit 1 }
+          # Non-interactive: deleting worlds must be refused without -Yes (INS-20)
+          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\Install.ps1 -Uninstall -RemoveWorlds -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'deleted worlds without confirmation'; exit 1 }
+          # Game files only needs no confirmation and keeps everything else
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Set-Content "$root\install-state.txt" "MODE=native`nSTATUS=installed"
+          New-Item -ItemType Directory -Force -Path "$root\server\TheIsle\Saved\SaveGames", "$root\server\TheIsle\Binaries", "$root\steamcmd" | Out-Null
+          Set-Content "$root\server\TheIsle\Saved\SaveGames\w.txt" 'world'
+          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\Install.ps1 -Uninstall -Native -RemoveGameFiles -InstallRoot $root
+          if ($LASTEXITCODE -ne 0) { Write-Host 'remove game files failed'; exit 1 }
+          if ((Test-Path "$root\server\TheIsle\Binaries") -or (Test-Path "$root\steamcmd")) { Write-Host 'game files not removed'; exit 1 }
+          if (-not (Test-Path "$root\server\TheIsle\Saved\SaveGames\w.txt")) { Write-Host 'world was removed'; exit 1 }
+          # Worlds with -Yes and backups kept: final backup first
+          .\windows\Install.ps1 -Uninstall -Native -RemoveWorlds -Yes -InstallRoot $root
+          if ($LASTEXITCODE -ne 0 -or (Test-Path "$root\server\TheIsle\Saved")) { Write-Host 'worlds not removed'; exit 1 }
+          if (-not (Get-ChildItem "$root\backups\theisle-final-*.tar.gz")) { Write-Host 'no final backup'; exit 1 }
           New-Item -ItemType Directory -Force -Path "$root\scripts\windows" | Out-Null
           Set-Content "$root\install-state.txt" "MODE=native`nSTATUS=uninstalled"
           # stdin redirected => non-interactive: purge must refuse without -Yes

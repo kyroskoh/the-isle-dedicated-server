@@ -6,6 +6,25 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-07
+
+Planned in [PRD.md](PRD.md) as milestone M11 (requirement INS-20).
+
+### Added
+- **Choose what to keep or delete at uninstall.** Data is grouped as game files (re-downloadable), worlds, backups and
+  settings. Flags: `--keep-data`, `--remove-game-files`, `--remove-worlds`, `--remove-backups`, `--remove-settings`,
+  `--purge` (Windows: `-KeepData`, `-RemoveGameFiles`, `-RemoveWorlds`, `-RemoveBackups`, `-RemoveSettings`, `-Purge`).
+  They can be combined.
+- An interactive uninstall menu: keep everything / game files only / game files and worlds / delete everything /
+  choose each item. Non-interactive uninstalls with no flag keep everything.
+- Deleting worlds, backups or settings needs typed confirmation (`--yes` / `-Yes` to skip) and is refused without a terminal.
+  Removing worlds while keeping backups takes a final `theisle-final-*.tar.gz` backup first.
+- Safety checks before deleting any folder from `server.conf` (no system, top-level or home folders). In docker mode,
+  individual parts are removed inside the `theisle-data` volume.
+- The uninstall summary lists what was removed and what was kept. Reinstalling works after any choice.
+- Installer cycle test: each data flag, the menu through a pseudo-terminal, the final backup, and a reinstall after
+  each choice. Windows CI: data-switch validation, refusal without `-Yes`, game-files-only and worlds-with-final-backup.
+
 ## [1.5.0] - 2026-11-07
 
 Planned in [PRD.md](PRD.md) as milestone M10 (requirement INS-19).
@@ -142,7 +161,8 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.2.0...v1.3.0

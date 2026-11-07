@@ -213,7 +213,37 @@ Run the installer again at any time. It's safe:
 | The same mode again | Scripts are updated. `server.conf`, the world and backups are kept. A running server is stopped, updated and started again |
 | The **other** mode | The old mode is stopped and disabled (its data is kept). `server.conf` carries over with `RUNTIME` switched. A backup of the old world is made so you can move it (the installer prints the exact `restore` command) |
 | `--uninstall` / `-Uninstall` | Removes the service, scheduled tasks, firewall rules and container. **Keeps** world data (including the `theisle-data` Docker volume), settings and backups. It remembers the mode, so running the installer again (no flag needed) reinstalls the same way, with the same world |
+| `--uninstall --remove-game-files` (or menu option 2) | Also deletes re-downloadable files: server install, SteamCMD, Docker image. Worlds, backups and settings stay. A reinstall downloads the game again and finds your world |
+| `--uninstall --remove-worlds` (or menu option 3 with game files) | Deletes worlds. If backups are kept, a final `theisle-final-*.tar.gz` backup is taken first |
+| `--uninstall --remove-backups` / `--remove-settings` | Deletes backups, or `server.conf` plus the scripts copy |
 | `--uninstall --purge` / `-Uninstall -Purge` | Also deletes server files, worlds, backups, settings, the `theisle-data` Docker volume and (Linux) the `theisle` user. Asks you to type `yes` (`--yes` / `-Yes` skips the prompt). A later install starts from scratch |
+
+**Choosing what to keep.** Run `--uninstall` / `-Uninstall` in a terminal without a data flag and it asks:
+
+```
+What should happen to the server data?
+  1) Keep everything                 - a reinstall picks it up again (default)
+  2) Remove game files only          - frees disk space; worlds, backups and settings are kept
+  3) Remove game files and worlds    - backups and settings are kept (a final backup is taken)
+  4) Delete everything (purge)       - game files, worlds, backups, settings, service user, Docker volume
+  5) Choose each item
+```
+
+Or pass the flags directly. They can be combined:
+
+| Linux | Windows | Deletes |
+|---|---|---|
+| `--keep-data` | `-KeepData` | nothing (the default when there is no terminal) |
+| `--remove-game-files` | `-RemoveGameFiles` | server install, SteamCMD, Docker image (re-downloadable) |
+| `--remove-worlds` | `-RemoveWorlds` | `TheIsle/Saved` (final backup first if backups are kept) |
+| `--remove-backups` | `-RemoveBackups` | the backups folder / `/data/backups` |
+| `--remove-settings` | `-RemoveSettings` | `server.conf` and the scripts copy |
+| `--purge` | `-Purge` | all of the above, plus the service user and the Docker volume |
+
+Deleting worlds, backups or settings asks you to type `yes`. `--yes` / `-Yes` skips that prompt. Without a
+terminal it refuses. Folders taken from `server.conf` are only deleted if they're clearly not system or home
+folders. In docker mode, the parts are removed from inside the `theisle-data` volume. The volume itself is only
+deleted when everything goes.
 
 `--uninstall` with no mode removes whatever is installed (both modes, if both are present). Add `--native` or
 `--docker` to remove only one.

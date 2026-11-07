@@ -41,11 +41,28 @@
     With -Uninstall: also delete InstallRoot (server files, backups, settings), the Docker
     volume and image. Asks for confirmation unless -Yes is given.
 
+.PARAMETER KeepData
+    With -Uninstall: keep game files, worlds, backups and settings (the default when
+    there is no prompt). Without any data switch an interactive uninstall shows a menu.
+
+.PARAMETER RemoveGameFiles
+    With -Uninstall: delete re-downloadable files (server install, SteamCMD, Docker image).
+
+.PARAMETER RemoveWorlds
+    With -Uninstall: delete worlds (TheIsle\Saved). A final backup is taken if backups are kept.
+
+.PARAMETER RemoveBackups
+    With -Uninstall: delete backups.
+
+.PARAMETER RemoveSettings
+    With -Uninstall: delete server.conf and the scripts copy.
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\Install.ps1
     powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Native -InstallRoot D:\Games\TheIsle -Start
     powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Docker -Start
     powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Uninstall
+    powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Uninstall -RemoveGameFiles
     powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Uninstall -Purge -Yes
 #>
 [CmdletBinding()]
@@ -63,7 +80,12 @@ param(
     [switch]$Uninstall,
     [switch]$Purge,
     [switch]$Yes,
-    [switch]$NoImport
+    [switch]$NoImport,
+    [switch]$KeepData,
+    [switch]$RemoveGameFiles,
+    [switch]$RemoveWorlds,
+    [switch]$RemoveBackups,
+    [switch]$RemoveSettings
 )
 
 Set-StrictMode -Version 2.0
@@ -76,7 +98,11 @@ function Write-Warn([string]$m) { Write-Host "[WARN] $m" -ForegroundColor Yellow
 function Fail([string]$m)       { Write-Host "[FAIL] $m" -ForegroundColor Red; exit 1 }
 
 if ($Native -and $Docker) { Fail 'Choose either -Native or -Docker, not both.' }
-if ($Purge -and -not $Uninstall) { Fail '-Purge is only valid together with -Uninstall.' }
+$dataSwitch = $Purge -or $KeepData -or $RemoveGameFiles -or $RemoveWorlds -or $RemoveBackups -or $RemoveSettings
+if ($dataSwitch -and -not $Uninstall) { Fail '-Purge/-KeepData/-Remove* are only valid together with -Uninstall.' }
+if ($KeepData -and ($Purge -or $RemoveGameFiles -or $RemoveWorlds -or $RemoveBackups -or $RemoveSettings)) {
+    Fail '-KeepData cannot be combined with -Purge or -Remove*.'
+}
 
 # ------------------------------------------------------------ elevation ----
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -175,18 +201,205 @@ function Confirm-Purge {
     if ($ans -ne 'yes') { Fail 'Aborted' }
 }
 
+# ---------------------------------------------------------- config access --
+$script:cfgText = ''
+if (Test-Path $Conf) { $script:cfgText = [IO.File]::ReadAllText($Conf) }
+function Get-Conf([string]$k, [string]$d) {
+    if ($script:cfgText -match "(?m)^$k=(.*)$") { $v = $Matches[1].Trim().Trim('"'); if ($v) { return $v } }
+    return $d
+}
+
+# ------------------------------------------------- retained world data ------
+# A "world" is TheIsle\Saved with anything besides Config, Logs and Crashes.
+# Reinstalls import a retained world from the other runtime when the target has
+# none, and never overwrite an existing world (PRD INS-19).
+function Get-NativeSavedDir { return (Join-Path (Get-Conf 'SERVER_DIR' (Join-Path $InstallRoot 'server')) 'TheIsle\Saved') }
+function Test-NativeWorld {
+    $saved = Get-NativeSavedDir
+    if (-not (Test-Path $saved)) { return $false }
+    return [bool](Get-ChildItem -Path $saved -Force | Where-Object { @('Config', 'Logs', 'Crashes') -notcontains $_.Name } | Select-Object -First 1)
+}
+function Get-HelperImage {
+    foreach ($img in @((Get-Conf 'DOCKER_IMAGE' ''), 'theisle-server:latest', 'debian:bookworm-slim')) {
+        if (-not $img) { continue }
+        & docker image inspect $img *> $null
+        if ($LASTEXITCODE -eq 0) { return $img }
+    }
+    & docker pull -q debian:bookworm-slim *> $null
+    if ($LASTEXITCODE -eq 0) { return 'debian:bookworm-slim' }
+    return $null
+}
+function Test-VolumeWorld {
+    if (-not (Test-DockerUsable)) { return $false }
+    & docker volume inspect $Volume *> $null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $img = Get-HelperImage
+    if (-not $img) { return $false }
+    $check = 'd=/data/server/TheIsle/Saved; [ -d "$d" ] && find "$d" -mindepth 1 -maxdepth 1 ! -name Config ! -name Logs ! -name Crashes | grep -q .'
+    & docker run --rm -v "${Volume}:/data:ro" --entrypoint sh $img -c $check *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+function Export-VolumeWorld([string]$dest) {
+    $img = Get-HelperImage
+    if (-not $img) { return $null }
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    $name = 'theisle-docker-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz'
+    & docker run --rm -v "${Volume}:/data:ro" -v "${dest}:/out" --entrypoint sh $img -c "tar -czf /out/$name -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved" *> $null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return (Join-Path $dest $name)
+}
+function Export-NativeWorld([string]$dest) {
+    $saved = Get-NativeSavedDir
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    $file = Join-Path $dest ('theisle-native-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz')
+    & tar -czf $file -C (Split-Path -Parent $saved) --exclude=Saved/Logs --exclude=Saved/Crashes Saved
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return $file
+}
+
+# ------------------------------------------------------- uninstall choices --
+# Data categories (PRD INS-20): game files (server, SteamCMD, image - re-downloadable),
+# worlds (TheIsle\Saved), backups, settings (server.conf + scripts copy).
+function Get-RemovalList([hashtable]$rm, [bool]$removed) {
+    $names = [ordered]@{ Game = 'game files'; Worlds = 'worlds'; Backups = 'backups'; Settings = 'settings' }
+    $l = @($names.Keys | Where-Object { [bool]$rm[$_] -eq $removed } | ForEach-Object { $names[$_] })
+    if ($l.Count -eq 0) { return 'nothing' }
+    return ($l -join ', ')
+}
+function Read-YesNo([string]$q) { $a = Read-Host "$q [y/N]"; return @('y', 'yes') -contains "$a".ToLowerInvariant() }
+function Select-Removals {
+    $rm = @{ Game = [bool]$RemoveGameFiles; Worlds = [bool]$RemoveWorlds; Backups = [bool]$RemoveBackups; Settings = [bool]$RemoveSettings }
+    if ($Purge) { foreach ($k in @($rm.Keys)) { $rm[$k] = $true }; return $rm }
+    $anyFlag = $KeepData -or $RemoveGameFiles -or $RemoveWorlds -or $RemoveBackups -or $RemoveSettings
+    $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+    if ($anyFlag -or -not $interactive) { return $rm }
+    Write-Host ''
+    Write-Host 'What should happen to the server data?'
+    Write-Host '  1) Keep everything                 - a reinstall picks it up again (default)'
+    Write-Host '  2) Remove game files only          - frees disk space; worlds, backups and settings are kept'
+    Write-Host '  3) Remove game files and worlds    - backups and settings are kept (a final backup is taken)'
+    Write-Host '  4) Delete everything (purge)       - deletes the install folder and the Docker volume'
+    Write-Host '  5) Choose each item'
+    $ans = Read-Host 'Choose 1-5 [1]'
+    switch ("$ans") {
+        { $_ -in '', '1' } { }
+        '2' { $rm.Game = $true }
+        '3' { $rm.Game = $true; $rm.Worlds = $true }
+        '4' { $script:Purge = $true; foreach ($k in @($rm.Keys)) { $rm[$k] = $true } }
+        '5' {
+            $rm.Game = Read-YesNo 'Remove game files (server install, SteamCMD, Docker image - re-downloadable)?'
+            $rm.Worlds = Read-YesNo 'Remove worlds (TheIsle\Saved)?'
+            $rm.Backups = Read-YesNo 'Remove backups?'
+            $rm.Settings = Read-YesNo 'Remove settings (server.conf and the scripts copy)?'
+        }
+        default { Fail 'Please answer 1-5.' }
+    }
+    return $rm
+}
+function Confirm-Removal([string]$what) {
+    if ($Yes) { return }
+    $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+    if (-not $interactive) { Fail "Refusing to delete $what without confirmation - re-run with -Yes." }
+    $ans = Read-Host "Delete $what? Type 'yes' to continue"
+    if ($ans -ne 'yes') { Fail 'Aborted' }
+}
+function Remove-SafeItem([string]$p) {
+    if (-not $p) { return }
+    $full = [IO.Path]::GetFullPath($p).TrimEnd('\')
+    $deny = @($env:SystemRoot, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, $env:USERPROFILE,
+              (Split-Path -Parent $env:USERPROFILE)) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') }
+    $depth = @($full.Split('\') | Where-Object { $_ }).Count
+    if ($depth -lt 2 -or $deny -contains $full) {
+        Write-Warn "Not deleting $full (looks like a system or profile folder) - remove it by hand if you really want to"
+        return
+    }
+    if (Test-Path -LiteralPath $full) { Remove-Item -LiteralPath $full -Recurse -Force; Write-Ok "Removed $full" }
+}
+function Remove-NativeData([hashtable]$rm) {
+    if (-not ($rm.Game -or $rm.Worlds -or $rm.Backups -or $rm.Settings)) { return }
+    Write-Step ("Removing native data: " + (Get-RemovalList $rm $true))
+    $sdir = Get-Conf 'SERVER_DIR' (Join-Path $InstallRoot 'server')
+    $scdir = Get-Conf 'STEAMCMD_DIR' (Join-Path $InstallRoot 'steamcmd')
+    $bdir = Get-Conf 'BACKUP_DIR' (Join-Path $InstallRoot 'backups')
+    $isle = Join-Path $sdir 'TheIsle'
+    if ($rm.Worlds -and -not $rm.Backups -and (Test-NativeWorld)) {
+        New-Item -ItemType Directory -Force -Path $bdir | Out-Null
+        $f = Join-Path $bdir ('theisle-final-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz')
+        & tar -czf $f -C $isle --exclude=Saved/Logs --exclude=Saved/Crashes Saved
+        if ($LASTEXITCODE -ne 0) { Fail 'Could not take a final backup - nothing was deleted' }
+        Write-Ok "Final backup of the world: $f"
+    }
+    if ($rm.Game -and $rm.Worlds) { Remove-SafeItem $sdir }
+    else {
+        if ($rm.Game -and (Test-Path $sdir)) {
+            Get-ChildItem -LiteralPath $sdir -Force | Where-Object { $_.Name -ne 'TheIsle' } | Remove-Item -Recurse -Force
+            if (Test-Path $isle) { Get-ChildItem -LiteralPath $isle -Force | Where-Object { $_.Name -notlike 'Saved*' } | Remove-Item -Recurse -Force }
+            Write-Ok "Removed game files in $sdir (worlds kept)"
+        }
+        if ($rm.Worlds -and (Test-Path $isle)) {
+            Get-ChildItem -LiteralPath $isle -Force | Where-Object { $_.Name -like 'Saved*' } | Remove-Item -Recurse -Force
+            Write-Ok "Removed worlds in $isle"
+        }
+    }
+    if ($rm.Game) { Remove-SafeItem $scdir }
+    if ($rm.Backups) { Remove-SafeItem $bdir }
+    if ($rm.Settings) { Set-Location ([IO.Path]::GetTempPath()); Remove-SafeItem $ScriptsDir }
+}
+function Remove-DockerData([hashtable]$rm) {
+    if (-not ($rm.Game -or $rm.Worlds -or $rm.Backups -or $rm.Settings)) { return }
+    Write-Step ("Removing Docker data: " + (Get-RemovalList $rm $true))
+    if (-not (Test-DockerUsable)) { Write-Warn 'Docker is not available - Docker data was not touched'; return }
+    & docker volume inspect $Volume *> $null
+    if ($LASTEXITCODE -eq 0) {
+        if ($rm.Game -and $rm.Worlds -and $rm.Backups -and $rm.Settings) {
+            & docker volume rm $Volume *> $null
+            if ($LASTEXITCODE -eq 0) { Write-Ok "Removed volume $Volume" }
+        } else {
+            $img = Get-HelperImage
+            if (-not $img) { Fail "No image available to edit volume $Volume - nothing was deleted" }
+            $cmd = 'set -e'
+            if ($rm.Worlds -and -not $rm.Backups -and (Test-VolumeWorld)) {
+                $cmd += '; mkdir -p /data/backups; tar -czf /data/backups/theisle-final-$(date +%Y%m%d-%H%M%S).tar.gz -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved'
+                Write-Ok 'Taking a final backup of the world into /data/backups'
+            }
+            if ($rm.Game) {
+                $cmd += "; [ -d /data/server ] && find /data/server -mindepth 1 -maxdepth 1 ! -name TheIsle -exec rm -rf {} + || true"
+                $cmd += "; [ -d /data/server/TheIsle ] && find /data/server/TheIsle -mindepth 1 -maxdepth 1 ! -name 'Saved*' -exec rm -rf {} + || true"
+                $cmd += '; rm -rf /data/steamcmd /data/home'
+            }
+            if ($rm.Worlds) { $cmd += '; rm -rf /data/server/TheIsle/Saved /data/server/TheIsle/Saved.pre-restore-*' }
+            if ($rm.Backups) { $cmd += '; rm -rf /data/backups' }
+            if ($rm.Settings) { $cmd += '; rm -rf /data/config' }
+            & docker run --rm -v "${Volume}:/data" --entrypoint sh $img -c $cmd
+            if ($LASTEXITCODE -ne 0) { Fail "Editing volume $Volume failed" }
+            Write-Ok ("Updated volume $Volume (kept: " + (Get-RemovalList $rm $false) + ')')
+        }
+    }
+    if ($rm.Game) { & docker image rm theisle-server:latest *> $null; if ($LASTEXITCODE -eq 0) { Write-Ok 'Removed image theisle-server:latest' } }
+}
+
 # --------------------------------------------------------------- uninstall --
 if ($Uninstall) {
+    $rm = Select-Removals
     if ($Purge) { Confirm-Purge }
+    elseif ($rm.Worlds -or $rm.Backups -or $rm.Settings) {
+        $destructive = @{ Game = $false; Worlds = $rm.Worlds; Backups = $rm.Backups; Settings = $rm.Settings }
+        Confirm-Removal (Get-RemovalList $destructive $true)
+    }
     $any = $false
-    if (-not $Docker -and ((Test-NativeActive) -or (Test-Path $Manager))) {
+    # A native setup that was uninstalled earlier (state MODE=native) still has data to remove.
+    if (-not $Docker -and ((Test-NativeActive) -or (Test-Path $Manager) -or $State.MODE -eq 'native')) {
         $any = $true
         Stop-NativeInstall
         [void](Invoke-Manager RemoveFirewall -Runtime Native)
+        if (-not $Purge) { Remove-NativeData $rm }
     }
-    if (-not $Native -and ((Test-DockerContainer) -or $State.MODE -eq 'docker')) {
+    $hasVolume = $false
+    if (Test-DockerUsable) { & docker volume inspect $Volume *> $null; $hasVolume = ($LASTEXITCODE -eq 0) }
+    if (-not $Native -and ((Test-DockerContainer) -or $State.MODE -eq 'docker' -or $hasVolume)) {
         $any = $true
         Remove-DockerContainer
+        if (-not $Purge) { Remove-DockerData $rm }
     }
     if ($Purge) {
         Write-Step 'Purging data'
@@ -208,7 +421,9 @@ if ($Uninstall) {
     } else {
         if ($State.MODE) { Write-InstallState $State.MODE 'uninstalled' }
         if (-not $any) { Write-Warn 'Nothing to uninstall was found.' }
-        Write-Ok "Uninstalled. World data, settings and backups in $InstallRoot were kept - run the installer again to reinstall."
+        Write-Ok ("Uninstalled. Removed: " + (Get-RemovalList $rm $true) + '. Kept: ' + (Get-RemovalList $rm $false) + '.')
+        if (-not $rm.Worlds) { Write-Host '  Run the installer again to reinstall - kept worlds are picked up again.' }
+        else { Write-Host '  Run the installer again to reinstall.' }
     }
     exit 0
 }
@@ -279,58 +494,9 @@ Set-Conf 'STEAMCMD_DIR' (Join-Path $InstallRoot 'steamcmd') -OnlyIfEmpty
 Set-Conf 'SERVER_DIR' (Join-Path $InstallRoot 'server') -OnlyIfEmpty
 Set-Conf 'BACKUP_DIR' (Join-Path $InstallRoot 'backups') -OnlyIfEmpty
 if ($PSBoundParameters.ContainsKey('Branch')) { Set-Conf 'STEAM_BRANCH' $Branch }
-$cfgText = [IO.File]::ReadAllText($Conf)
-function Get-Conf([string]$k, [string]$d) { if ($cfgText -match "(?m)^$k=(.*)$") { $v = $Matches[1].Trim().Trim('"'); if ($v) { return $v } }; return $d }
+$script:cfgText = [IO.File]::ReadAllText($Conf)
 $BackupDir = Get-Conf 'BACKUP_DIR' (Join-Path $InstallRoot 'backups')
 $MigrateHint = ''
-
-# ------------------------------------------------- retained world data ------
-# A "world" is TheIsle\Saved with anything besides Config, Logs and Crashes.
-# Reinstalls import a retained world from the other runtime when the target has
-# none, and never overwrite an existing world (PRD INS-19).
-function Get-NativeSavedDir { return (Join-Path (Get-Conf 'SERVER_DIR' (Join-Path $InstallRoot 'server')) 'TheIsle\Saved') }
-function Test-NativeWorld {
-    $saved = Get-NativeSavedDir
-    if (-not (Test-Path $saved)) { return $false }
-    return [bool](Get-ChildItem -Path $saved -Force | Where-Object { @('Config', 'Logs', 'Crashes') -notcontains $_.Name } | Select-Object -First 1)
-}
-function Get-HelperImage {
-    foreach ($img in @((Get-Conf 'DOCKER_IMAGE' ''), 'theisle-server:latest', 'debian:bookworm-slim')) {
-        if (-not $img) { continue }
-        & docker image inspect $img *> $null
-        if ($LASTEXITCODE -eq 0) { return $img }
-    }
-    & docker pull -q debian:bookworm-slim *> $null
-    if ($LASTEXITCODE -eq 0) { return 'debian:bookworm-slim' }
-    return $null
-}
-function Test-VolumeWorld {
-    if (-not (Test-DockerUsable)) { return $false }
-    & docker volume inspect $Volume *> $null
-    if ($LASTEXITCODE -ne 0) { return $false }
-    $img = Get-HelperImage
-    if (-not $img) { return $false }
-    $check = 'd=/data/server/TheIsle/Saved; [ -d "$d" ] && find "$d" -mindepth 1 -maxdepth 1 ! -name Config ! -name Logs ! -name Crashes | grep -q .'
-    & docker run --rm -v "${Volume}:/data:ro" --entrypoint sh $img -c $check *> $null
-    return ($LASTEXITCODE -eq 0)
-}
-function Export-VolumeWorld([string]$dest) {
-    $img = Get-HelperImage
-    if (-not $img) { return $null }
-    New-Item -ItemType Directory -Force -Path $dest | Out-Null
-    $name = 'theisle-docker-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz'
-    & docker run --rm -v "${Volume}:/data:ro" -v "${dest}:/out" --entrypoint sh $img -c "tar -czf /out/$name -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved" *> $null
-    if ($LASTEXITCODE -ne 0) { return $null }
-    return (Join-Path $dest $name)
-}
-function Export-NativeWorld([string]$dest) {
-    $saved = Get-NativeSavedDir
-    New-Item -ItemType Directory -Force -Path $dest | Out-Null
-    $file = Join-Path $dest ('theisle-native-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz')
-    & tar -czf $file -C (Split-Path -Parent $saved) --exclude=Saved/Logs --exclude=Saved/Crashes Saved
-    if ($LASTEXITCODE -ne 0) { return $null }
-    return $file
-}
 
 # ------------------------------------------------------------ mode switch --
 $ImportFile = $null
