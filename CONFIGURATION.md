@@ -17,6 +17,24 @@ every start and keep the previous copy as `*.bak`:
 If you prefer to edit the `.ini` files by hand, set `MANAGE_INI_FILES=false`. The scripts
 then generate them only if they don't exist yet.
 
+## Validation (`check`)
+
+Run `isle-server check` (Linux) or `IsleServer.ps1 Check` (Windows) after you edit the file.
+`configure`, `run`, `start` and `install` run the same checks and won't launch while there are errors.
+
+| Severity | Condition |
+|---|---|
+| Error | `GAME_PORT`, `QUEUE_PORT` or `RCON_PORT` isn't 1–65535, or two enabled ports are the same |
+| Error | `MAX_PLAYERS` isn't a positive integer |
+| Error | A true/false setting has another value (allowed: true, false, yes, no, 1, 0, on, off) |
+| Error | A multiplier, density or day/night length isn't a number, or a time/retention value isn't a whole number |
+| Error | `RCON_ENABLED=true` and `RCON_PASSWORD` is empty |
+| Error | `EOS_CLIENT_ID` or `EOS_CLIENT_SECRET` is empty |
+| Warning | An `ADMIN_STEAM_IDS` / `WHITELIST_IDS` entry isn't a 17-digit SteamID64 |
+| Warning | `SERVER_NAME` is empty, or the whitelist is on with no IDs |
+
+Exit code: `0` = OK (warnings allowed), `1` = errors.
+
 ## Install and update
 
 | Key | Default | Description |

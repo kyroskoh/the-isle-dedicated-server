@@ -25,13 +25,21 @@ jobs:
           chmod +x "$tmp/srv/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping"
           sed -e "s|^SERVER_DIR=|SERVER_DIR=$tmp/srv|" -e "s|^BACKUP_DIR=|BACKUP_DIR=$tmp/bk|" \
               -e 's|^UPDATE_ON_START=true|UPDATE_ON_START=false|' -e 's|^SAVE_BEFORE_STOP=true|SAVE_BEFORE_STOP=false|' \
+              -e 's|^RCON_PASSWORD=|RCON_PASSWORD=ci-test-password|' \
               config/server.conf.example > "$tmp/server.conf"
           export ISLE_CONF="$tmp/server.conf" ISLE_NO_SYSTEMD=1
+          linux/isle-server.sh version | grep -q "$(cat VERSION)"
+          linux/isle-server.sh check
+          # negative test: an invalid port must be rejected (PRD CFG-05)
+          sed 's|^GAME_PORT=.*|GAME_PORT=99999|' "$tmp/server.conf" > "$tmp/bad.conf"
+          if ISLE_CONF="$tmp/bad.conf" linux/isle-server.sh check; then echo "check accepted a bad port"; exit 1; fi
           linux/isle-server.sh configure
           grep -q '^\[/Script/TheIsle.TIGameSession\]' "$tmp/srv/TheIsle/Saved/Config/LinuxServer/Game.ini"
           grep -q '^DedicatedServerClientId=' "$tmp/srv/TheIsle/Saved/Config/LinuxServer/Engine.ini"
           linux/isle-server.sh start
           linux/isle-server.sh status
+          # update must refuse while running (PRD UPD-03)
+          if linux/isle-server.sh update; then echo "update ran while server was running"; exit 1; fi
           linux/isle-server.sh stop
           linux/isle-server.sh backup
           ls "$tmp/bk"/theisle-*.tar.gz
@@ -65,7 +73,16 @@ jobs:
           New-Item -ItemType Directory -Force -Path $tmp | Out-Null
           (Get-Content config\server.conf.example) `
             -replace '^SERVER_DIR=$', "SERVER_DIR=$tmp\srv" `
-            -replace '^BACKUP_DIR=$', "BACKUP_DIR=$tmp\bk" | Set-Content $conf
+            -replace '^BACKUP_DIR=$', "BACKUP_DIR=$tmp\bk" `
+            -replace '^RCON_PASSWORD=$', 'RCON_PASSWORD=ci-test-password' | Set-Content $conf
+          .\windows\IsleServer.ps1 Version
+          .\windows\IsleServer.ps1 Check -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # negative test: an invalid port must be rejected (PRD CFG-05)
+          $bad = Join-Path $tmp 'bad.conf'
+          (Get-Content $conf) -replace '^GAME_PORT=.*$', 'GAME_PORT=99999' | Set-Content $bad
+          .\windows\IsleServer.ps1 Check -ConfigPath $bad
+          if ($LASTEXITCODE -ne 1) { Write-Host 'Check accepted a bad port'; exit 1 }
           .\windows\IsleServer.ps1 Configure -ConfigPath $conf
           if ($LASTEXITCODE -ne 0) { exit 1 }
           if (-not (Select-String -Path "$tmp\srv\TheIsle\Saved\Config\WindowsServer\Game.ini" -Pattern 'TIGameSession' -Quiet)) { exit 1 }

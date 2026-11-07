@@ -17,6 +17,7 @@ dedicated server on **Windows** and **Linux**, all driven from one shared config
 ## Features
 
 - **One config for both OSes.** `config/server.conf` produces `Game.ini` and `Engine.ini` for you.
+- **Config validation.** `check` catches bad ports, typos in true/false values, a missing RCON password and malformed SteamIDs before the server launches.
 - **Installers** that set up the dependencies, SteamCMD, the server (Steam app `412680`, branch `evrima`), firewall rules, and a service that starts at boot.
 - **Launchers** for start, stop, restart, status, logs and a console mode.
 - **Watchdog** that restarts the server if it crashes. On Linux this is systemd `Restart=on-failure` or the built-in watchdog. On Windows it's a scheduled task plus a watchdog loop.
@@ -66,8 +67,10 @@ Then forward these ports on your router or cloud firewall:
 | Backup | `isle-server backup` | `Backup.bat` |
 | Restore | `isle-server restore <file.tar.gz>` | `IsleServer.ps1 Restore -Path <file.zip>` |
 | RCON announce | `isle-server rcon announce "Restart in 5 min"` | `IsleServer.ps1 Rcon -RconArgs announce,'Restart in 5 min'` |
+| Check the config | `isle-server check` | `IsleServer.ps1 Check` |
 | Re-generate ini | `isle-server configure` | `IsleServer.ps1 Configure` |
 | Paths & settings | `isle-server info` | `IsleServer.ps1 Info` |
+| Script version | `isle-server version` | `IsleServer.ps1 Version` |
 
 On Linux, run `isle-server` as the service user: `sudo -u theisle isle-server <cmd>`.
 
@@ -88,7 +91,7 @@ tools/isle_rcon.py           Cross-platform Evrima RCON client
 - [INSTALL.md](INSTALL.md): step-by-step installation, manual installs, and uninstalling
 - [CONFIGURATION.md](CONFIGURATION.md): every `server.conf` key and the `Game.ini` key it maps to
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): common problems and fixes
-- [PRD.md](PRD.md): product requirements and design
+- [PRD.md](PRD.md): product requirements, plan and traceability (start here before contributing)
 - [CHANGELOG.md](CHANGELOG.md): release history
 - [SECURITY.md](SECURITY.md): hardening advice
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to contribute

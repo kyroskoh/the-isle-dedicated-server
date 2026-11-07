@@ -6,8 +6,10 @@
 #
 #  Commands:
 #    install      Install SteamCMD + server files and generate config
-#    update       Update / validate server files through SteamCMD
-#    configure    (Re)generate Game.ini and Engine.ini from server.conf
+#    update       Update server files through SteamCMD (server must be stopped)
+#    validate     Update + verify every file (server must be stopped)
+#    check        Validate server.conf (exit 1 on errors)
+#    configure    Validate, then (re)generate Game.ini / Engine.ini
 #    start        Start the server (systemd service if installed, else background)
 #    stop         Gracefully stop the server
 #    restart      Stop + start
@@ -19,6 +21,7 @@
 #    rcon <cmd>   Send an RCON command (see tools/isle_rcon.py)
 #    save         Ask the server to save via RCON
 #    info         Print resolved paths and settings
+#    version      Print the script version
 #    help         This text
 #
 #  Environment:
@@ -32,6 +35,7 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ISLE_CONF="${ISLE_CONF:-$REPO_DIR/config/server.conf}"
 ISLE_SERVICE="${ISLE_SERVICE:-theisle-server}"
+SCRIPT_VERSION="$(cat "$REPO_DIR/VERSION" 2>/dev/null || echo unknown)"
 STEAMCMD_URL="https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
 
 # ----------------------------------------------------------------- output ---
@@ -72,6 +76,7 @@ load_config() {
     [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && CFG["$key"]="$value"
   done < "$file"
 
+  RAW_SERVER_NAME="${CFG[SERVER_NAME]:-}"
   # Defaults
   local home="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
   : "${CFG[STEAMCMD_DIR]:=}"; [[ -z "${CFG[STEAMCMD_DIR]}" ]] && CFG[STEAMCMD_DIR]="$home/steamcmd"
@@ -95,6 +100,92 @@ load_config() {
 cfg()      { printf '%s' "${CFG[$1]:-${2:-}}"; }
 is_true()  { case "${1,,}" in true|yes|1|on) return 0 ;; *) return 1 ;; esac; }
 ue_bool()  { if is_true "$1"; then printf 'true'; else printf 'false'; fi; }
+
+set_conf() {  # persist KEY=VALUE into server.conf (value must not contain newlines)
+  local key="$1" val="$2" esc
+  if grep -qE "^$key=" "$ISLE_CONF"; then
+    esc="$(printf '%s' "$val" | sed -e 's/[\\/&|]/\\&/g')"
+    sed -i "s|^$key=.*|$key=$esc|" "$ISLE_CONF"
+  else
+    printf '%s=%s\n' "$key" "$val" >> "$ISLE_CONF"
+  fi
+  CFG[$key]="$val"
+}
+
+# ------------------------------------------------------------ validation ---
+BOOL_KEYS=(UPDATE_ON_START VALIDATE_ON_UPDATE FIREWALL_OPEN_RCON WHITELIST_ENABLED QUEUE_ENABLED
+           RCON_ENABLED GLOBAL_CHAT ENABLE_HUMANS DYNAMIC_WEATHER ENABLE_MUTATIONS ENABLE_DIETS
+           ENABLE_PATROL_ZONES ALLOW_RECORDING_REPLAY SPAWN_PLANTS SPAWN_AI ENABLE_MIGRATION
+           ENABLE_MASS_MIGRATION MANAGE_INI_FILES AUTO_RESTART SAVE_BEFORE_STOP)
+NUMBER_KEYS=(GROWTH_MULTIPLIER CORPSE_DECAY_MULTIPLIER PLANT_SPAWN_MULTIPLIER AI_DENSITY
+             DAY_LENGTH_MINUTES NIGHT_LENGTH_MINUTES)
+INT_KEYS=(MAX_MIGRATION_TIME MASS_MIGRATION_TIME MASS_MIGRATION_DISABLE_TIME STOP_TIMEOUT BACKUP_RETENTION)
+
+# Validate server.conf (PRD CFG-05). Prints every problem; returns 1 on errors.
+check_config() {
+  local -a errors=() warnings=()
+  local k v id ids
+  for k in GAME_PORT QUEUE_PORT RCON_PORT; do
+    v="$(cfg "$k")"
+    if ! [[ "$v" =~ ^[0-9]+$ ]] || (( 10#$v < 1 || 10#$v > 65535 )); then
+      errors+=("$k='$v' is not a port number (1-65535)")
+    fi
+  done
+  if [[ ${#errors[@]} -eq 0 ]]; then
+    is_true "$(cfg QUEUE_ENABLED)" && [[ "$(cfg GAME_PORT)" == "$(cfg QUEUE_PORT)" ]] \
+      && errors+=("GAME_PORT and QUEUE_PORT are both $(cfg GAME_PORT)")
+    if is_true "$(cfg RCON_ENABLED)"; then
+      [[ "$(cfg RCON_PORT)" == "$(cfg GAME_PORT)" ]] && errors+=("RCON_PORT and GAME_PORT are both $(cfg RCON_PORT)")
+      is_true "$(cfg QUEUE_ENABLED)" && [[ "$(cfg RCON_PORT)" == "$(cfg QUEUE_PORT)" ]] \
+        && errors+=("RCON_PORT and QUEUE_PORT are both $(cfg RCON_PORT)")
+    fi
+  fi
+  v="$(cfg MAX_PLAYERS)"
+  [[ "$v" =~ ^[0-9]+$ ]] && (( 10#$v > 0 )) || errors+=("MAX_PLAYERS='$v' must be a positive integer")
+  for k in "${BOOL_KEYS[@]}"; do
+    v="$(cfg "$k")"
+    [[ -z "$v" ]] && continue
+    case "${v,,}" in true|false|yes|no|1|0|on|off) ;; *) errors+=("$k='$v' must be true or false") ;; esac
+  done
+  for k in "${NUMBER_KEYS[@]}"; do
+    v="$(cfg "$k")"
+    [[ -z "$v" || "$v" =~ ^[0-9]+([.][0-9]+)?$ ]] || errors+=("$k='$v' must be a number")
+  done
+  for k in "${INT_KEYS[@]}"; do
+    v="$(cfg "$k")"
+    [[ -z "$v" || "$v" =~ ^[0-9]+$ ]] || errors+=("$k='$v' must be a whole number")
+  done
+  if is_true "$(cfg RCON_ENABLED)" && [[ -z "$(cfg RCON_PASSWORD)" ]]; then
+    errors+=("RCON_ENABLED=true but RCON_PASSWORD is empty (set one, or RCON_ENABLED=false)")
+  fi
+  [[ -n "$(cfg EOS_CLIENT_ID)" && -n "$(cfg EOS_CLIENT_SECRET)" ]] \
+    || errors+=("EOS_CLIENT_ID / EOS_CLIENT_SECRET are empty - the server will not be listed")
+  [[ -n "$RAW_SERVER_NAME" ]] || warnings+=("SERVER_NAME is empty - using '$(cfg SERVER_NAME)'")
+  for k in ADMIN_STEAM_IDS WHITELIST_IDS; do
+    IFS=',' read -r -a ids <<< "$(cfg "$k")"
+    for id in "${ids[@]}"; do
+      id="${id//[[:space:]]/}"
+      [[ -z "$id" || "$id" =~ ^7656119[0-9]{10}$ ]] || warnings+=("$k entry '$id' is not a 17-digit SteamID64")
+    done
+  done
+  is_true "$(cfg WHITELIST_ENABLED)" && [[ -z "$(cfg WHITELIST_IDS)" ]] \
+    && warnings+=("WHITELIST_ENABLED=true but WHITELIST_IDS is empty - nobody can join")
+
+  for v in "${warnings[@]}"; do warn "config: $v"; done
+  for v in "${errors[@]}"; do printf '%s[FAIL]%s config: %s\n' "$C_RED" "$C_RST" "$v" >&2; done
+  if (( ${#errors[@]} )); then
+    printf '%s[FAIL]%s %d error(s) in %s\n' "$C_RED" "$C_RST" "${#errors[@]}" "$ISLE_CONF" >&2
+    return 1
+  fi
+  return 0
+}
+
+ensure_rcon_password() {
+  if is_true "$(cfg RCON_ENABLED)" && [[ -z "$(cfg RCON_PASSWORD)" ]]; then
+    set_conf RCON_PASSWORD "$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-24)"
+    ok "Generated a random RCON password (saved in $ISLE_CONF)"
+  fi
+}
 
 # ---------------------------------------------------------------- steamcmd --
 install_steamcmd() {
@@ -253,9 +344,7 @@ write_ini() {  # $1 file, $2 render function
 
 configure() {
   local force="${1:-}"
-  if is_true "$(cfg RCON_ENABLED)" && [[ -z "$(cfg RCON_PASSWORD)" ]]; then
-    warn "RCON_ENABLED=true but RCON_PASSWORD is empty - RCON will not be usable"
-  fi
+  check_config || die "Fix the configuration errors above, then try again"
   mkdir -p "$INI_DIR"
   if is_true "$(cfg MANAGE_INI_FILES)" || [[ "$force" == "--force" ]]; then
     write_ini "$INI_DIR/Game.ini" render_game_ini
@@ -349,7 +438,16 @@ is_running() {
   pid_alive "$(read_pid "$STATE_DIR/server.pid")" || pid_alive "$(read_pid "$STATE_DIR/watchdog.pid")"
 }
 
+server_running() {  # any evidence the game server is up (pid files, systemd, process list)
+  is_running && return 0
+  service_installed && systemctl is-active --quiet "$ISLE_SERVICE" && return 0
+  command -v pgrep >/dev/null 2>&1 && pgrep -f "$SERVER_DIR/TheIsle/Binaries/Linux/TheIsleServer" >/dev/null 2>&1 && return 0
+  return 1
+}
+require_stopped() { server_running && die "The server is running - stop it before you $1"; return 0; }
+
 cmd_start() {
+  check_config || die "Fix the configuration errors above, then try again"
   if service_installed; then sysctl_do start "$ISLE_SERVICE"; ok "Service $ISLE_SERVICE started"; return; fi
   if is_running; then warn "Server is already running"; return; fi
   mkdir -p "$STATE_DIR"
@@ -442,6 +540,7 @@ cmd_rcon() {
 
 cmd_info() {
   cat <<EOF
+Scripts       : v$SCRIPT_VERSION
 Config file   : $ISLE_CONF
 SteamCMD dir  : $STEAMCMD_DIR
 Server dir    : $SERVER_DIR
@@ -463,12 +562,16 @@ main() {
   fi
   case "$cmd" in
     help|-h|--help) usage; return 0 ;;
+    version|--version) printf 'isle-server.sh %s\n' "$SCRIPT_VERSION"; return 0 ;;
   esac
   load_config
   case "$cmd" in
-    install)   update_server "$@"; configure; ok "Install complete. Start with: $0 start" ;;
-    update)    update_server "$@" ;;
-    validate)  update_server --validate ;;
+    install)   require_stopped install; ensure_rcon_password; check_config || die "Fix the configuration errors above, then try again"
+               update_server "$@"; configure; ok "Install complete. Start with: $0 start" ;;
+    update)    require_stopped update; update_server "$@" ;;
+    validate)  require_stopped validate; update_server --validate ;;
+    check)     check_config && ok "Configuration OK ($ISLE_CONF)" ;;
+    version)   printf 'isle-server.sh %s\n' "$SCRIPT_VERSION" ;;
     configure) configure --force ;;
     start)     cmd_start ;;
     stop)      cmd_stop ;;
@@ -478,7 +581,7 @@ main() {
     _watchdog) cmd_watchdog ;;
     logs)      cmd_logs "$@" ;;
     backup)    cmd_backup ;;
-    restore)   cmd_restore "$@" ;;
+    restore)   require_stopped restore; cmd_restore "$@" ;;
     rcon)      cmd_rcon "$@" ;;
     save)      cmd_save ;;
     info)      cmd_info ;;

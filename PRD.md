@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.1 |
-| **Product version** | 1.1.0 (planned), 1.0.0 (released) |
+| **Product version** | 1.1.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -118,7 +118,7 @@ Priority: **M** = must, **S** = should, **C** = could.
 | CFG-02 | M | The config file is **parsed, never executed** | No `source` or `Invoke-Expression`. Values with `$()` stay literal |
 | CFG-03 | M | Generate `Game.ini` (`TIGameSession`, `TIGameStateBase`, `Engine.GameSession`) and `Engine.ini` (`EpicOnlineServices`) | Output matches CONFIGURATION.md. List keys become one line per entry |
 | CFG-04 | M | `MANAGE_INI_FILES` switch | `true`: regenerate on each start and keep `.bak`. `false`: create only if missing |
-| CFG-05 | M | **Validate config before launch** (`check` command, also run automatically by `configure`, `run` and `start`) | Errors (non-zero exit, launch blocked) when: a port isn't 1–65535; game, queue and RCON ports collide; `MAX_PLAYERS` isn't a positive integer; a boolean isn't true/false/yes/no/1/0/on/off; `RCON_ENABLED=true` with an empty password; EOS keys are empty. Warnings when: an admin or whitelist ID isn't a 17-digit SteamID64; the server name is empty |
+| CFG-05 | M | **Validate config before launch** (`check` command, also run automatically by `configure`, `run`, `start` and `install`) | Errors (non-zero exit, launch blocked) when: a port isn't 1–65535; game, queue and RCON ports collide; `MAX_PLAYERS` isn't a positive integer; a boolean isn't true/false/yes/no/1/0/on/off; a numeric setting isn't a number; `RCON_ENABLED=true` with an empty password; EOS keys are empty. Warnings when: an admin or whitelist ID isn't a 17-digit SteamID64; the server name is empty |
 | CFG-06 | S | Escape hatch for keys the scripts don't know | `EXTRA_GAME_SESSION_SETTINGS` (`|`-separated) and `EXTRA_ARGS` |
 | CFG-07 | M | Defaults for every key | An empty or missing key falls back to the documented default |
 | CFG-08 | M | Restrictive permissions | Linux `server.conf` and ini files use mode `600` |
@@ -249,8 +249,8 @@ Priority: **M** = must, **S** = should, **C** = could.
 
 | Job | Checks |
 |---|---|
-| linux (ubuntu-latest) | ShellCheck. Python compile. Fake-server smoke test: `check`, `configure`, `start`, `status`, `stop`, `backup`. `check` must fail on a bad port |
-| windows (windows-latest) | PS 5.1 `Parser::ParseFile` on every `.ps1`. PSScriptAnalyzer (Error). Smoke test: `Check`, `Configure`, `Info`, `Backup`. `Check` must fail on a bad port |
+| linux (ubuntu-latest) | ShellCheck. Python compile. Fake-server smoke test: `version`, `check`, `configure`, `start`, `status`, `stop`, `backup`. `check` must fail on a bad port. `update` must fail while running |
+| windows (windows-latest) | PS 5.1 `Parser::ParseFile` on every `.ps1`. PSScriptAnalyzer (Error). Smoke test: `Version`, `Check`, `Configure`, `Info`, `Backup`. `Check` must fail on a bad port |
 
 ### 10.2 Manual release checklist (per Tier-1 OS, real game server)
 
@@ -271,7 +271,7 @@ Priority: **M** = must, **S** = should, **C** = could.
 | M2 Windows core | INS-03–06/08–12, CFG-01–04/06/07, RUN-01–06, SVC-02, NET-*, UPD-01–03, BAK-* | ✅ Done (v1.0.0). Real-hardware run pending (§10.2) |
 | M3 RCON | RCN-* | ✅ Done (v1.0.0). Mock-tested only |
 | M4 Docs and CI | README, INSTALL, CONFIGURATION, TROUBLESHOOTING, SECURITY, CONTRIBUTING, CHANGELOG, LICENSE, CI | ✅ Done (v1.0.0) |
-| **M5 Hardening (v1.1.0)** | **CFG-05** config validation, **UPD-03** on Linux, **CLI-02** help completeness, **CLI-03** version | 🔜 In progress |
+| M5 Hardening (v1.1.0) | CFG-05 config validation, UPD-03 on Linux, CLI-02 help completeness, CLI-03 version | ✅ Done (v1.1.0) |
 | M6 Field validation | §10.2 checklist on each Tier-1 OS | ⏳ Planned. Needs real hosts |
 
 ## 12. Traceability matrix
@@ -289,18 +289,18 @@ Priority: **M** = must, **S** = should, **C** = could.
 | INS-12 | `install.sh --uninstall`, `Install.ps1 -Uninstall` | Manual | Done |
 | CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |
 | CFG-03/04 | `render_*_ini`/`configure`, `Get-*Ini`/`Set-ServerConfig` | CI smoke (grep sections) | Done |
-| CFG-05 | `check_config` / `Test-ServerConfig` | CI smoke (positive + negative) | **Planned v1.1** |
+| CFG-05 | `check_config` / `Test-ServerConfig`, called by configure/run/start/install | CI smoke (positive + negative) | Done (v1.1) |
 | CFG-06/08 | renderers, `write_ini` chmod | Review | Done |
 | RUN-01–08 | `cmd_*` / `Invoke-*` | CI smoke (Linux start/stop), manual | Done |
 | SVC-01–04 | unit files in `install.sh`, `Install-ServerService` | Manual | Done |
 | NET-01–03 | `firewall_rules`, `Set-Firewall`, `server_args` | Manual | Done |
 | UPD-01/02 | `update_server`, `Update-Server`, `prepare_launch`/`Invoke-Run` | Manual | Done |
-| UPD-03 | Windows dispatcher (done). Linux `update`/`validate` | CI smoke (Linux), review | **Planned v1.1 (Linux)** |
+| UPD-03 | Windows dispatcher; Linux `require_stopped` (PID files, systemd, pgrep) | CI smoke (Linux), review | Done (v1.1) |
 | BAK-01–05 | `cmd_backup`/`cmd_restore`, `Invoke-Backup`/`Invoke-Restore`, timers | CI smoke | Done |
 | RCN-01–04 | `tools/isle_rcon.py`, `cmd_rcon`/`cmd_save`, `Invoke-PyRcon` | Mock test, manual | Done, field test pending |
 | CLI-01/04/05/06 | managers, `.bat` launchers | Review | Done |
-| CLI-02 | Linux usage header is missing `validate` | Review | **Planned v1.1** |
-| CLI-03 | `VERSION` file, `version` commands | CI smoke | **Planned v1.1** |
+| CLI-02 | Usage headers list every dispatcher command | Review | Done (v1.1) |
+| CLI-03 | `VERSION` file, `version` / `Version` commands, shown in `info` | CI smoke | Done (v1.1) |
 
 ## 13. Risks and mitigations
 

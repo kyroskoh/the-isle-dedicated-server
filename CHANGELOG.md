@@ -6,6 +6,29 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-07
+
+The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
+
+### Added
+- `check` / `Check` command that validates `server.conf` (PRD CFG-05). It reports invalid or colliding
+  ports, non-boolean flags, non-numeric multipliers, an empty RCON password while RCON is enabled, and missing
+  EOS keys. It warns about malformed SteamID64s, an empty server name, and an empty whitelist. `configure`, `run`,
+  `start` and `install` run it automatically and won't launch with errors.
+- `version` / `Version` command and a top-level `VERSION` file. `info` also shows the version (CLI-03).
+- The Linux `install` command generates a random RCON password when none is set, as Windows already did.
+- CI: positive and negative `check` tests on both OSes, and an update-while-running test on Linux.
+
+### Changed
+- Linux `update`, `validate`, `install` and `restore` refuse to run while the server is running. This uses the
+  PID files, systemd and the process list (UPD-03, now the same as Windows).
+- Re-running either installer while the server is running stops it, updates, and starts it again.
+- Linux help text now lists every command (CLI-02).
+- PRD rewritten as the planning source of truth, with requirement IDs, acceptance criteria and a traceability matrix.
+
+### Fixed
+- `install.sh` didn't escape backslashes when writing values to `server.conf`.
+
 ## [1.0.0] - 2026-11-07
 
 ### Added
@@ -30,5 +53,6 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kyroskoh/the-isle-dedicated-server/releases/tag/v1.0.0

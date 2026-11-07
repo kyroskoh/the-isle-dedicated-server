@@ -83,7 +83,7 @@ conf_get() { grep -E "^$1=" "$SCRIPTS_DIR/config/server.conf" 2>/dev/null | tail
 conf_set() {
   local key="$1" val="$2" file="$SCRIPTS_DIR/config/server.conf"
   if grep -qE "^$key=" "$file"; then
-    local esc; esc="$(printf '%s' "$val" | sed -e 's/[\/&|]/\\&/g')"
+    local esc; esc="$(printf '%s' "$val" | sed -e 's/[\\/&|]/\\&/g')"
     sed -i "s|^$key=.*|$key=$esc|" "$file"
   else
     printf '%s=%s\n' "$key" "$val" >> "$file"
@@ -238,7 +238,16 @@ ln -sf "$SCRIPTS_DIR/linux/isle-server.sh" /usr/local/bin/isle-server 2>/dev/nul
 
 # -------------------------------------------------------- install server ----
 step "Installing SteamCMD and The Isle server (this can take a while)"
+WAS_RUNNING=0
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
+  warn "$SERVICE is running - stopping it for the update (it will be started again)"
+  systemctl stop "$SERVICE"; WAS_RUNNING=1
+elif as_user env ISLE_NO_SYSTEMD=1 "$SCRIPTS_DIR/linux/isle-server.sh" status >/dev/null 2>&1; then
+  warn "Server is running - stopping it for the update (it will be started again)"
+  as_user env ISLE_NO_SYSTEMD=1 "$SCRIPTS_DIR/linux/isle-server.sh" stop; WAS_RUNNING=1
+fi
 as_user "$SCRIPTS_DIR/linux/isle-server.sh" install
+(( WAS_RUNNING )) && DO_START=1
 
 # -------------------------------------------------------------- firewall ----
 if (( DO_FIREWALL )); then step "Configuring firewall"; firewall_rules add; fi

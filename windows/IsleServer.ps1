@@ -12,8 +12,9 @@
 .PARAMETER Command
     Install        Install prerequisites, SteamCMD, the server and generate config
     Update         Update server files through SteamCMD
-    Validate       Update + verify every file
-    Configure      (Re)generate Game.ini / Engine.ini from server.conf
+    Validate       Update + verify every file (server must be stopped)
+    Check          Validate server.conf (exit 1 on errors)
+    Configure      Validate, then (re)generate Game.ini / Engine.ini
     Start          Start the server (scheduled-task service if installed, else a new window)
     Stop           Save (RCON) and stop the server
     Restart        Stop + Start
@@ -29,6 +30,7 @@
     InstallService Register a scheduled task that runs the server at boot
     RemoveService  Remove that scheduled task
     Info           Print resolved paths and settings
+    Version        Print the script version
 
 .EXAMPLE
     .\IsleServer.ps1 Install
@@ -39,9 +41,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('Install', 'Update', 'Validate', 'Configure', 'Start', 'Stop', 'Restart', 'Status', 'Run',
+    [ValidateSet('Install', 'Update', 'Validate', 'Check', 'Configure', 'Start', 'Stop', 'Restart', 'Status', 'Run',
                  'Logs', 'Backup', 'Restore', 'Rcon', 'Save', 'Firewall', 'RemoveFirewall',
-                 'InstallService', 'RemoveService', 'Info', 'Help')]
+                 'InstallService', 'RemoveService', 'Info', 'Version', 'Help')]
     [string]$Command = 'Help',
 
     [string]$ConfigPath,
@@ -61,6 +63,9 @@ $RepoDir = Split-Path -Parent $ScriptDir
 if (-not $ConfigPath) {
     if ($env:ISLE_CONF) { $ConfigPath = $env:ISLE_CONF } else { $ConfigPath = Join-Path $RepoDir 'config\server.conf' }
 }
+$ScriptVersion = 'unknown'
+$versionFile = Join-Path $RepoDir 'VERSION'
+if (Test-Path $versionFile) { $ScriptVersion = (Get-Content $versionFile | Select-Object -First 1).Trim() }
 $TaskName = 'TheIsleServer'
 $FirewallGroup = 'The Isle Dedicated Server'
 $SteamCmdUrl = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
@@ -109,6 +114,7 @@ function Import-ServerConfig {
         MANAGE_INI_FILES = 'true'; SAVE_BEFORE_STOP = 'true'; RCON_ENABLED = 'true'; QUEUE_ENABLED = 'true'
         EXTRA_ARGS = '-log'
     }
+    $script:RawServerName = C 'SERVER_NAME'
     foreach ($k in $defaults.Keys) {
         if (-not $script:Cfg.ContainsKey($k) -or [string]::IsNullOrWhiteSpace($script:Cfg[$k])) { $script:Cfg[$k] = $defaults[$k] }
     }
@@ -125,6 +131,64 @@ function C([string]$key, [string]$default = '') {
 }
 function Test-True([string]$v) { return @('true', 'yes', '1', 'on') -contains $v.ToLowerInvariant() }
 function UeBool([string]$v) { if (Test-True $v) { 'true' } else { 'false' } }
+
+# Validate server.conf (PRD CFG-05). Prints every problem; returns $false on errors.
+function Test-ServerConfig {
+    $errors = New-Object 'Collections.Generic.List[string]'
+    $warnings = New-Object 'Collections.Generic.List[string]'
+    $portsOk = $true
+    foreach ($k in 'GAME_PORT', 'QUEUE_PORT', 'RCON_PORT') {
+        $v = C $k
+        $n = 0
+        if (-not ($v -match '^\d+$' -and [int]::TryParse($v, [ref]$n) -and $n -ge 1 -and $n -le 65535)) {
+            $errors.Add("$k='$v' is not a port number (1-65535)"); $portsOk = $false
+        }
+    }
+    if ($portsOk) {
+        if ((Test-True (C 'QUEUE_ENABLED')) -and (C 'GAME_PORT') -eq (C 'QUEUE_PORT')) { $errors.Add("GAME_PORT and QUEUE_PORT are both $(C 'GAME_PORT')") }
+        if (Test-True (C 'RCON_ENABLED')) {
+            if ((C 'RCON_PORT') -eq (C 'GAME_PORT')) { $errors.Add("RCON_PORT and GAME_PORT are both $(C 'RCON_PORT')") }
+            if ((Test-True (C 'QUEUE_ENABLED')) -and (C 'RCON_PORT') -eq (C 'QUEUE_PORT')) { $errors.Add("RCON_PORT and QUEUE_PORT are both $(C 'RCON_PORT')") }
+        }
+    }
+    $mp = C 'MAX_PLAYERS'
+    $mpn = 0
+    if (-not ($mp -match '^\d+$' -and [int]::TryParse($mp, [ref]$mpn) -and $mpn -gt 0)) { $errors.Add("MAX_PLAYERS='$mp' must be a positive integer") }
+    $boolKeys = 'UPDATE_ON_START', 'VALIDATE_ON_UPDATE', 'FIREWALL_OPEN_RCON', 'WHITELIST_ENABLED', 'QUEUE_ENABLED',
+        'RCON_ENABLED', 'GLOBAL_CHAT', 'ENABLE_HUMANS', 'DYNAMIC_WEATHER', 'ENABLE_MUTATIONS', 'ENABLE_DIETS',
+        'ENABLE_PATROL_ZONES', 'ALLOW_RECORDING_REPLAY', 'SPAWN_PLANTS', 'SPAWN_AI', 'ENABLE_MIGRATION',
+        'ENABLE_MASS_MIGRATION', 'MANAGE_INI_FILES', 'AUTO_RESTART', 'SAVE_BEFORE_STOP'
+    foreach ($k in $boolKeys) {
+        $v = C $k
+        if ($v -and (@('true', 'false', 'yes', 'no', '1', '0', 'on', 'off') -notcontains $v.ToLowerInvariant())) { $errors.Add("$k='$v' must be true or false") }
+    }
+    foreach ($k in 'GROWTH_MULTIPLIER', 'CORPSE_DECAY_MULTIPLIER', 'PLANT_SPAWN_MULTIPLIER', 'AI_DENSITY', 'DAY_LENGTH_MINUTES', 'NIGHT_LENGTH_MINUTES') {
+        $v = C $k
+        if ($v -and $v -notmatch '^\d+(\.\d+)?$') { $errors.Add("$k='$v' must be a number") }
+    }
+    foreach ($k in 'MAX_MIGRATION_TIME', 'MASS_MIGRATION_TIME', 'MASS_MIGRATION_DISABLE_TIME', 'STOP_TIMEOUT', 'BACKUP_RETENTION') {
+        $v = C $k
+        if ($v -and $v -notmatch '^\d+$') { $errors.Add("$k='$v' must be a whole number") }
+    }
+    if ((Test-True (C 'RCON_ENABLED')) -and -not (C 'RCON_PASSWORD')) { $errors.Add('RCON_ENABLED=true but RCON_PASSWORD is empty (set one, or RCON_ENABLED=false)') }
+    if (-not (C 'EOS_CLIENT_ID') -or -not (C 'EOS_CLIENT_SECRET')) { $errors.Add('EOS_CLIENT_ID / EOS_CLIENT_SECRET are empty - the server will not be listed') }
+    if (-not $script:RawServerName) { $warnings.Add("SERVER_NAME is empty - using '$(C 'SERVER_NAME')'") }
+    foreach ($k in 'ADMIN_STEAM_IDS', 'WHITELIST_IDS') {
+        foreach ($id in ((C $k) -split ',')) {
+            $t = $id.Trim()
+            if ($t -and $t -notmatch '^7656119\d{10}$') { $warnings.Add("$k entry '$t' is not a 17-digit SteamID64") }
+        }
+    }
+    if ((Test-True (C 'WHITELIST_ENABLED' 'false')) -and -not (C 'WHITELIST_IDS')) { $warnings.Add('WHITELIST_ENABLED=true but WHITELIST_IDS is empty - nobody can join') }
+
+    foreach ($w in $warnings) { Write-Warn "config: $w" }
+    foreach ($e in $errors) { Write-Host "[FAIL] config: $e" -ForegroundColor Red }
+    if ($errors.Count -gt 0) { Write-Host ("[FAIL] {0} error(s) in {1}" -f $errors.Count, $ConfigPath) -ForegroundColor Red; return $false }
+    return $true
+}
+function Assert-ServerConfig {
+    if (-not (Test-ServerConfig)) { throw 'Fix the configuration errors above, then try again' }
+}
 
 function Set-ConfigValue([string]$key, [string]$value) {
     $lines = [Collections.Generic.List[string]]([IO.File]::ReadAllLines($ConfigPath))
@@ -280,9 +344,7 @@ function Write-IniFile([string]$file, [string]$content) {
 }
 
 function Set-ServerConfig([switch]$Force) {
-    if ((Test-True (C 'RCON_ENABLED')) -and -not (C 'RCON_PASSWORD')) {
-        Write-Warn 'RCON_ENABLED=true but RCON_PASSWORD is empty - RCON will not be usable'
-    }
+    Assert-ServerConfig
     New-Item -ItemType Directory -Force -Path $IniDir | Out-Null
     $game = Join-Path $IniDir 'Game.ini'
     $engine = Join-Path $IniDir 'Engine.ini'
@@ -365,6 +427,7 @@ function Invoke-Run {
 
 function Invoke-Start {
     if (Get-ServerProcess) { Write-Warn 'Server is already running'; return }
+    Assert-ServerConfig
     if (Test-TaskInstalled) {
         Start-ScheduledTask -TaskName $TaskName
         Write-Ok "Scheduled task '$TaskName' started (server runs in the background)"
@@ -567,6 +630,7 @@ function Remove-ServerService {
 
 function Show-Info {
 @"
+Scripts       : v$ScriptVersion
 Config file   : $ConfigPath
 SteamCMD dir  : $SteamCmdDir
 Server dir    : $ServerDir
@@ -581,6 +645,7 @@ Service task  : $(if (Test-TaskInstalled) { "$TaskName (installed)" } else { 'no
 
 # ------------------------------------------------------------------ main ---
 if ($Command -eq 'Help') { Get-Help $MyInvocation.MyCommand.Path -Detailed; exit 0 }
+if ($Command -eq 'Version') { Write-Host "IsleServer.ps1 $ScriptVersion"; exit 0 }
 Import-ServerConfig
 
 try {
@@ -594,12 +659,15 @@ try {
                 Set-ConfigValue 'RCON_PASSWORD' (-join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] }))
                 Write-Ok 'Generated a random RCON password (see config\server.conf)'
             }
+            if (Get-ServerProcess) { Fail 'Stop the server before installing/updating' }
+            Assert-ServerConfig
             Update-Server
             Set-ServerConfig
             Write-Ok "Install complete. Start with: .\IsleServer.ps1 Start"
         }
         'Update'         { if (Get-ServerProcess) { Fail 'Stop the server before updating' }; Update-Server }
         'Validate'       { if (Get-ServerProcess) { Fail 'Stop the server before validating' }; Update-Server -Validate }
+        'Check'          { if (Test-ServerConfig) { Write-Ok "Configuration OK ($ConfigPath)" } else { exit 1 } }
         'Configure'      { Set-ServerConfig -Force }
         'Start'          { Invoke-Start }
         'Stop'           { Invoke-Stop }

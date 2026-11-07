@@ -131,7 +131,8 @@ Re-running the installer is safe. It keeps your `server.conf` and updates the sc
 git clone https://github.com/kyroskoh/the-isle-dedicated-server.git ~/theisle-scripts
 cd ~/theisle-scripts
 cp config/server.conf.example config/server.conf && nano config/server.conf
-./linux/isle-server.sh install     # SteamCMD + server + ini files
+./linux/isle-server.sh check       # validate server.conf
+./linux/isle-server.sh install     # SteamCMD + server + ini files (generates an RCON password if empty)
 ./linux/isle-server.sh start       # background watchdog (no systemd needed)
 ./linux/isle-server.sh logs -f
 ```

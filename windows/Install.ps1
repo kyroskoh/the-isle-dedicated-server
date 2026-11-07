@@ -137,6 +137,12 @@ if (-not $NoPython) {
 
 # --------------------------------------------------------------- server ----
 Write-Step 'Installing prerequisites, SteamCMD and The Isle server (this can take a while)'
+& $Manager Status -ConfigPath $Conf *> $null
+if ($LASTEXITCODE -eq 0) {
+    Write-Warn 'Server is running - stopping it for the update (it will be started again)'
+    & $Manager Stop -ConfigPath $Conf
+    $Start = $true
+}
 & $Manager Install -ConfigPath $Conf
 if ($LASTEXITCODE -ne 0) { Fail 'Server installation failed - see the messages above.' }
 
