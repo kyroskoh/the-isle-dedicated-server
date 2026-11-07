@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Document version** | 1.1 |
-| **Product version** | 1.1.0 (released) |
+| **Document version** | 1.2 |
+| **Product version** | 1.2.0 (planned), 1.1.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -53,7 +53,7 @@ cover ongoing operation or offer a single workflow for both Windows and Linux.
 ### 3.2 Non-goals (v1.x)
 
 - Web panel or GUI
-- Shipping Docker or Kubernetes images (running inside a glibc container is fine)
+- Kubernetes manifests or Helm charts (the Docker image (§6.10) can be used as a base)
 - Mod or workshop management
 - Treating the Legacy branch as a target (it works with `STEAM_BRANCH=` but isn't tested)
 - ARM or musl (Alpine) hosts. The game server binary is x86_64 glibc only
@@ -85,9 +85,10 @@ cover ongoing operation or offer a single workflow for both Windows and Linux.
 |---|---|---|
 | **1** | Windows 10 22H2, Windows 11, Windows Server 2019 / 2022 / 2025 (Desktop + Core) | Fully supported. Tested by CI on the parser, linter and smoke level, plus the manual checklist (§10.2) |
 | **1** | Ubuntu 22.04/24.04, Debian 12, Rocky/Alma 9, Fedora (current) | Fully supported. Tested by CI and the manual checklist |
+| **1** | Docker Engine 24+ / Docker Desktop (Windows, macOS, Linux) on an **x86_64** host, Linux containers | Fully supported. Image built and smoke-tested in CI (§6.10) |
 | **2** | Arch/Manjaro/EndeavourOS, openSUSE Leap/Tumbleweed, RHEL 8/9, Mint, Pop!_OS | Installer supports them. Tested by the community |
 | **3** | Other x86_64 glibc distros | Manager works. Install dependencies manually (INSTALL.md) |
-| ✗ | Alpine/musl, ARM, 32-bit | Rejected with a clear message |
+| ✗ | Alpine/musl, ARM, 32-bit (including Docker on ARM hosts such as Apple Silicon, except through slow, unsupported amd64 emulation) | Rejected with a clear message |
 
 ## 6. Functional requirements
 
@@ -191,6 +192,21 @@ Priority: **M** = must, **S** = should, **C** = could.
 | CLI-05 | M | Double-click `.bat` launchers on Windows | Pause at the end unless `ISLE_NOPAUSE` is set. Pass the exit code through |
 | CLI-06 | M | Coloured, timestamped output. Colour only on a TTY | |
 
+### 6.10 Container (DKR)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| DKR-01 | M | `linux/amd64` image on Debian stable-slim (glibc) with all runtime deps. The game is **not** baked into the image | `docker build` succeeds. The first start downloads the server into the volume. The image stays under 500 MB |
+| DKR-02 | M | One persistent volume `/data` holds the server, SteamCMD, backups and config | Deleting and recreating the container keeps the world, config and backups |
+| DKR-03 | M | Configure through environment variables | Any `server.conf` key set as an env var (for example `SERVER_NAME`) overrides the file and is saved to `/data/config/server.conf`. The config is created and the RCON password generated automatically. `check` runs before launch |
+| DKR-04 | M | Never runs the game as root | The entrypoint maps `PUID`/`PGID` (default 1000), fixes `/data` ownership, then drops privileges. Also works with `docker run --user` |
+| DKR-05 | M | Graceful `docker stop` | SIGTERM → RCON save → SIGTERM to the server → exit within `STOP_TIMEOUT`. Compose sets `stop_grace_period` to at least `STOP_TIMEOUT` + 30 s |
+| DKR-06 | M | `HEALTHCHECK` | Healthy while the server process is alive. A start period covers the first download |
+| DKR-07 | M | Manager commands inside the container | `docker compose exec theisle isle-server <cmd>` (status, backup, rcon, check, ...) works as root and drops to the service user automatically |
+| DKR-08 | M | `docker-compose.yml` | Publishes game UDP+TCP and the queue port. RCON is bound to `127.0.0.1` only. `restart: unless-stopped` |
+| DKR-09 | S | Backups | `isle-server backup` writes to `/data/backups`. The compose docs show a host cron example |
+| DKR-10 | M | Game updates without rebuilding the image | A container restart updates the game (`UPDATE_ON_START`) |
+
 ## 7. CLI contract
 
 | Command | Linux (`isle-server.sh`) | Windows (`IsleServer.ps1`) | Exit codes |
@@ -208,6 +224,9 @@ Priority: **M** = must, **S** = should, **C** = could.
 | rcon / save | ✅ | ✅ (`-RconArgs`) | RCON client code |
 | info / version / help | ✅ | ✅ | 0 |
 | firewall / service management | `install.sh` | `Firewall`, `RemoveFirewall`, `InstallService`, `RemoveService` | 0 / 1 |
+
+In Docker every Linux command is available as `docker compose exec theisle isle-server <command>`.
+The container lifecycle (`docker compose up -d`, `stop`, `restart`, `logs -f`) replaces start, stop, restart and logs.
 
 ## 8. Non-functional requirements
 
@@ -241,6 +260,11 @@ Priority: **M** = must, **S** = should, **C** = could.
         +-----------------+------------------+
                           |
               tools/isle_rcon.py  (save before stop/backup, admin commands)
+
+ docker/Dockerfile (debian:stable-slim + deps + scripts)
+   docker/entrypoint.sh (PID 1 via tini): env -> server.conf, PUID/PGID, chown /data,
+   drop privileges -> isle-server.sh run (supervised); SIGTERM -> RCON save -> stop
+   volume /data = { config/, server/, steamcmd/, backups/ }
 ```
 
 ## 10. Verification plan
@@ -250,6 +274,7 @@ Priority: **M** = must, **S** = should, **C** = could.
 | Job | Checks |
 |---|---|
 | linux (ubuntu-latest) | ShellCheck. Python compile. Fake-server smoke test: `version`, `check`, `configure`, `start`, `status`, `stop`, `backup`. `check` must fail on a bad port. `update` must fail while running |
+| docker (ubuntu-latest) | hadolint. `docker build`. Run the container with a fake server binary in `/data` and `UPDATE_ON_START=false`. Assert: env override reaches `Game.ini`, health turns `healthy`, `exec isle-server status` returns 0, `docker stop` exits cleanly within the grace period, data survives a new container. A bad env value (`GAME_PORT=99999`) makes the container exit non-zero |
 | windows (windows-latest) | PS 5.1 `Parser::ParseFile` on every `.ps1`. PSScriptAnalyzer (Error). Smoke test: `Version`, `Check`, `Configure`, `Info`, `Backup`. `Check` must fail on a bad port |
 
 ### 10.2 Manual release checklist (per Tier-1 OS, real game server)
@@ -261,6 +286,7 @@ Priority: **M** = must, **S** = should, **C** = could.
 5. `backup`, then `restore` the archive → the world state matches.
 6. `rcon announce test` → the message shows in game.
 7. Uninstall → no services, tasks or firewall rules left. Data still present.
+8. Docker: `docker compose up -d` on a clean x86_64 host → listed in the browser. `docker compose down && up -d` → world preserved.
 
 ## 11. Delivery plan
 
@@ -273,6 +299,7 @@ Priority: **M** = must, **S** = should, **C** = could.
 | M4 Docs and CI | README, INSTALL, CONFIGURATION, TROUBLESHOOTING, SECURITY, CONTRIBUTING, CHANGELOG, LICENSE, CI | ✅ Done (v1.0.0) |
 | M5 Hardening (v1.1.0) | CFG-05 config validation, UPD-03 on Linux, CLI-02 help completeness, CLI-03 version | ✅ Done (v1.1.0) |
 | M6 Field validation | §10.2 checklist on each Tier-1 OS | ⏳ Planned. Needs real hosts |
+| **M7 Docker (v1.2.0)** | **DKR-01 – DKR-10**: Dockerfile, entrypoint, compose file, CI job, DOCKER.md | 🔜 In progress |
 
 ## 12. Traceability matrix
 
@@ -301,6 +328,13 @@ Priority: **M** = must, **S** = should, **C** = could.
 | CLI-01/04/05/06 | managers, `.bat` launchers | Review | Done |
 | CLI-02 | Usage headers list every dispatcher command | Review | Done (v1.1) |
 | CLI-03 | `VERSION` file, `version` / `Version` commands, shown in `info` | CI smoke | Done (v1.1) |
+| DKR-01/02 | `docker/Dockerfile`, `/data` volume | CI docker build + volume reuse | **Planned v1.2** |
+| DKR-03 | `docker/entrypoint.sh` env → `server.conf` | CI (env reaches Game.ini, bad value fails) | **Planned v1.2** |
+| DKR-04 | entrypoint PUID/PGID + `setpriv` | CI (process uid ≠ 0) | **Planned v1.2** |
+| DKR-05 | entrypoint TERM trap, compose `stop_grace_period` | CI (`docker stop` exit) | **Planned v1.2** |
+| DKR-06 | Dockerfile `HEALTHCHECK` | CI (healthy) | **Planned v1.2** |
+| DKR-07 | `docker/isle-server` wrapper | CI (`exec isle-server status`) | **Planned v1.2** |
+| DKR-08/09/10 | `docker-compose.yml`, DOCKER.md | Review, manual §10.2-8 | **Planned v1.2** |
 
 ## 13. Risks and mitigations
 
@@ -312,6 +346,8 @@ Priority: **M** = must, **S** = should, **C** = could.
 | Distro package names drift | Medium | Low | Per-package, non-fatal installs. Manual fallback in INSTALL.md |
 | No graceful exit signal for a detached Windows process | Certain | Medium | RCON save before close or kill |
 | Windows scripts not yet run on real hardware | — | Medium | CI parser, linter and smoke on windows-latest. M6 field validation |
+| Docker NAT hides the public IP or port from EOS | Medium | High (not listed) | Host and container ports must be the same. `network_mode: host` documented as a fallback |
+| Wrong volume ownership (bind mounts, rootless Docker) | Medium | Medium | PUID/PGID, chown on start, `--user` path |
 
 ## 14. Assumptions and open questions
 
@@ -321,6 +357,7 @@ Priority: **M** = must, **S** = should, **C** = could.
 | Q2 | Section holding `AdminsSteamIDs`/`WhitelistIDs` | Written to both `TIGameSession` and `TIGameStateBase` | Confirm on a live server (M6) |
 | Q3 | RCON command bytes | Community-documented values | Confirm on a live server (M6) |
 | Q4 | Does Evrima need TCP on the game port? | Opened to be safe | Confirm (M6), then close it if not needed |
+| Q5 | Does the server register the right public address with EOS from Docker bridge networking? | Yes, when host port = container port | Confirm (M6). Fallback: `network_mode: host` |
 
 ## 15. Future (v1.2+)
 
@@ -328,4 +365,3 @@ Priority: **M** = must, **S** = should, **C** = could.
 - Restart only when Steam reports a new build ID (S)
 - Discord webhook notifications for start, stop, crash and update (C)
 - Several instances per host: per-instance config, unit and task names (C)
-- Docker image and compose example (C)
