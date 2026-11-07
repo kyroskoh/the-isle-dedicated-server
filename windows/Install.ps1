@@ -12,6 +12,8 @@
     Both use the same launcher afterwards (Start.bat, Stop.bat, IsleServer.ps1 ...).
 
     Re-running is safe: scripts are updated, settings and data are kept.
+    Uninstall keeps the world; a later reinstall (either mode) picks it up again,
+    importing it from the other mode's retained data when the target has none.
     Re-running with the other mode switches modes: the old one is stopped and
     disabled (its data is kept) and the settings carry over.
 
@@ -30,6 +32,10 @@
 .PARAMETER Uninstall
     Remove what is installed (both modes unless -Native or -Docker is given). Keeps world
     data, settings and backups so the installer can simply be run again later.
+
+.PARAMETER NoImport
+    Do not import a world retained from the other mode (by default a reinstall imports it
+    when the target has no world yet; an existing world is never overwritten).
 
 .PARAMETER Purge
     With -Uninstall: also delete InstallRoot (server files, backups, settings), the Docker
@@ -56,7 +62,8 @@ param(
     [switch]$Start,
     [switch]$Uninstall,
     [switch]$Purge,
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$NoImport
 )
 
 Set-StrictMode -Version 2.0
@@ -277,30 +284,86 @@ function Get-Conf([string]$k, [string]$d) { if ($cfgText -match "(?m)^$k=(.*)$")
 $BackupDir = Get-Conf 'BACKUP_DIR' (Join-Path $InstallRoot 'backups')
 $MigrateHint = ''
 
-# ------------------------------------------------------------ mode switch --
-if ($Mode -eq 'docker' -and (Test-NativeActive)) {
-    Write-Step 'Switching from native to docker'
-    $before = @(Get-ChildItem -Path $BackupDir -Filter 'theisle-*.zip' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
-    [void](Invoke-Manager Backup -Runtime Native)
-    $new = Get-ChildItem -Path $BackupDir -Filter 'theisle-*.zip' -ErrorAction SilentlyContinue |
-        Where-Object { $before -notcontains $_.FullName } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($new) { $MigrateHint = "Your native world was backed up to $($new.FullName) - to load it into Docker: Restore.bat -Path `"$($new.FullName)`"" }
-    Stop-NativeInstall
+# ------------------------------------------------- retained world data ------
+# A "world" is TheIsle\Saved with anything besides Config, Logs and Crashes.
+# Reinstalls import a retained world from the other runtime when the target has
+# none, and never overwrite an existing world (PRD INS-19).
+function Get-NativeSavedDir { return (Join-Path (Get-Conf 'SERVER_DIR' (Join-Path $InstallRoot 'server')) 'TheIsle\Saved') }
+function Test-NativeWorld {
+    $saved = Get-NativeSavedDir
+    if (-not (Test-Path $saved)) { return $false }
+    return [bool](Get-ChildItem -Path $saved -Force | Where-Object { @('Config', 'Logs', 'Crashes') -notcontains $_.Name } | Select-Object -First 1)
 }
-if ($Mode -eq 'native' -and (Test-DockerContainer)) {
-    Write-Step 'Switching from docker to native'
-    [void](Invoke-Manager Stop -Runtime Docker)
-    if ((Invoke-Manager Backup -Runtime Docker) -eq 0) {
-        $img = (& docker inspect -f '{{.Config.Image}}' $Container 2> $null)
-        $latest = (& docker run --rm -v "${Volume}:/data" --entrypoint sh $img -c 'ls -t /data/backups/theisle-*.tar.gz 2>/dev/null | head -n1' 2> $null)
-        if ("$latest".Trim()) {
-            New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
-            $dest = Join-Path $BackupDir ([IO.Path]::GetFileName("$latest".Trim()))
-            & docker cp "${Container}:$("$latest".Trim())" $dest *> $null
-            if ($LASTEXITCODE -eq 0) { $MigrateHint = "Your Docker world was backed up to $dest - to load it natively: Restore.bat -Path `"$dest`"" }
+function Get-HelperImage {
+    foreach ($img in @((Get-Conf 'DOCKER_IMAGE' ''), 'theisle-server:latest', 'debian:bookworm-slim')) {
+        if (-not $img) { continue }
+        & docker image inspect $img *> $null
+        if ($LASTEXITCODE -eq 0) { return $img }
+    }
+    & docker pull -q debian:bookworm-slim *> $null
+    if ($LASTEXITCODE -eq 0) { return 'debian:bookworm-slim' }
+    return $null
+}
+function Test-VolumeWorld {
+    if (-not (Test-DockerUsable)) { return $false }
+    & docker volume inspect $Volume *> $null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $img = Get-HelperImage
+    if (-not $img) { return $false }
+    $check = 'd=/data/server/TheIsle/Saved; [ -d "$d" ] && find "$d" -mindepth 1 -maxdepth 1 ! -name Config ! -name Logs ! -name Crashes | grep -q .'
+    & docker run --rm -v "${Volume}:/data:ro" --entrypoint sh $img -c $check *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+function Export-VolumeWorld([string]$dest) {
+    $img = Get-HelperImage
+    if (-not $img) { return $null }
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    $name = 'theisle-docker-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz'
+    & docker run --rm -v "${Volume}:/data:ro" -v "${dest}:/out" --entrypoint sh $img -c "tar -czf /out/$name -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved" *> $null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return (Join-Path $dest $name)
+}
+function Export-NativeWorld([string]$dest) {
+    $saved = Get-NativeSavedDir
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    $file = Join-Path $dest ('theisle-native-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz')
+    & tar -czf $file -C (Split-Path -Parent $saved) --exclude=Saved/Logs --exclude=Saved/Crashes Saved
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return $file
+}
+
+# ------------------------------------------------------------ mode switch --
+$ImportFile = $null
+$VolumeWorld = $false
+if ($Mode -eq 'docker') {
+    if (Test-NativeActive) { Write-Step 'Switching from native to docker'; Stop-NativeInstall }
+    $VolumeWorld = Test-VolumeWorld
+    if (Test-NativeWorld) {
+        if ($VolumeWorld) {
+            $MigrateHint = "A native world is also kept in $(Get-NativeSavedDir); the Docker world was left as is."
+        } elseif (-not $NoImport) {
+            Write-Step 'Exporting the retained native world for import'
+            $ImportFile = Export-NativeWorld $BackupDir
+            if ($ImportFile) { Write-Ok "Native world archived to $ImportFile" }
         }
     }
-    Remove-DockerContainer
+}
+if ($Mode -eq 'native') {
+    $hadContainer = Test-DockerContainer
+    if ($hadContainer) {
+        Write-Step 'Switching from docker to native'
+        & docker stop -t 90 $Container *> $null
+    }
+    if (-not $NoImport -and (Test-VolumeWorld)) {
+        if (Test-NativeWorld) {
+            $MigrateHint = "A Docker world is also kept in volume $Volume; the native world was left as is."
+        } else {
+            Write-Step "Exporting the world kept in Docker volume $Volume for import"
+            $ImportFile = Export-VolumeWorld $BackupDir
+            if ($ImportFile) { Write-Ok "Docker world archived to $ImportFile" }
+        }
+    }
+    if ($hadContainer) { Remove-DockerContainer }
 }
 
 # ------------------------------------------------------------------ python --
@@ -330,6 +393,19 @@ if ((Invoke-Manager Status) -eq 0) {
     $Start = $true
 }
 if ((Invoke-Manager Install) -ne 0) { Fail 'Installation failed - see the messages above.' }
+
+if ($Mode -eq 'docker' -and -not $ImportFile -and ($VolumeWorld -or (Test-VolumeWorld))) {
+    Write-Ok "Reusing the world kept in Docker volume $Volume"
+} elseif ($ImportFile) {
+    Write-Step 'Importing the retained world'
+    if ($Mode -eq 'native' -and (Test-NativeWorld)) {
+        $MigrateHint = "A native world already exists; the Docker world is in $ImportFile (Restore.bat -Path `"$ImportFile`")."
+    } elseif ((Invoke-Manager Restore -Path $ImportFile) -eq 0) {
+        Write-Ok "Imported (archive kept at $ImportFile)"
+    } else {
+        $MigrateHint = "Importing failed - try: Restore.bat -Path `"$ImportFile`""
+    }
+}
 
 if (-not $NoFirewall) {
     Write-Step 'Configuring Windows Defender Firewall'

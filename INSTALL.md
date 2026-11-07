@@ -212,11 +212,25 @@ Run the installer again at any time. It's safe:
 |---|---|
 | The same mode again | Scripts are updated. `server.conf`, the world and backups are kept. A running server is stopped, updated and started again |
 | The **other** mode | The old mode is stopped and disabled (its data is kept). `server.conf` carries over with `RUNTIME` switched. A backup of the old world is made so you can move it (the installer prints the exact `restore` command) |
-| `--uninstall` / `-Uninstall` | Removes the service, scheduled tasks, firewall rules and container. **Keeps** world data, settings and backups. It remembers the mode, so running the installer again (no flag needed) reinstalls the same way |
+| `--uninstall` / `-Uninstall` | Removes the service, scheduled tasks, firewall rules and container. **Keeps** world data (including the `theisle-data` Docker volume), settings and backups. It remembers the mode, so running the installer again (no flag needed) reinstalls the same way, with the same world |
 | `--uninstall --purge` / `-Uninstall -Purge` | Also deletes server files, worlds, backups, settings, the `theisle-data` Docker volume and (Linux) the `theisle` user. Asks you to type `yes` (`--yes` / `-Yes` skips the prompt). A later install starts from scratch |
 
 `--uninstall` with no mode removes whatever is installed (both modes, if both are present). Add `--native` or
 `--docker` to remove only one.
+
+**Reinstalling with retained data.** A reinstall always uses the world that was kept:
+
+| Reinstall as | Retained data | Result |
+|---|---|---|
+| docker | `theisle-data` volume has a world | Reused as is ("Reusing the world kept in Docker volume theisle-data") |
+| docker | Volume empty or missing, native world kept | Native world is archived and imported into the volume |
+| native | Native world kept | Reused as is |
+| native | No native world, `theisle-data` has a world (container or not) | Volume world is exported to the native backups folder and restored |
+| either | Both sides have a world | Nothing is overwritten. The installer says where the other world is and how to restore it |
+
+Turn the import off with `--no-import` / `-NoImport`. The archives it creates stay in `/var/tmp` or the backups
+folder, so you can restore them again later. A "world" is anything in `TheIsle/Saved` besides `Config`, `Logs`
+and `Crashes`.
 
 **Moving a world between modes.** Backups are portable. `restore` accepts `.tar.gz` (Linux/Docker) and `.zip`
 (native Windows) in either mode, and in docker mode a file on the host is copied into the container for you:

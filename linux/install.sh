@@ -14,6 +14,8 @@
 #  Re-running is safe: it updates the scripts and keeps your settings and data.
 #  Re-running with the other mode switches modes: the old one is stopped and
 #  disabled (its data is kept) and your settings carry over.
+#  Uninstall keeps the world; a later reinstall (either mode) picks it up again,
+#  importing it from the other mode's retained data when the target has none.
 #
 #  Usage:
 #    sudo ./linux/install.sh [--native|--docker] [options]
@@ -34,6 +36,7 @@
 #    --purge              with --uninstall: ALSO delete server files, backups, the
 #                         Docker volume, the scripts copy and the service user
 #    --yes                do not ask for confirmation (purge)
+#    --no-import          do not import a retained world from the other mode
 #    -h | --help          show this help
 # =============================================================================
 set -Eeuo pipefail
@@ -44,7 +47,7 @@ SVC_HOME=""
 BRANCH=""; BRANCH_SET=0
 MODE=""
 DO_SERVICE=1; DO_FIREWALL=1; DO_DEPS=1; DO_SUDOERS=1; DO_START=0
-DO_UNINSTALL=0; DO_PURGE=0; ASSUME_YES=0
+DO_UNINSTALL=0; DO_PURGE=0; ASSUME_YES=0; DO_IMPORT=1
 SERVICE="theisle-server"
 STATE_DIR="/etc/theisle-server"
 STATE_FILE="$STATE_DIR/install.state"
@@ -76,6 +79,7 @@ while [[ $# -gt 0 ]]; do
     --uninstall)   DO_UNINSTALL=1; shift ;;
     --purge)       DO_PURGE=1; shift ;;
     --yes|-y)      ASSUME_YES=1; shift ;;
+    --no-import)   DO_IMPORT=0; shift ;;
     -h|--help)     usage; exit 0 ;;
     *)             usage; die "Unknown option: $1" ;;
   esac
@@ -262,15 +266,51 @@ retire_docker() {
   ok "Container removed"
 }
 
-native_backup_hint() {  # before switching away from native, take a backup to move the world
-  if id "$SVC_USER" >/dev/null 2>&1 && [[ -x "$NATIVE_SCRIPTS_DIR/linux/isle-server.sh" ]]; then
-    local out
-    out="$(as_user env ISLE_NO_SYSTEMD=1 ISLE_RUNTIME=native ISLE_CONF="$NATIVE_SCRIPTS_DIR/config/server.conf" \
-           "$NATIVE_SCRIPTS_DIR/linux/isle-server.sh" backup 2>&1 | sed -n 's/.*Creating backup //p' | tail -n1)" || true
-    if [[ -n "$out" ]]; then
-      MIGRATE_HINT="Your native world was backed up to $out - to load it into Docker: sudo isle-server restore $out"
-    fi
-  fi
+# ------------------------------------------------- retained world data ------
+# A "world" is TheIsle/Saved with anything besides Config, Logs and Crashes.
+# Reinstalls import a retained world from the other runtime when the target has
+# none, and never overwrite an existing world (PRD INS-19).
+native_saved_dir() {
+  local conf="$NATIVE_SCRIPTS_DIR/config/server.conf" dir=""
+  if [[ -f "$conf" ]]; then dir="$(grep -E '^SERVER_DIR=' "$conf" | tail -n1 | cut -d= -f2- | tr -d '"\r')"; fi
+  printf '%s/TheIsle/Saved' "${dir:-$SVC_HOME/theisle-server}"
+}
+native_has_world() {
+  local saved; saved="$(native_saved_dir)"
+  [[ -d "$saved" ]] && find "$saved" -mindepth 1 -maxdepth 1 ! -name Config ! -name Logs ! -name Crashes -print -quit | grep -q .
+}
+
+helper_image() {  # an image with sh + tar to look inside the volume
+  local img
+  for img in "$(conf_get DOCKER_IMAGE 2>/dev/null)" theisle-server:latest debian:bookworm-slim; do
+    if [[ -n "$img" ]] && docker image inspect "$img" >/dev/null 2>&1; then printf '%s' "$img"; return 0; fi
+  done
+  docker pull -q debian:bookworm-slim >/dev/null 2>&1 && printf 'debian:bookworm-slim'
+}
+volume_has_world() {
+  have_docker_cli && docker volume inspect "$VOLUME" >/dev/null 2>&1 || return 1
+  local img; img="$(helper_image)" || return 1
+  [[ -n "$img" ]] || return 1
+  docker run --rm -v "$VOLUME:/data:ro" --entrypoint sh "$img" -c \
+    'd=/data/server/TheIsle/Saved; [ -d "$d" ] && find "$d" -mindepth 1 -maxdepth 1 ! -name Config ! -name Logs ! -name Crashes | grep -q .' \
+    >/dev/null 2>&1
+}
+
+export_volume_world() {  # DEST_DIR -> prints the archive path
+  local dest="$1" img name
+  img="$(helper_image)" || return 1
+  name="theisle-docker-$(date +%Y%m%d-%H%M%S).tar.gz"
+  mkdir -p "$dest"
+  docker run --rm -v "$VOLUME:/data:ro" -v "$dest:/out" --entrypoint sh "$img" -c \
+    "tar -czf /out/$name -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved" >/dev/null 2>&1 || return 1
+  printf '%s/%s' "$dest" "$name"
+}
+export_native_world() {  # DEST_DIR -> prints the archive path
+  local dest="$1" saved name
+  saved="$(native_saved_dir)"; name="theisle-native-$(date +%Y%m%d-%H%M%S).tar.gz"
+  mkdir -p "$dest"
+  tar -czf "$dest/$name" -C "$(dirname "$saved")" --exclude=Saved/Logs --exclude=Saved/Crashes Saved || return 1
+  printf '%s/%s' "$dest" "$name"
 }
 
 # --------------------------------------------------------------- uninstall --
@@ -351,10 +391,19 @@ if [[ "$MODE" == docker ]]; then
   docker info >/dev/null 2>&1 || die "The Docker daemon is not running (try: systemctl start docker)"
   ok "$(docker --version)"
 
-  if native_active; then
-    step "Switching from native to docker"
-    native_backup_hint
-    retire_native
+  IMPORT_FILE=""
+  if native_active; then step "Switching from native to docker"; retire_native; fi
+  # Retained native world -> volume (only if the volume has no world yet).
+  volume_world=0
+  if volume_has_world; then volume_world=1; fi
+  if native_has_world; then
+    if (( volume_world )); then
+      MIGRATE_HINT="A native world is also kept in $(native_saved_dir); the Docker world was left as is. To use the native one: sudo isle-server stop && sudo isle-server restore <backup>"
+    elif (( DO_IMPORT )); then
+      step "Exporting the retained native world for import"
+      IMPORT_FILE="$(export_native_world /var/tmp)" || IMPORT_FILE=""
+      if [[ -n "$IMPORT_FILE" ]]; then ok "Native world archived to $IMPORT_FILE"; fi
+    fi
   fi
 
   step "Installing scripts to $DOCKER_SCRIPTS_DIR"
@@ -386,6 +435,17 @@ if [[ "$MODE" == docker ]]; then
     fi
   fi
 
+  if (( volume_world )) || { [[ -z "$IMPORT_FILE" ]] && volume_has_world; }; then
+    ok "Reusing the world kept in Docker volume $VOLUME"
+  elif [[ -n "$IMPORT_FILE" ]]; then
+    step "Importing the native world into the Docker volume"
+    if "$launcher" --docker restore "$IMPORT_FILE"; then
+      ok "Imported (archive kept at $IMPORT_FILE)"
+    else
+      MIGRATE_HINT="Importing failed - try: sudo isle-server restore $IMPORT_FILE"
+    fi
+  fi
+
   if (( DO_START || was_running )); then step "Starting the container"; "$launcher" --docker start; fi
   write_state docker "$DOCKER_SCRIPTS_DIR"
 
@@ -409,23 +469,22 @@ fi
 # ==================================================================== NATIVE
 [[ "$MODE" == native ]] || die "Unknown mode: $MODE"
 
-MIGRATE_FILE=""
+IMPORT_FILE=""
 if docker_installed; then
   step "Switching from docker to native"
-  # Take a backup inside the volume and copy it out, so the world can be restored natively.
-  if [[ -x "$DOCKER_SCRIPTS_DIR/linux/isle-server.sh" && -f "$DOCKER_SCRIPTS_DIR/config/server.conf" ]]; then
-    ISLE_CONF="$DOCKER_SCRIPTS_DIR/config/server.conf" "$DOCKER_SCRIPTS_DIR/linux/isle-server.sh" --docker stop >/dev/null 2>&1 || true
-    if ISLE_CONF="$DOCKER_SCRIPTS_DIR/config/server.conf" "$DOCKER_SCRIPTS_DIR/linux/isle-server.sh" --docker backup >/dev/null 2>&1; then
-      latest="$(docker run --rm -v "$VOLUME:/data" --entrypoint sh "$(docker inspect -f '{{.Config.Image}}' "$CONTAINER")" \
-                -c 'ls -t /data/backups/theisle-*.tar.gz 2>/dev/null | head -n1' 2>/dev/null || true)"
-      if [[ -n "$latest" ]]; then
-        MIGRATE_FILE="/var/tmp/$(basename "$latest")"
-        docker cp "$CONTAINER:$latest" "$MIGRATE_FILE" >/dev/null 2>&1 || MIGRATE_FILE=""
-      fi
-    fi
-  fi
-  retire_docker
+  docker stop -t 90 "$CONTAINER" >/dev/null 2>&1 || true
 fi
+# Retained Docker world -> native (container present or not), only if native has none.
+if (( DO_IMPORT )) && volume_has_world; then
+  if native_has_world; then
+    MIGRATE_HINT="A Docker world is also kept in volume $VOLUME; the native world was left as is."
+  else
+    step "Exporting the world kept in Docker volume $VOLUME for import"
+    IMPORT_FILE="$(export_volume_world /var/tmp)" || IMPORT_FILE=""
+    if [[ -n "$IMPORT_FILE" ]]; then ok "Docker world archived to $IMPORT_FILE"; fi
+  fi
+fi
+if docker_installed; then retire_docker; fi
 
 # ---------------------------------------------------------- dependencies ----
 detect_distro() {
@@ -507,11 +566,11 @@ else
   ok "Created user $SVC_USER ($SVC_HOME)"
 fi
 mkdir -p "$SVC_HOME"; chown "$SVC_USER:" "$SVC_HOME"
-if [[ -n "$MIGRATE_FILE" && -f "$MIGRATE_FILE" ]]; then
+if [[ -n "$IMPORT_FILE" && -f "$IMPORT_FILE" ]]; then
   mkdir -p "$SVC_HOME/theisle-backups"
-  mv "$MIGRATE_FILE" "$SVC_HOME/theisle-backups/"
+  mv "$IMPORT_FILE" "$SVC_HOME/theisle-backups/"
+  IMPORT_FILE="$SVC_HOME/theisle-backups/$(basename "$IMPORT_FILE")"
   chown -R "$SVC_USER:" "$SVC_HOME/theisle-backups"
-  MIGRATE_HINT="Your Docker world was backed up to $SVC_HOME/theisle-backups/$(basename "$MIGRATE_FILE") - restore it with: sudo -u $SVC_USER isle-server restore $SVC_HOME/theisle-backups/$(basename "$MIGRATE_FILE")"
 fi
 
 # -------------------------------------------------------- copy scripts ------
@@ -540,6 +599,16 @@ elif ISLE_NO_SYSTEMD=1 native_run status >/dev/null 2>&1; then
 fi
 native_run install
 if (( WAS_RUNNING )); then DO_START=1; fi
+if [[ -n "$IMPORT_FILE" ]]; then
+  step "Importing the Docker world"
+  if native_has_world; then
+    MIGRATE_HINT="A native world already exists; the Docker world is in $IMPORT_FILE (restore it with: sudo -u $SVC_USER isle-server restore $IMPORT_FILE)"
+  elif native_run restore "$IMPORT_FILE"; then
+    ok "Imported (archive kept at $IMPORT_FILE)"
+  else
+    MIGRATE_HINT="Importing failed - try: sudo -u $SVC_USER isle-server restore $IMPORT_FILE"
+  fi
+fi
 
 # -------------------------------------------------------------- firewall ----
 if (( DO_FIREWALL )); then step "Configuring firewall"; firewall_rules add; fi

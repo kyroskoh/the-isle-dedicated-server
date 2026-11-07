@@ -123,6 +123,10 @@ you run it from. So uninstalling and reinstalling (or moving the scripts) finds 
 before 1.4 used `<folder>_theisle-data`. The Linux installer copies that into `theisle-data` once and leaves
 the old volume in place.
 
+`--uninstall` / `-Uninstall` keeps this volume, and a later reinstall reuses it. A **native** reinstall imports
+the world from it when the native server has no world yet. See
+[INSTALL.md](INSTALL.md#switching-uninstalling-and-reinstalling).
+
 ## Volume layout
 
 ```

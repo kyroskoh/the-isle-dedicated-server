@@ -6,6 +6,21 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-07
+
+Planned in [PRD.md](PRD.md) as milestone M10 (requirement INS-19).
+
+### Added
+- **Reinstall with retained data, in either mode.** A Docker reinstall reuses the kept `theisle-data` volume and says
+  so. If the volume has no world, a retained native world is imported. A native reinstall imports the world from the
+  retained volume (with or without a container) when the native server has none. An existing world is never
+  overwritten. The installer prints where the other world is instead. Turn the import off with `--no-import` / `-NoImport`.
+- The installer cycle test covers importing in both directions, volume reuse after uninstall, reinstalling native from a
+  container-less retained volume, the "never overwrite" rule, `--no-import`, and "nothing imported" after a purge.
+
+### Changed
+- Switching modes now moves the world automatically (it used to only print a restore command).
+
 ## [1.4.0] - 2026-11-07
 
 Planned in [PRD.md](PRD.md) as milestone M9 (requirements INS-13 to INS-18).
@@ -127,7 +142,8 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.1.0...v1.2.0

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.4 |
-| **Product version** | 1.5.0 (planned), 1.4.0 (released) |
+| **Product version** | 1.5.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -329,7 +329,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M7 Docker (v1.2.0) | DKR-01 – DKR-10: Dockerfile, entrypoint, compose file, CI job, DOCKER.md | ✅ Done (v1.2.0). Full image build verified in CI only |
 | M8 Launcher runtime modes (v1.3.0) | LCH-01 – LCH-08: native/docker in both launchers and installers, compose `env_file`, CI job | ✅ Done (v1.3.0). Windows docker mode tested with PowerShell 7 on Linux; Docker Desktop field test pending (M6) |
 | M9 Installer modes & reinstall (v1.4.0) | INS-13 – INS-18: mode prompt and flags, install state, safe mode switching, uninstall/reinstall/purge, fixed compose names, CI reinstall cycle | ✅ Done (v1.4.0). Linux cycle verified locally (no systemd) and in CI. Windows installer covered by CI for arguments, uninstall and purge only |
-| **M10 Reinstall with retained data (v1.5.0)** | **INS-19**: import retained worlds across modes on reinstall, both installers, CI | 🔜 In progress |
+| M10 Reinstall with retained data (v1.5.0) | INS-19: import retained worlds across modes on reinstall, both installers, CI | ✅ Done (v1.5.0). Linux verified by the cycle test. Windows import paths parse-checked only (they need Docker Desktop with Linux containers) |
 
 ## 12. Traceability matrix
 
@@ -348,7 +348,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | INS-15 | `install.sh` `retire_native`/`retire_docker`, `Install.ps1` equivalents | CI (Linux switch cycle), manual | Done (v1.4) |
 | INS-16/17 | uninstall paths in both installers | CI (Linux: full cycle; Windows: clean uninstall, purge refusal, purge -Yes) | Done (v1.4) |
 | INS-18 | `docker-compose.yml` `name:` + volume `name:` | CI | Done (v1.4) |
-| INS-19 | `install.sh` (`volume_has_world`, `export_volume_world`, `native_has_world`), `Install.ps1` equivalents | CI (Linux cycle steps 4-7 check world markers), manual (Windows) | **Planned v1.5** |
+| INS-19 | `install.sh` (`volume_has_world`, `export_volume_world`, `native_has_world`), `Install.ps1` equivalents | CI (Linux cycle steps 4-8 check world markers), manual (Windows) | Done (v1.5) |
 | CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |
 | CFG-03/04 | `render_*_ini`/`configure`, `Get-*Ini`/`Set-ServerConfig` | CI smoke (grep sections) | Done |
 | CFG-05 | `check_config` / `Test-ServerConfig`, called by configure/run/start/install | CI smoke (positive + negative) | Done (v1.1) |
