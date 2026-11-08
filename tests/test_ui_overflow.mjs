@@ -132,6 +132,21 @@ function audit() {
 }
 
 const browser = await chromium.launch();
+/* Firefox and WebKit wear out over hundreds of pages in one process (a stuck first navigation, a crashed tab),
+   so they get a fresh browser per context; Chromium shares one. */
+const owned = new WeakMap();
+async function newCtx(opts) {
+  if (ENGINE === "chromium") return browser.newContext(opts);
+  const b = await chromium.launch();
+  const ctx = await b.newContext(opts);
+  owned.set(ctx, b);
+  return ctx;
+}
+async function closeCtx(ctx) {
+  try { await ctx.close(); } catch { /* crashed */ }
+  const b = owned.get(ctx);
+  if (b) await b.close().catch(() => {});
+}
 let fails = 0;
 const report = (label, found) => {
   if (found.length) { fails++; console.log(`  FAIL ${label}`); found.slice(0, 8).forEach((f) => console.log("       " + f)); if (found.length > 8) console.log(`       ... ${found.length - 8} more`); }
@@ -149,7 +164,7 @@ async function open(ctx, page, url) {
     const fresh = await ctx.newPage();
     try { await fresh.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }); return fresh; } catch (e2) {
       console.log("  note: a new page did not load either - trying a new browser context");
-      const ctx2 = await browser.newContext({ viewport: page.viewportSize ? page.viewportSize() : undefined });
+      const ctx2 = await newCtx({ viewport: page.viewportSize ? page.viewportSize() : undefined });
       const p2 = await ctx2.newPage();
       await p2.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
       return p2;
@@ -165,7 +180,7 @@ const WIDTHS = [1440, 1280, 1024, 820, 600, 390, 320];
 try {
   for (const scheme of ["light", "dark"]) {
     for (const width of WIDTHS) {
-      const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: scheme, ...MOTION });
+      const ctx = await newCtx({ viewport: { width, height: 900 }, colorScheme: scheme, ...MOTION });
       let page = await ctx.newPage();
       page = await open(ctx, page, BASE + "/");
       if (scheme === "light" && width === WIDTHS[0]) {
@@ -238,7 +253,7 @@ try {
           report(`${scheme} phone menu @${width}`, await page.evaluate(audit));
         }
       }
-      await ctx.close();
+      await closeCtx(ctx);
     }
   }
   // real device shapes: phones and tablets in both orientations, touch, mobile viewport
@@ -252,7 +267,7 @@ try {
   ];
   for (const [label, w, hgt] of DEVICES) {
     const touch = w < 1300;
-    const ctx = await browser.newContext({ viewport: { width: w, height: hgt }, hasTouch: touch, isMobile: touch && MOBILE, ...MOTION });
+    const ctx = await newCtx({ viewport: { width: w, height: hgt }, hasTouch: touch, isMobile: touch && MOBILE, ...MOTION });
     let page = await ctx.newPage();
     page = await open(ctx, page, BASE + "/");
     await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
@@ -271,16 +286,16 @@ try {
       await page.waitForSelector("#modal[open]");
       report(`${label} date & time dialog`, await page.evaluate(audit));
     }
-    await ctx.close();
+    await closeCtx(ctx);
   }
   for (const width of [1280, 390]) {
-    const ctx = await browser.newContext({ viewport: { width, height: 900 } });
+    const ctx = await newCtx({ viewport: { width, height: 900 } });
     const page = await ctx.newPage();
     await page.goto(BASE + "/docs", { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".op");
     await page.click("#patchConfig > summary");
     report(`docs @${width}`, await page.evaluate(audit));
-    await ctx.close();
+    await closeCtx(ctx);
   }
 } finally {
   await browser.close();
