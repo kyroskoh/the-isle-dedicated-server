@@ -87,6 +87,14 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 turns a native command's stderr into a terminating error under 'Stop'
+# (e.g. "no such volume" from a probe). Every "docker" call goes through this wrapper instead.
+function docker {
+    $exe = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $exe) { throw 'docker is not installed' }
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { & $exe.Source @args } finally { $ErrorActionPreference = $prev }
+}
 $ProgressPreference = 'SilentlyContinue'   # makes Invoke-WebRequest much faster on 5.1
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -734,7 +742,7 @@ function Initialize-RconPassword {
 }
 
 function Assert-Docker {
-    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    if (-not (Get-Command docker -CommandType Application -ErrorAction SilentlyContinue)) {
         throw "RUNTIME=docker but 'docker' was not found. Install Docker Desktop (https://docs.docker.com/desktop/) or set RUNTIME=native."
     }
     & docker compose version *> $null
@@ -808,7 +816,7 @@ function Show-DockerInfo {
     $state = 'unknown (docker not available)'
     # Windows PowerShell 5.1 turns native stderr into terminating errors under 'Stop'
     $ErrorActionPreference = 'Continue'
-    if (Get-Command docker -ErrorAction SilentlyContinue) {
+    if (Get-Command docker -CommandType Application -ErrorAction SilentlyContinue) {
         & docker info *> $null
         if ($LASTEXITCODE -eq 0) {
             $envFile = Get-ComposeEnvFile
@@ -1027,7 +1035,7 @@ function Edit-List([string]$key, [string]$op, [string[]]$items) {
 function Send-LiveRcon([string[]]$rconArgs) {
     if (-not (Test-True (C 'RCON_ENABLED')) -or -not (C 'RCON_PASSWORD')) { Write-Step 'RCON disabled - the change applies on the next restart'; return }
     if ((Get-Runtime) -eq 'docker') {
-        if (-not (Get-Command docker -ErrorAction SilentlyContinue) -or -not (Test-DockerRunning)) { Write-Step 'Server not running - the change applies on the next start'; return }
+        if (-not (Get-Command docker -CommandType Application -ErrorAction SilentlyContinue) -or -not (Test-DockerRunning)) { Write-Step 'Server not running - the change applies on the next start'; return }
         $rc = Invoke-Dc (@('exec', '-T', 'theisle', 'isle-server', 'rcon') + $rconArgs)
     } else {
         if (-not (Get-ServerProcess)) { Write-Step 'Server not running - the change applies on the next start'; return }

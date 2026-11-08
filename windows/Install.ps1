@@ -122,6 +122,14 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 turns a native command's stderr into a terminating error under 'Stop'
+# (e.g. "no such volume" from a probe). Every "docker" call goes through this wrapper instead.
+function docker {
+    $exe = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $exe) { throw 'docker is not installed' }
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { & $exe.Source @args } finally { $ErrorActionPreference = $prev }
+}
 $SourceRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
 function Write-Step([string]$m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
@@ -204,7 +212,7 @@ $State = Read-InstallState
 $script:NoFinalBackup = $false   # set during a "move" switch (the carry snapshot is the safety copy)
 
 function Test-DockerUsable {
-    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
+    if (-not (Get-Command docker -CommandType Application -ErrorAction SilentlyContinue)) { return $false }
     & docker info *> $null
     return ($LASTEXITCODE -eq 0)
 }
@@ -516,7 +524,7 @@ $prev = ''
 if ($State.MODE) { $prev = " (previously: $($State.MODE))" }
 Write-Ok "Install mode: $Mode$prev"
 
-if ($Mode -eq 'docker' -and -not (Get-Command docker -ErrorAction SilentlyContinue)) {
+if ($Mode -eq 'docker' -and -not (Get-Command docker -CommandType Application -ErrorAction SilentlyContinue)) {
     Fail 'Docker Desktop was not found. Install it from https://docs.docker.com/desktop/ (WSL 2 backend), start it, then re-run with -Docker.'
 }
 
