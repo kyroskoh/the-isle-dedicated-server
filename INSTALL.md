@@ -56,6 +56,7 @@ cd <repo>\windows
 .\Install.ps1 -ServiceAccount System      # run the task as SYSTEM instead of LOCAL SERVICE
 .\Install.ps1 -Branch ''                  # install the public (Legacy) branch instead of evrima
 .\Install.ps1 -Native                     # skip the mode prompt (or -Docker)
+.\Install.ps1 -UI                         # also run the web UI + API at boot (task TheIsleServer-UI; UI.md)
 .\Install.ps1 -Uninstall                  # remove tasks + firewall rules (keeps files, reinstall any time)
 .\Install.ps1 -Uninstall -Purge          # ALSO delete C:\TheIsle and the Docker volume (asks first)
 ```
@@ -132,6 +133,7 @@ sudo ./linux/install.sh --user isle --home /srv/isle
 sudo ./linux/install.sh --branch ""          # public/Legacy branch
 sudo ./linux/install.sh --no-firewall --no-service --no-sudoers --no-deps
 sudo ./linux/install.sh --native             # skip the mode prompt (or --docker)
+sudo ./linux/install.sh --ui                 # also run the web UI + API at boot (theisle-ui, 127.0.0.1:8090; UI.md)
 sudo ./linux/install.sh --uninstall          # remove units/sudoers/firewall rules (keeps files, reinstall any time)
 sudo ./linux/install.sh --uninstall --purge  # ALSO delete the user, server files, backups (asks first; --yes skips)
 ```

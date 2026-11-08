@@ -49,6 +49,10 @@
 .PARAMETER FromSnapshot
     Restore a snapshot (from any OS/runtime) after installing - e.g. moving to a new machine.
 
+.PARAMETER UI
+    Also run the web UI + REST API at boot (scheduled task TheIsleServer-UI, 127.0.0.1:UI_PORT,
+    see UI.md). Kept on later re-runs; -NoUI removes it.
+
 .PARAMETER Image
     Docker: use this prebuilt/registry image instead of building one from the repo.
 
@@ -80,6 +84,7 @@
     powershell -ExecutionPolicy Bypass -File .\Install.ps1
     powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Native -InstallRoot D:\Games\TheIsle -Start
     powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Docker -Start
+    powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Native -UI
     powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Uninstall
     powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Uninstall -RemoveGameFiles
     powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Uninstall -Purge -Yes
@@ -95,6 +100,8 @@ param(
     [switch]$NoService,
     [switch]$NoFirewall,
     [switch]$NoPython,
+    [switch]$UI,
+    [switch]$NoUI,
     [switch]$Start,
     [switch]$Uninstall,
     [switch]$Purge,
@@ -170,6 +177,7 @@ $Manager = Join-Path $ScriptsDir 'windows\IsleServer.ps1'
 $Conf = Join-Path $ScriptsDir 'config\server.conf'
 $StateFile = Join-Path $InstallRoot 'install-state.txt'
 $TaskName = 'TheIsleServer'
+$UiTask = 'TheIsleServer-UI'
 $Container = 'theisle'
 $Volume = 'theisle-data'
 $Version = 'unknown'
@@ -400,8 +408,40 @@ function Remove-DockerData([hashtable]$rm) {
     if ($rm.Game) { & docker image rm theisle-server:latest *> $null; if ($LASTEXITCODE -eq 0) { Write-Ok 'Removed image theisle-server:latest' } }
 }
 
+# ------------------------------------------------------------------ web UI --
+function Remove-UiTask {
+    if (Get-ScheduledTask -TaskName $UiTask -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $UiTask -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $UiTask -Confirm:$false
+        Write-Ok "Removed scheduled task '$UiTask'"
+    }
+}
+function Install-UiTask([string]$runtime) {
+    $py = Find-Python
+    if (-not $py) { Write-Warn 'Python 3 is not available - web UI not installed (winget install Python.Python.3.12, then re-run with -UI)'; return }
+    $api = Join-Path $ScriptsDir 'tools\isle_api.py'
+    $pre = @(); if ($py[1]) { $pre += $py[1] }
+    # create the token now and limit it to Administrators + SYSTEM (the task runs as SYSTEM)
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    & $py[0] @($pre + @($api, '--conf', $Conf, '--print-token')) *> $null
+    $ErrorActionPreference = $prev
+    $tok = Join-Path (Split-Path -Parent $Conf) 'ui-token'
+    if (Test-Path $tok) { & icacls $tok /inheritance:r /grant:r '*S-1-5-32-544:F' '*S-1-5-18:F' /Q | Out-Null }
+    $argLine = (($pre + @("`"$api`"", '--conf', "`"$Conf`"", '--launcher', "`"$Manager`"", '--runtime', $runtime)) -join ' ')
+    $action = New-ScheduledTaskAction -Execute $py[0] -Argument $argLine -WorkingDirectory $ScriptsDir
+    $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
+        -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+    Stop-ScheduledTask -TaskName $UiTask -ErrorAction SilentlyContinue
+    Register-ScheduledTask -TaskName $UiTask -Description 'The Isle server web UI and REST API' -Action $action `
+        -Trigger (New-ScheduledTaskTrigger -AtStartup) -Principal $principal -Settings $settings -Force | Out-Null
+    Start-ScheduledTask -TaskName $UiTask
+    Write-Ok ("Web UI on http://127.0.0.1:{0}/ (API docs at /docs) - scheduled task '{1}'" -f (Get-Conf 'UI_PORT' '8090'), $UiTask)
+}
+
 # --------------------------------------------------------------- uninstall --
 if ($Uninstall) {
+    Remove-UiTask
     $rm = Select-Removals
     if ($Purge) { Confirm-Purge }
     elseif ($rm.Worlds -or $rm.Backups -or $rm.Settings) {
@@ -484,7 +524,7 @@ if ($Mode -eq 'docker' -and -not (Get-Command docker -ErrorAction SilentlyContin
 Write-Step "Installing management scripts to $ScriptsDir"
 New-Item -ItemType Directory -Force -Path $ScriptsDir | Out-Null
 if ((Resolve-Path $SourceRoot).Path.TrimEnd('\') -ne (Resolve-Path $ScriptsDir).Path.TrimEnd('\')) {
-    & robocopy $SourceRoot $ScriptsDir /E /XD .git /XF server.conf /NFL /NDL /NJH /NJS /NP | Out-Null
+    & robocopy $SourceRoot $ScriptsDir /E /XD .git /XF server.conf ui-token /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { Fail "Copying scripts failed (robocopy code $LASTEXITCODE)" }
 }
 # Files downloaded from the internet carry a "mark of the web"; clear it.
@@ -653,6 +693,9 @@ if ($Start) {
     Write-Step 'Starting the server'
     [void](Invoke-Manager Start)
 }
+$uiWanted = $UI -or [bool](Get-ScheduledTask -TaskName $UiTask -ErrorAction SilentlyContinue)
+if ($NoUI) { Remove-UiTask; $uiWanted = $false }
+elseif ($uiWanted) { Write-Step 'Registering the web UI'; Install-UiTask $Mode }
 Write-InstallState $Mode
 
 Write-Host ''
@@ -665,5 +708,10 @@ if ($Mode -eq 'docker') {
     Write-Host "  Runtime     : Docker - data in volume $Volume (kept on uninstall); enable 'Start Docker Desktop when you sign in'"
 }
 Write-Host "  Reinstall   : run the installer again; uninstall keeps data (-Uninstall), -Uninstall -Purge removes it"
+if ($uiWanted) {
+    Write-Host ("  Web UI      : http://127.0.0.1:{0}/  (token: & '$Manager' UiToken; API docs at /docs)" -f (Get-Conf 'UI_PORT' '8090'))
+} else {
+    Write-Host "  Web UI      : $ScriptsDir\windows\UI.bat (or re-run the installer with -UI to start it at boot)"
+}
 if ($MigrateHint) { Write-Host ''; Write-Host "  $MigrateHint" -ForegroundColor Yellow }
 Write-Host '  Remember to forward the game and queue ports on your router / cloud firewall.'

@@ -55,21 +55,24 @@ EOF
   chmod 755 /home/theisle/steamcmd/steamcmd.sh
   touch /home/theisle/steamcmd/linux64/steamclient.so
 }
+# Volume helpers use plain Debian: the server image itself may be removed by --remove-game-files.
+HELPER_IMG=debian:bookworm-slim
+docker image inspect "$HELPER_IMG" >/dev/null 2>&1 || docker pull -q "$HELPER_IMG" >/dev/null
 IMG=()   # --image <tag> for docker installs when testing with a prebuilt image
 if [[ -n "${TEST_PREBUILT_IMAGE:-}" ]]; then IMG=(--image "$TEST_PREBUILT_IMAGE"); fi
 use_prebuilt() {
   if [[ -n "${TEST_PREBUILT_IMAGE:-}" ]]; then docker tag "$TEST_PREBUILT_IMAGE" theisle-server:latest; fi
 }
 seed_volume() {  # the real image would download the game; seed a fake server instead
-  docker run --rm -v theisle-data:/data --entrypoint bash theisle-server:latest -c '
+  docker run --rm -v theisle-data:/data --entrypoint sh "$HELPER_IMG" -c '
     mkdir -p /data/server/TheIsle/Binaries/Linux
     printf "%s\n" "#!/bin/bash" "trap \"exit 0\" TERM" "while :; do sleep 1; done" > /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping
     chmod +x /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping'
 }
 
 NSAVED=/home/theisle/theisle-server/TheIsle/Saved
-vol_has() { docker run --rm -v theisle-data:/data:ro --entrypoint sh theisle-server:latest -c "[ -f /data/server/TheIsle/Saved/SaveGames/$1 ]"; }
-vol_put() { docker run --rm -v theisle-data:/data --entrypoint sh theisle-server:latest -c "mkdir -p /data/server/TheIsle/Saved/SaveGames && echo $1 > /data/server/TheIsle/Saved/SaveGames/$1"; }
+vol_has() { docker run --rm -v theisle-data:/data:ro --entrypoint sh "$HELPER_IMG" -c "[ -f /data/server/TheIsle/Saved/SaveGames/$1 ]"; }
+vol_put() { docker run --rm -v theisle-data:/data --entrypoint sh "$HELPER_IMG" -c "mkdir -p /data/server/TheIsle/Saved/SaveGames && echo $1 > /data/server/TheIsle/Saved/SaveGames/$1"; }
 nat_put() { sudo -u theisle mkdir -p "$NSAVED/SaveGames" && echo "$1" | sudo -u theisle tee "$NSAVED/SaveGames/$1" >/dev/null; }
 
 echo "## 0 purge (start clean)"; run 0 --uninstall --purge --yes
@@ -140,7 +143,7 @@ run 7d --no-deps --no-import
 ck "--no-import respected"     "! grep -q 'Taking a snapshot' $LOGS/7d.log"
 
 NBIN=/home/theisle/theisle-server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping
-vol_bin() { docker run --rm -v theisle-data:/data:ro --entrypoint sh theisle-server:latest -c "[ -x /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping ]"; }
+vol_bin() { docker run --rm -v theisle-data:/data:ro --entrypoint sh "$HELPER_IMG" -c "[ -x /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping ]"; }
 runtty() { local n="$1" answers="$2"; shift 2; printf '%b' "$answers" | script -qec "bash $I $*" /dev/null > "$LOGS/$n.log" 2>&1; }
 
 echo "## A uninstall --remove-game-files (both modes): game files gone, worlds kept"
@@ -215,7 +218,7 @@ chown -R theisle: /home/theisle/theisle-scripts/config/overrides
 use_prebuilt; run M1 --docker "${IMG[@]}" --data move --carry worlds,backups,overrides,settings
 ck "world moved into the volume"  "grep -q 'World restored' $LOGS/M1.log && vol_has move-world.txt"
 ck "native world cleared (move)"  "[ ! -e $NSAVED/SaveGames/move-world.txt ]"
-ck "backups moved"                "docker run --rm -v theisle-data:/data:ro --entrypoint sh theisle-server:latest -c 'ls /data/backups/theisle-*.tar.gz' >/dev/null 2>&1 && [ ! -e /home/theisle/theisle-backups ]"
+ck "backups moved"                "docker run --rm -v theisle-data:/data:ro --entrypoint sh $HELPER_IMG -c 'ls /data/backups/theisle-*.tar.gz' >/dev/null 2>&1 && [ ! -e /home/theisle/theisle-backups ]"
 ck "overrides carried"            "grep -q '^bMoved=true' /opt/theisle-scripts/config/overrides/Game.ini"
 ck "move keeps a safety snapshot" "ls /opt/theisle-scripts/snapshots/theisle-carry-native-*.tar.gz >/dev/null 2>&1"
 seed_volume; isle-server start >/dev/null 2>&1

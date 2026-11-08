@@ -260,6 +260,16 @@ Replace them only if the developers announce new values.
 | `BACKUP_RETENTION` | `10` | Number of backup archives to keep (0 = all) |
 | `SAVE_BEFORE_STOP` | `true` | Send RCON `save` before stopping or backing up |
 
+## Web UI
+
+Used by `isle-server ui` / `IsleServer.ps1 UI` and the `theisle-ui` service (see [UI.md](UI.md)). Both keys are
+machine-specific: the UI shows them read-only, and snapshots don't carry them.
+
+| Key | Default | Description |
+|---|---|---|
+| `UI_HOST` | `127.0.0.1` | Address the web UI and API listen on. Keep `127.0.0.1` and use an SSH tunnel or a TLS reverse proxy for remote access |
+| `UI_PORT` | `8090` | Port of the web UI and API (`check` validates it) |
+
 ## RCON
 
 `tools/isle_rcon.py` speaks the Evrima binary RCON protocol. It needs Python 3.6+ and no extra packages.

@@ -32,6 +32,9 @@
 #    --no-firewall        native: do not touch ufw/firewalld
 #    --no-deps            native: skip package installation
 #    --no-sudoers         native: no sudoers rule for the service user
+#    --ui                 also run the web UI + REST API as a service (theisle-ui,
+#                         127.0.0.1:UI_PORT; see UI.md). Kept on later re-runs
+#    --no-ui              remove that service
 #    --uninstall          remove the service/container (both modes unless one is
 #                         given). What happens to the data: pick below, or answer
 #                         the menu (non-interactive default: keep everything)
@@ -64,9 +67,13 @@ MODE=""
 DO_SERVICE=1; DO_FIREWALL=1; DO_DEPS=1; DO_SUDOERS=1; DO_START=0
 DO_UNINSTALL=0; DO_PURGE=0; ASSUME_YES=0
 DATA=copy; CARRY="worlds,settings,overrides,plugins"; CARRY_SET=0; OVERWRITE=0; FROM_SNAPSHOT=""
-NO_FINAL_BACKUP=0; IMAGE_REF=""
+NO_FINAL_BACKUP=0; IMAGE_REF=""; DO_UI=0
 RM_GAME=0; RM_WORLDS=0; RM_BACKUPS=0; RM_SETTINGS=0; DATA_FLAG=0; KEEP_DATA=0
 SERVICE="theisle-server"
+UI_SERVICE="theisle-ui"
+UI_UNIT="/etc/systemd/system/theisle-ui.service"
+UI_WAS=0; if [[ -f "$UI_UNIT" ]]; then UI_WAS=1; fi
+UI_LINE=""
 STATE_DIR="/etc/theisle-server"
 STATE_FILE="$STATE_DIR/install.state"
 DOCKER_SCRIPTS_DIR="/opt/theisle-scripts"
@@ -94,6 +101,8 @@ while [[ $# -gt 0 ]]; do
     --no-deps)     DO_DEPS=0; shift ;;
     --no-sudoers)  DO_SUDOERS=0; shift ;;
     --start)       DO_START=1; shift ;;
+    --ui)          DO_UI=1; shift ;;
+    --no-ui)       DO_UI=-1; shift ;;
     --uninstall)   DO_UNINSTALL=1; shift ;;
     --purge)       DO_PURGE=1; DATA_FLAG=1; shift ;;
     --keep-data)   KEEP_DATA=1; DATA_FLAG=1; shift ;;
@@ -205,7 +214,7 @@ copy_scripts() {  # DEST - copy this repo (minus .git and server.conf) to DEST
   local dest="$1"
   if [[ "$(readlink -f "$SRC_DIR")" != "$(readlink -f "$dest" 2>/dev/null || echo /nonexistent)" ]]; then
     mkdir -p "$dest"
-    (cd "$SRC_DIR" && tar --exclude='.git' --exclude='config/server.conf' --exclude='config/*.bak' -cf - .) \
+    (cd "$SRC_DIR" && tar --exclude='.git' --exclude='config/server.conf' --exclude='config/*.bak' --exclude='config/ui-token' --exclude='config/*.bak-api' -cf - .) \
       | (cd "$dest" && tar -xf -)
   fi
   sed -i 's/\r$//' "$dest"/linux/*.sh "$dest"/docker/entrypoint.sh "$dest"/docker/isle-server
@@ -280,9 +289,75 @@ firewall_rules() {  # add | remove  (uses $CONF for the ports)
   fi
 }
 
+# ---------------------------------------------------------------- web UI ----
+has_systemd() { command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; }
+remove_ui() {
+  [[ -f "$UI_UNIT" ]] || return 0
+  systemctl disable --now "$UI_SERVICE.service" >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/theisle-ui.service
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  ok "Removed the web UI service"
+}
+setup_ui() {  # MODE SCRIPTS_DIR - the web UI service (PRD UI-04)
+  local mode="$1" dir="$2" conf="$2/config/server.conf" user=root group=root home=/root py port who=""
+  if (( DO_UI < 0 )); then remove_ui; return 0; fi
+  (( DO_UI || UI_WAS )) || return 0
+  ensure_python || { warn "python3 is missing - web UI not installed"; return 0; }
+  port="$(conf_get UI_PORT)"; port="${port:-8090}"
+  if [[ "$mode" == native ]]; then user="$SVC_USER"; group="$(id -gn "$SVC_USER")"; home="$SVC_HOME"; who="sudo -u $SVC_USER "; fi
+  py="$(command -v python3)"
+  # the token is created by the user who runs the UI (file mode 600)
+  if [[ "$mode" == native ]]; then
+    as_user "$py" "$dir/tools/isle_api.py" --conf "$conf" --print-token >/dev/null
+  else
+    "$py" "$dir/tools/isle_api.py" --conf "$conf" --print-token >/dev/null
+  fi
+  if ! has_systemd; then
+    warn "systemd not detected - no web UI service. Run it when needed: ${who}isle-server ui"
+    UI_LINE="Web UI      : run '${who}isle-server ui', then open http://127.0.0.1:$port/ (token: ${who}isle-server ui-token)"
+    return 0
+  fi
+  step "Installing the web UI service ($UI_SERVICE)"
+  local after="network-online.target"; if [[ "$mode" == docker ]]; then after="network-online.target docker.service"; fi
+  cat > "$UI_UNIT" <<EOF
+[Unit]
+Description=The Isle server web UI and REST API
+Documentation=file://$dir/UI.md
+Wants=network-online.target
+After=$after
+
+[Service]
+Type=simple
+User=$user
+Group=$group
+WorkingDirectory=$home
+Environment=HOME=$home
+Environment=ISLE_CONF=$conf
+Environment=ISLE_RUNTIME=$mode
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$py $dir/tools/isle_api.py --conf $conf --launcher $dir/linux/isle-server.sh --runtime $mode
+Restart=on-failure
+RestartSec=5
+# a game server started from the UI (without the theisle-server service) survives a UI restart
+KillMode=process
+UMask=0077
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable "$UI_SERVICE.service" >/dev/null 2>&1
+  systemctl restart "$UI_SERVICE.service"
+  ok "Web UI on http://127.0.0.1:$port/ (API docs at /docs)"
+  UI_LINE="Web UI      : http://127.0.0.1:$port/  (token: ${who}isle-server ui-token; remote: ssh -L $port:127.0.0.1:$port <host>)"
+}
+
 # ------------------------------------------------- retire (keeps data) ------
 retire_native() {
   step "Stopping and disabling the native server (data is kept)"
+  remove_ui
   if command -v systemctl >/dev/null 2>&1; then
     systemctl disable --now "$SERVICE.service" "$SERVICE-backup.timer" >/dev/null 2>&1 || true
     rm -f "/etc/systemd/system/$SERVICE.service" "/etc/systemd/system/$SERVICE-backup.service" \
@@ -303,6 +378,7 @@ retire_native() {
 
 retire_docker() {
   step "Stopping and removing the container (the $VOLUME volume is kept)"
+  remove_ui
   if have_docker_cli; then
     docker stop -t 90 "$CONTAINER" >/dev/null 2>&1 || true
     docker rm "$CONTAINER" >/dev/null 2>&1 || true
@@ -671,6 +747,7 @@ do_uninstall() {
   elif [[ -n "$ST_MODE" ]]; then
     write_state "$ST_MODE" "$ST_SCRIPTS_DIR" uninstalled
   fi
+  remove_ui
   (( any )) || warn "Nothing to uninstall was found"
   if (( DO_PURGE )); then
     ok "Purged. A reinstall starts from scratch."
@@ -774,6 +851,7 @@ if [[ "$MODE" == docker ]]; then
 
   if (( DO_START || was_running )); then step "Starting the container"; "$launcher" --docker start; fi
   write_state docker "$DOCKER_SCRIPTS_DIR"
+  setup_ui docker "$DOCKER_SCRIPTS_DIR"
 
   cat <<EOF
 
@@ -784,7 +862,8 @@ ${C_GRN}The Isle dedicated server is installed (Docker).${C_RST}
   Boot        : $boot_note; the container uses restart: unless-stopped
   Data        : Docker volume $VOLUME (kept on uninstall; removed only with --purge)
   Ports       : $(conf_get GAME_PORT)/udp+tcp (game), $(conf_get QUEUE_PORT)/tcp (queue); RCON only on 127.0.0.1:$(conf_get RCON_PORT)
-
+${UI_LINE:+  $UI_LINE
+}
   Docker publishes ports through its own iptables rules (no ufw/firewalld rules needed).
   Remember to forward the game and queue ports on your router / cloud firewall.
 EOF
@@ -956,6 +1035,7 @@ if (( DO_START )); then
   if (( DO_SERVICE )); then systemctl start "$SERVICE"; else native_run start; fi
 fi
 write_state native "$NATIVE_SCRIPTS_DIR"
+setup_ui native "$NATIVE_SCRIPTS_DIR"
 
 # --------------------------------------------------------------- summary ----
 cat <<EOF
@@ -973,7 +1053,8 @@ EOF
 fi
 cat <<EOF
   Ports       : $(conf_get GAME_PORT)/udp+tcp (game), $(conf_get QUEUE_PORT)/tcp (queue), $(conf_get RCON_PORT)/tcp (RCON, keep private)
-
+${UI_LINE:+  $UI_LINE
+}
   Remember to forward the game and queue ports on your router / cloud firewall.
 EOF
 if [[ -n "$MIGRATE_HINT" ]]; then printf '\n  %s\n' "$MIGRATE_HINT"; fi

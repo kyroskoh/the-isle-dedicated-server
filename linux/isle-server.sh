@@ -34,6 +34,9 @@
 #    snapshot     create [--include LIST] [--output F] | restore F [--include LIST]
 #                 [--overwrite] [--all-settings] [--stop] | info F | list
 #                 portable snapshot to move/clone a server (any OS, any runtime)
+#    ui [--host H] [--port P] [--open] [--cert F --key F]
+#                 Web UI + REST API (OpenAPI docs at /docs); see UI.md
+#    ui-token [--rotate]  Show (or replace) the web UI access token
 #    info         Print resolved paths and settings
 #    version      Print the script version
 #    help         This text
@@ -154,6 +157,10 @@ check_config() {
       errors+=("$k='$v' is not a port number (1-65535)")
     fi
   done
+  v="$(cfg UI_PORT)"
+  if [[ -n "$v" ]] && { ! [[ "$v" =~ ^[0-9]+$ ]] || (( 10#$v < 1 || 10#$v > 65535 )); }; then
+    errors+=("UI_PORT='$v' is not a port number (1-65535)")
+  fi
   if [[ ${#errors[@]} -eq 0 ]]; then
     is_true "$(cfg QUEUE_ENABLED)" && [[ "$(cfg GAME_PORT)" == "$(cfg QUEUE_PORT)" ]] \
       && errors+=("GAME_PORT and QUEUE_PORT are both $(cfg GAME_PORT)")
@@ -435,7 +442,7 @@ service_installed() {
 }
 sysctl_do() {
   if [[ $EUID -eq 0 ]]; then systemctl "$@"
-  elif command -v sudo >/dev/null 2>&1; then sudo systemctl "$@"
+  elif command -v sudo >/dev/null 2>&1; then if [[ -t 0 ]]; then sudo systemctl "$@"; else sudo -n systemctl "$@"; fi
   else die "Need root (or sudo) to run: systemctl $*"; fi
 }
 
@@ -535,7 +542,11 @@ cmd_stop() {
 }
 
 cmd_status() {
-  if service_installed; then systemctl --no-pager status "$ISLE_SERVICE" || true; return; fi
+  if service_installed; then
+    systemctl --no-pager status "$ISLE_SERVICE" || true
+    systemctl is-active --quiet "$ISLE_SERVICE" || return 3
+    return 0
+  fi
   if is_running; then
     local wd; wd="$(read_pid "$STATE_DIR/watchdog.pid")"
     ok "Running (server PID $(read_pid "$STATE_DIR/server.pid")${wd:+, watchdog PID $wd})"
@@ -879,6 +890,31 @@ cmd_snapshot() {
     --overrides-dir "$(overrides_dir)" "${owner[@]}" "$@"
 }
 
+api_tool() {  # args... - tools/isle_api.py bound to this config and runtime
+  command -v python3 >/dev/null 2>&1 || die "python3 is required for the web UI"
+  python3 "$REPO_DIR/tools/isle_api.py" --conf "$ISLE_CONF" --launcher "$SCRIPT_DIR/isle-server.sh" \
+    --runtime "${RUNTIME:-native}" "$@"
+}
+
+cmd_ui() {  # web UI + REST API in the foreground (Ctrl+C stops it)
+  local a
+  for a in "$@"; do
+    case "$a" in -h|--help) python3 "$REPO_DIR/tools/isle_api.py" --help; return ;; esac
+  done
+  if [[ $EUID -eq 0 && "${RUNTIME:-native}" == native && -z "${ISLE_ALLOW_ROOT:-}" ]]; then
+    die "Run the web UI as the service user (e.g. 'sudo -u theisle $0 ui') or set ISLE_ALLOW_ROOT=1."
+  fi
+  api_tool "$@"
+}
+
+cmd_ui_token() {
+  case "${1:-}" in
+    "")       api_tool --print-token ;;
+    --rotate) api_tool --rotate-token; warn "Restart the web UI (theisle-ui service) to use the new token" ;;
+    *)        die "Usage: $0 ui-token [--rotate]" ;;
+  esac
+}
+
 run_hooks() {  # EVENT - run enabled plugins' hooks; never fails
   local enabled; enabled="$(dirname "$ISLE_CONF")/plugins/enabled.txt"
   [[ -s "$enabled" ]] || return 0
@@ -897,6 +933,8 @@ config_tool() {  # dispatch shared by both runtimes; returns 1 if CMD is not a c
     preset)     cmd_overlay preset "$@" ;;
     plugins)    cmd_plugins "$@" ;;
     snapshot)   cmd_snapshot "$@" ;;
+    ui)         cmd_ui "$@" ;;
+    ui-token)   cmd_ui_token "$@" ;;
     *) return 1 ;;
   esac
 }

@@ -25,6 +25,9 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 - **Plugin manager** with search, install, update and presets (base, recommended, full). First-party plugins: scheduled restart countdown, Discord notifications, off-site backups, welcome announcement. Third-party catalogs must be SHA-256-pinned. See [PLUGINS.md](PLUGINS.md).
 - **Config validation.** `check` catches bad ports, typos in true/false values, a missing RCON password and malformed SteamIDs before the server launches.
 - **Installers with two modes, native or Docker** (you choose, or pick at the prompt). They set up dependencies, SteamCMD, the server (Steam app `412680`, branch `evrima`), firewall rules and a boot-time service, or a container. Re-run them to update or to switch modes. **Uninstall lets you choose** what to keep: everything (default), everything except the re-downloadable game files, no worlds, or nothing. A later reinstall in either mode picks it up again, importing it from the other mode if needed. `--purge` wipes everything.
+- **Optional web UI and REST API** (`isle-server ui`, `UI.bat`, or at boot with `install.sh --ui` / `Install.bat -UI`).
+  Dashboard, settings, players, roster, profiles, plugins, snapshots, logs and an RCON console, with light/dark/system
+  themes. The OpenAPI 3.1 docs at `/docs` have a "Try it" form. It listens on localhost only and needs a token. See [UI.md](UI.md).
 - **Launchers** for start, stop, restart, status, logs and a console mode.
 - **Watchdog** that restarts the server if it crashes. On Linux this is systemd `Restart=on-failure` or the built-in watchdog. On Windows it's a scheduled task plus a watchdog loop.
 - **Auto-update** through SteamCMD before each start (optional).
@@ -94,6 +97,8 @@ Then forward these ports on your router or cloud firewall:
 | Snapshot (move/clone) | `isle-server snapshot create`, `isle-server snapshot restore <file>` | `Manage.bat Snapshot create` |
 | Switch mode, keep/move data | `sudo ./linux/install.sh --docker --data move` | `Install.bat -Docker -Data Move` |
 | New machine from a snapshot | `sudo ./linux/install.sh --native --from-snapshot <file>` | `Install.bat -Native -FromSnapshot <file>` |
+| Web UI + API (optional) | `sudo -u theisle isle-server ui` (token: `isle-server ui-token`) | `UI.bat` (token: `Manage.bat UiToken`) |
+| Web UI at boot | `sudo ./linux/install.sh --ui` | `Install.bat -UI` |
 | Re-generate ini | `isle-server configure` | `IsleServer.ps1 Configure` |
 | Paths & settings | `isle-server info` | `IsleServer.ps1 Info` |
 | Script version | `isle-server version` | `IsleServer.ps1 Version` |
@@ -113,6 +118,8 @@ windows/IsleServer.ps1       Manager with the same commands as the Linux script
 windows/*.bat                Double-click launchers (Start, Stop, Restart, Update, Backup, ...)
 tools/isle_rcon.py           Cross-platform Evrima RCON client
 tools/isle_plugins.py        Plugin manager (+ tools/isle_sdk.py for plugin authors)
+tools/isle_api.py            REST API + web UI server (OpenAPI 3.1 at /openapi.json, docs at /docs)
+ui/                          Web UI pages (vanilla HTML/CSS/JS, no external assets)
 plugins/                     Plugin catalog and first-party plugins
 config/profiles|presets/     Play-style profiles and stackable presets
 config/rosters/, classes.txt Roster presets and known class names
@@ -127,6 +134,7 @@ docker-compose.yml           Compose service (ports, volume, env settings)
 - [INSTALL.md](INSTALL.md): step-by-step installation, manual installs, and uninstalling
 - [DOCKER.md](DOCKER.md): running in Docker / Docker Compose
 - [MIGRATION.md](MIGRATION.md): switching native <-> Docker with data choices, and snapshots to move or clone a server across machines and OSes
+- [UI.md](UI.md): the optional web UI and REST API (OpenAPI docs at `/docs`)
 - [PLUGINS.md](PLUGINS.md): the plugin manager, first-party plugins, writing plugins, third-party catalogs
 - [CONFIGURATION.md](CONFIGURATION.md): every `server.conf` key and the `Game.ini` key it maps to
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): common problems and fixes

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.4 |
-| **Product version** | 1.9.0 (planned), 1.8.0 (released) |
+| **Product version** | 1.9.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -293,7 +293,7 @@ Priority: **M** = must, **S** = should, **C** = could.
 | UI-02 | M | **UX best practices** | Clear status and next action. Confirmation for destructive actions. Progress for jobs with live output. Toasts for results. Disabled buttons while busy. Form validation with inline errors. Keyboard navigation, visible focus, ARIA labels and live regions, skip link. Responsive down to phones. `prefers-reduced-motion` |
 | UI-03 | M | **Themes** | Light, dark and **system** (follows `prefers-color-scheme` live), saved per browser. Palette: jungle green primary + amber accent with WCAG AA contrast in both themes |
 | UI-04 | M | **Run optionally** | `isle-server ui [--host H] [--port P] [--open]` / `IsleServer.ps1 UI` (+ `UI.bat`), `ui-token [--rotate]`. Installer `--ui` / `-UI` adds a boot service (systemd `theisle-ui` / scheduled task `TheIsleServer-UI`). `UI_HOST`, `UI_PORT` in `server.conf`. The scripts keep working without the UI |
-| UI-05 | M | Tests | `tests/test_api.py` (offline, fake launcher: auth, lockout, validation, problem+json, jobs, config rollback, spec covers every route, headers, static path traversal). `tests/test_ui.py` (Playwright: login, navigation, theme light/dark/system, server actions, screenshots) |
+| UI-05 | M | Tests | `tests/test_api.py` (offline, fake launcher: auth, lockout, validation, problem+json, jobs, config rollback, spec covers every route, headers, static path traversal). `tests/test_ui.mjs` (Playwright: login, navigation, theme light/dark/system, server actions, phone layout, /docs, CSP, screenshots) |
 | DEB-01 | M | **Debian verification** | Every Linux test suite also runs on Debian: the real `debian:bookworm-slim` image in CI (container smoke, e2e, launcher, installer cycle, unit suites inside the image), and a native install with real apt dependencies on `debian:bookworm` |
 
 ## 7. CLI contract
@@ -400,7 +400,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M11 Uninstall data choices (v1.6.0) | INS-20: keep/remove per data category, menu, safety backup, both installers, CI | ✅ Done (v1.6.0). Linux verified by the cycle test (70 checks). Windows native paths covered by Windows CI; Windows Docker-volume paths parse-checked only |
 | M12 Config tools & plugins (v1.7.0) | CFX-01 – CFX-09, PLG-01 – PLG-07 | ✅ Done (v1.7.0). Linux + PowerShell 7 verified locally, Windows PowerShell 5.1 by CI. Live RCON pushes and real Discord/NAS targets need a live server (M6) |
 | M13 Snapshots & mode-switch data choices (v1.8.0) | MIG-01 – MIG-08 | ✅ Done (v1.8.0). Linux cycle (92 checks), snapshot tests, PowerShell 7 suites locally; Windows PowerShell 5.1 and Windows Docker Desktop paths via CI/field test (M6) |
-| **M14 API, web UI & Debian verification (v1.9.0)** | **API-01 – API-05, UI-01 – UI-05, DEB-01** | 🔜 In progress |
+| M14 API, web UI & Debian verification (v1.9.0) | API-01 – API-05, UI-01 – UI-05, DEB-01 | ✅ Done (v1.9.0). API and UI suites on Linux and in the Debian image, Playwright UI test in CI, native Debian install job. Systemd `theisle-ui` unit and the Windows `TheIsleServer-UI` task need a field test (M6) |
 
 ## 12. Traceability matrix
 
@@ -426,9 +426,9 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | PLG-01 – PLG-07 | `tools/isle_plugins.py`, `plugins/`, launcher hook calls | `tests/test_plugins.py` | Done (v1.7) |
 | MIG-01 – MIG-04, MIG-07 | `tools/isle_snapshot.py`, `snapshot` in both launchers | `tests/test_snapshot.py`, Windows CI | Done (v1.8) |
 | MIG-05 – MIG-06 | `install.sh` / `Install.ps1` (`--data`, `--carry`, `--overwrite`, `--from-snapshot`) | `tests/installer-cycle.sh` | Done (v1.8) |
-| API-01 – API-05 | `tools/isle_api.py`, `tools/openapi.json` | `tests/test_api.py` | **Planned v1.9** |
-| UI-01 – UI-04 | `ui/`, `ui` command in both launchers, installer `--ui` | `tests/test_ui.py` (Playwright) | **Planned v1.9** |
-| DEB-01 | CI `docker` (real Debian image), `debian-native` job | CI | **Planned v1.9** |
+| API-01 – API-05 | `tools/isle_api.py` (spec generated at `/openapi.json`) | `tests/test_api.py` | ✅ v1.9 |
+| UI-01 – UI-05 | `ui/`, `ui` command in both launchers, installer `--ui` / `-UI` | `tests/test_ui.mjs` (Playwright), `tests/test_native_debian.sh`, CI | ✅ v1.9 |
+| DEB-01 | CI `docker` (real Debian image), `debian-native` job | `tests/test_native_debian.sh`, CI | ✅ v1.9 |
 | CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |
 | CFG-03/04 | `render_*_ini`/`configure`, `Get-*Ini`/`Set-ServerConfig` | CI smoke (grep sections) | Done |
 | CFG-05 | `check_config` / `Test-ServerConfig`, called by configure/run/start/install | CI smoke (positive + negative) | Done (v1.1) |

@@ -14,7 +14,7 @@ same on Linux and Windows, natively and in Docker:
 |---|---|---|
 | `worlds` | `TheIsle/Saved` (without Logs/Crashes) | Never overwrites an existing world unless you pass `--overwrite`. The old world is then kept as `Saved.pre-snapshot-<time>` |
 | `backups` | Backup archives | Existing files with the same name are kept |
-| `settings` | `server.conf` | **Merged**, without machine-specific keys: paths, `RUNTIME`, `DOCKER_IMAGE`/`DOCKER_BUILD`, `PUID`/`PGID`, `MULTIHOME_IP`. Add `--all-settings` to take everything. The current file is backed up first |
+| `settings` | `server.conf` | **Merged**, without machine-specific keys: paths, `RUNTIME`, `DOCKER_IMAGE`/`DOCKER_BUILD`, `PUID`/`PGID`, `MULTIHOME_IP`, `UI_HOST`/`UI_PORT`. Add `--all-settings` to take everything. The current file is backed up first |
 | `overrides` | `config/overrides/*.ini` | Replaced files are kept as `.bak` |
 | `plugins` | Plugin settings, enabled list, installed plugin code | Restoring plugin code warns that plugins run with the server user's rights |
 

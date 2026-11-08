@@ -15,7 +15,7 @@ jobs:
       - name: ShellCheck
         run: shellcheck -x linux/*.sh tests/*.sh
       - name: Python syntax
-        run: python3 -m py_compile tools/*.py plugins/available/*/plugin.py tests/test_plugins.py
+        run: python3 -m py_compile tools/*.py plugins/available/*/plugin.py tests/*.py tests/fixtures/*.py
       - name: JSON catalogs and manifests
         run: for f in plugins/catalog.json plugins/available/*/plugin.json; do python3 -m json.tool "$f" >/dev/null || exit 1; done
       - name: Config tools (overrides, profiles, presets, admins, whitelist, roster)
@@ -24,6 +24,23 @@ jobs:
         run: python3 -m unittest -v tests/test_plugins.py
       - name: Snapshot engine tests
         run: python3 -m unittest -v tests/test_snapshot.py
+      - name: REST API tests (API-01..05)
+        run: python3 -m unittest -v tests/test_api.py
+      - name: Web UI via the real launcher (UI-04)
+        run: |
+          set -e
+          tmp="$(mktemp -d)"; mkdir -p "$tmp/config"
+          sed -e "s|^SERVER_DIR=|SERVER_DIR=$tmp/srv|" -e 's|^RCON_PASSWORD=|RCON_PASSWORD=ci-pw|' config/server.conf.example > "$tmp/config/server.conf"
+          export ISLE_CONF="$tmp/config/server.conf" ISLE_NO_SYSTEMD=1
+          token="$(linux/isle-server.sh ui-token)"
+          [ "$(stat -c %a "$tmp/config/ui-token")" = 600 ]
+          linux/isle-server.sh ui --port 8095 & pid=$!
+          for i in $(seq 1 50); do curl -fsS http://127.0.0.1:8095/api/v1/health && break; sleep 0.2; done
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8095/api/v1/status)" = 401 ]
+          curl -fsS -H "Authorization: Bearer $token" http://127.0.0.1:8095/api/v1/status | grep -q '"running": false'
+          curl -fsS http://127.0.0.1:8095/openapi.json | python3 -c 'import json,sys; assert json.load(sys.stdin)["openapi"] == "3.1.0"'
+          curl -fsS http://127.0.0.1:8095/docs | grep -q docs.js
+          kill $pid
       - name: Render config with a fake server
         run: |
           set -e
@@ -110,6 +127,10 @@ jobs:
           if docker run --rm -v isle-ci:/data -e UPDATE_ON_START=false -e GAME_PORT=99999 theisle-server:ci; then
             echo "container accepted GAME_PORT=99999"; exit 1
           fi
+      - name: Unit suites inside the Debian image (DEB-01)
+        run: |
+          docker run --rm -v "$PWD":/src:ro --entrypoint sh theisle-server:ci -c \
+            'cp -a /src /repo && cd /repo && ISLE_ALLOW_ROOT=1 bash tests/test_config_tools.sh && python3 -m unittest -v tests/test_plugins.py tests/test_snapshot.py tests/test_api.py'
       - name: End-to-end through the launcher with an RCON-speaking fake server
         run: ISLE_TEST_I_UNDERSTAND=1 IMAGE=theisle-server:ci bash tests/test_container_e2e.sh
       - name: Launcher in docker mode (LCH-01..08)
@@ -149,6 +170,15 @@ jobs:
           $L restore "$(basename "$backup")"
           $L --native info | grep -q 'Runtime *: native'
           if ISLE_RUNTIME=podman $L status; then echo "accepted RUNTIME=podman"; exit 1; fi
+
+  debian-native:
+    # Native install on Debian with the real apt dependencies (PRD DEB-01)
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native install / admin tools / plugins / snapshot cycle on Debian 12
+        run: ISLE_TEST_I_UNDERSTAND=1 bash tests/test_native_debian.sh
 
   installer-cycle:
     runs-on: ubuntu-latest
@@ -223,6 +253,8 @@ jobs:
           $env:ISLE_RUNTIME = 'podman'
           .\windows\IsleServer.ps1 Status -ConfigPath $conf
           if ($LASTEXITCODE -ne 1) { Write-Host 'accepted RUNTIME=podman'; exit 1 }
+          # The step otherwise exits with the (intentionally non-zero) last exit code.
+          exit 0
       - name: Config tools (PowerShell 5.1)
         shell: powershell
         run: |
@@ -238,6 +270,32 @@ jobs:
         run: |
           python -m unittest -v tests\test_snapshot.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: REST API tests (Windows Python)
+        shell: powershell
+        run: |
+          python -m unittest -v tests\test_api.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Web UI via IsleServer.ps1 (UI-04)
+        shell: powershell
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'uiconf'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $conf = Join-Path $dir 'server.conf'
+          (Get-Content config\server.conf.example) -replace '^RCON_PASSWORD=$', 'RCON_PASSWORD=ci-pw' | Set-Content $conf
+          $token = (powershell -NoProfile -ExecutionPolicy Bypass -File windows\IsleServer.ps1 UiToken -ConfigPath $conf | Select-Object -Last 1).Trim()
+          if ($token.Length -lt 32) { Write-Host "no token: $token"; exit 1 }
+          $p = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'windows\IsleServer.ps1', 'UI', '--port', '8096', '-ConfigPath', $conf
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) { try { Invoke-RestMethod http://127.0.0.1:8096/api/v1/health | Out-Null; $ok = $true; break } catch { Start-Sleep -Milliseconds 500 } }
+          if (-not $ok) { Write-Host 'UI did not start'; exit 1 }
+          $s = Invoke-RestMethod http://127.0.0.1:8096/api/v1/status -Headers @{ Authorization = "Bearer $token" }
+          if ($s.running) { Write-Host 'expected a stopped server'; exit 1 }
+          $a = Invoke-RestMethod http://127.0.0.1:8096/api/v1/admins -Method Post -ContentType 'application/json' -Body '{"ids":["76561198000000001"]}' -Headers @{ Authorization = "Bearer $token" }
+          if (-not $a.ok) { Write-Host 'admins add failed'; exit 1 }
+          if (-not (Select-String -Path $conf -Pattern '^ADMIN_STEAM_IDS=76561198000000001$' -Quiet)) { Write-Host 'admin not written'; exit 1 }
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*isle_api.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          exit 0
       - name: Snapshots via IsleServer.ps1 (incl. a Linux-made snapshot)
         shell: powershell
         run: |
@@ -310,3 +368,25 @@ jobs:
           if ($LASTEXITCODE -ne 1 -or -not (Test-Path $root)) { Write-Host 'purge ran without confirmation'; exit 1 }
           .\windows\Install.ps1 -Uninstall -Purge -Yes -InstallRoot $root
           if ($LASTEXITCODE -ne 0 -or (Test-Path $root)) { Write-Host 'purge -Yes did not remove the folder'; exit 1 }
+          exit 0
+
+  web-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright + Chromium
+        run: |
+          npm install --no-save --no-package-lock playwright@1.48.2
+          npx playwright install --with-deps chromium
+      - name: Web UI in a browser (UI-01..05)
+        run: UI_SCREENSHOTS="$RUNNER_TEMP/ui-shots" node tests/test_ui.mjs
+      - name: Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: ${{ runner.temp }}/ui-shots
+          if-no-files-found: ignore

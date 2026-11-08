@@ -18,5 +18,16 @@ Please open a private security advisory on GitHub
   modify rights on the install folders.
 - **Keep the OS and the game updated.** `UPDATE_ON_START=true` updates the game on every restart.
 - **Open only the ports you need:** the game port (UDP/TCP) and the queue port (TCP).
+- **Web UI / API (optional, see [UI.md](UI.md)).** It listens on `127.0.0.1` only by default. Reach it with an
+  SSH tunnel or put a TLS reverse proxy in front, or use `--cert/--key`. Never expose it over plain HTTP.
+  - **Token:** every route except `/api/v1/health` needs the Bearer token in `config/ui-token` (mode 600, never
+    copied by the installers or carried by snapshots). Ten wrong tokens in a minute lock the address out for a
+    minute. Rotate the token with `isle-server ui-token --rotate`.
+  - **What the API won't do:**
+    - change machine-specific settings (paths, runtime, UI address)
+    - run commands through a shell (the launcher is called with an argument list)
+    - set cookies or allow other origins (no CORS unless `--cors ORIGIN`)
+  - **Headers:** pages are sent with a strict Content-Security-Policy (`'self'` only, no inline scripts),
+    `X-Frame-Options: DENY`, `nosniff` and `no-referrer`.
 - The sudoers rule the Linux installer adds lets the service user run only
   `systemctl start|stop|restart|status theisle-server`. Skip it with `--no-sudoers`.

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>API docs · The Isle Server</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/theme.js"></script>
+  <script src="/assets/docs.js" defer></script>
+</head>
+<body>
+<svg width="0" height="0" class="sr-only" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  </defs>
+</svg>
+<a class="skip" href="#ops">Skip to operations</a>
+<header class="topbar">
+  <a class="brand" href="/"><img src="/assets/favicon.svg" alt=""><span><strong>The Isle Server API</strong><span id="api-version">OpenAPI</span></span></a>
+  <span class="spacer"></span>
+  <a class="btn sm" href="/openapi.json" download="theisle-openapi.json">openapi.json</a>
+  <a class="btn sm" href="/">Open the UI</a>
+  <div class="segmented" role="radiogroup" aria-label="Color theme" id="theme-switch">
+    <label title="Light"><input type="radio" name="theme" value="light" aria-label="Light theme"><svg aria-hidden="true"><use href="#i-sun"/></svg></label>
+    <label title="System"><input type="radio" name="theme" value="system" aria-label="System theme"><svg aria-hidden="true"><use href="#i-monitor"/></svg></label>
+    <label title="Dark"><input type="radio" name="theme" value="dark" aria-label="Dark theme"><svg aria-hidden="true"><use href="#i-moon"/></svg></label>
+  </div>
+</header>
+<main class="docs">
+  <section class="card stack" aria-labelledby="intro-title">
+    <h1 id="intro-title">The Isle Dedicated Server API</h1>
+    <p id="api-description" class="muted"></p>
+    <form class="field" id="auth-form" autocomplete="off">
+      <label for="docs-token">Bearer token for “Try it”</label>
+      <div class="input-group">
+        <input id="docs-token" type="password" spellcheck="false" placeholder="isle-server ui-token" autocomplete="current-password">
+        <button class="btn primary" type="submit" id="auth-save">Use token</button>
+      </div>
+      <span class="hint" id="auth-state">Shared with the UI in this tab (session storage). Not needed for <code>/health</code>.</span>
+    </form>
+    <input type="search" id="op-filter" placeholder="Filter operations… (e.g. snapshot, POST)" aria-label="Filter operations">
+  </section>
+  <div id="ops"><p class="muted" role="status">Loading the OpenAPI document…</p></div>
+</main>
+</body>
+</html>

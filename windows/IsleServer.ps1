@@ -41,6 +41,9 @@
     Plugins        list|search|info|install|remove|enable|disable|update|preset|run|config|sources
     Snapshot       create [--include LIST] [--output F] | restore F [--include LIST] [--overwrite]
                    [--all-settings] [--stop] | info F | list   (move/clone to any OS or runtime)
+    UI             Web UI + REST API (OpenAPI docs at /docs). Options after UI:
+                   --host H --port P --open --cert F --key F (see UI.md)
+    UiToken        Show the web UI access token (UiToken --rotate replaces it)
     Info           Print resolved paths and settings
     Version        Print the script version
 
@@ -67,7 +70,7 @@ param(
     [ValidateSet('Install', 'Update', 'Validate', 'Check', 'Configure', 'Start', 'Stop', 'Restart', 'Status', 'Run',
                  'Logs', 'Backup', 'Restore', 'Rcon', 'Save', 'Firewall', 'RemoveFirewall',
                  'InstallService', 'RemoveService', 'Info', 'Version', 'Help',
-                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot')]
+                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot', 'UI', 'UiToken')]
     [string]$Command = 'Help',
 
     [string]$ConfigPath,
@@ -171,6 +174,11 @@ function Test-ServerConfig {
         if (-not ($v -match '^\d+$' -and [int]::TryParse($v, [ref]$n) -and $n -ge 1 -and $n -le 65535)) {
             $errors.Add("$k='$v' is not a port number (1-65535)"); $portsOk = $false
         }
+    }
+    $v = C 'UI_PORT'
+    $n = 0
+    if ($v -and -not ($v -match '^\d+$' -and [int]::TryParse($v, [ref]$n) -and $n -ge 1 -and $n -le 65535)) {
+        $errors.Add("UI_PORT='$v' is not a port number (1-65535)")
     }
     if ($portsOk) {
         if ((Test-True (C 'QUEUE_ENABLED')) -and (C 'GAME_PORT') -eq (C 'QUEUE_PORT')) { $errors.Add("GAME_PORT and QUEUE_PORT are both $(C 'GAME_PORT')") }
@@ -1191,6 +1199,17 @@ function Invoke-ConfigTool([string]$cmd) {
             $base = @((Join-Path $RepoDir 'tools\isle_snapshot.py'), '--conf', $ConfigPath, '--runtime', (Get-Runtime),
                       '--launcher', (Join-Path $ScriptDir 'IsleServer.ps1'), '--server-dir', $ServerDir,
                       '--backup-dir', $BackupDir, '--overrides-dir', (Get-OverridesDir))
+            $rc = Invoke-Python ($base + $a)
+            exit $rc
+        }
+        { $_ -in 'UI', 'UiToken' } {
+            $base = @((Join-Path $RepoDir 'tools\isle_api.py'), '--conf', $ConfigPath, '--runtime', (Get-Runtime),
+                      '--launcher', (Join-Path $ScriptDir 'IsleServer.ps1'))
+            $a = @(); if ($Items) { $a = @($Items) }
+            if ($cmd -eq 'UiToken') {
+                if ($a -contains '--rotate') { $a = @('--rotate-token'); Write-Warn 'Restart the web UI (TheIsleServer-UI task) to use the new token' }
+                else { $a = @('--print-token') }
+            }
             $rc = Invoke-Python ($base + $a)
             exit $rc
         }

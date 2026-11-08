@@ -150,3 +150,10 @@ AUTO_RESTART=true
 BACKUP_RETENTION=10
 # Send "save" via RCON before stopping / backing up (needs RCON + python3).
 SAVE_BEFORE_STOP=true
+
+# ----------------------------------------------------------------- Web UI ----
+# Web UI + REST API ("isle-server ui", Windows: "IsleServer.ps1 UI"; see UI.md).
+# 127.0.0.1 = this machine only (recommended; reach it remotely through an SSH
+# tunnel or a TLS reverse proxy). 0.0.0.0 = every interface - use with TLS only.
+UI_HOST=127.0.0.1
+UI_PORT=8090

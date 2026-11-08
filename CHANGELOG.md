@@ -6,6 +6,56 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-08
+
+Planned in [PRD.md](PRD.md) as milestone M14 (requirements API-01 to API-05, UI-01 to UI-05, DEB-01). Guide: [UI.md](UI.md).
+
+### Added
+- **REST API** (`tools/isle_api.py`, Python standard library only) wrapping the launcher. It covers status,
+  lifecycle actions as jobs, logs, RCON, settings, admins, whitelist, roster, profiles, presets, plugins and
+  snapshots.
+  - **OpenAPI 3.1:** the document is at `/openapi.json`, with a self-hosted interactive viewer at **`/docs`**
+    ("Try it", curl line, filter).
+  - **Conventions:** `/api/v1` versioning, RFC 7807 problem details, `202 Accepted` + job polling, `409` for a
+    second lifecycle action, `X-Request-ID`, an access log, and an unauthenticated `/health`.
+  - **Settings:** PATCH validates with `check` and rolls back on errors, masks secrets, and refuses machine-specific
+    keys.
+- **Web UI** at `/`: Dashboard, Settings, Players, Roster, Profiles & presets, Plugins, Snapshots & backups, Logs and
+  RCON console.
+  - **Look:** a jungle-green and amber palette with light, dark and system themes (system follows the OS live; the
+    choice is remembered).
+  - **Accessibility:** WCAG AA contrast, keyboard and screen-reader friendly, responsive down to phones, and
+    reduced motion respected.
+  - **Behaviour:** confirmations for disruptive actions, and live job output and toasts.
+- **Security:**
+  - Binds to 127.0.0.1 by default.
+  - Bearer token in `config/ui-token` (mode 600), compared in constant time.
+  - Lockout after 10 wrong tokens per minute.
+  - Strict CSP and security headers; no cookies, no CORS by default.
+  - 64 KB body limit.
+  - Optional TLS (`--cert/--key`) and HSTS.
+- **Run it optionally:** `isle-server ui [--host --port --open --cert --key]`, `isle-server ui-token [--rotate]`,
+  `IsleServer.ps1 UI` / `UiToken`, and `windows\UI.bat`.
+  - **At boot:** `install.sh --ui` (systemd `theisle-ui`, as the service user in native mode) and
+    `Install.ps1 -UI` (scheduled task `TheIsleServer-UI`). The service is kept on re-runs and mode switches,
+    removed with `--no-ui` / `-NoUI` and on uninstall.
+- `UI_HOST` / `UI_PORT` in `server.conf` (`UI_PORT` validated by `check`).
+- **Tests:**
+  - `tests/test_api.py`: 26 offline tests with a fake launcher, covering auth, lockout, validation, rollback,
+    jobs/409, spec covers every route, headers and path traversal.
+  - `tests/test_ui.mjs`: Playwright test with 40+ checks, covering sign-in, every page, themes, actions, settings,
+    phone layout, `/docs` "Try it", CSP and console errors.
+- **Debian verification (DEB-01):** every Linux suite also runs on Debian bookworm.
+  - New CI job `debian-native` runs a real native install with apt dependencies in `debian:bookworm`
+    (`tests/test_native_debian.sh`, including the web UI as the service user).
+  - The unit suites also run inside the Debian-based image.
+
+### Fixed
+- `isle-server status` returned 0 for a stopped systemd service. It now returns 3 like the other modes.
+- With a systemd service, the launcher uses `sudo -n` when there is no terminal, so it never waits for a password.
+- `tests/installer-cycle.sh` helpers no longer depend on a removed image (they use `debian:bookworm-slim`).
+- Windows CI steps that end with an expected non-zero exit code no longer fail the job.
+
 ## [1.8.0] - 2026-11-08
 
 Planned in [PRD.md](PRD.md) as milestone M13 (requirements MIG-01 to MIG-08). Guide: [MIGRATION.md](MIGRATION.md).
