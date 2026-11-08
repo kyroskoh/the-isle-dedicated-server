@@ -97,6 +97,12 @@ code, pre, kbd { font-family: var(--mono); font-size: .875em; }
 .skip { position: absolute; left: -999px; top: 0; background: var(--surface); padding: .5rem 1rem; z-index: 100; }
 .skip:focus { left: .5rem; top: .5rem; }
 [hidden] { display: none !important; }
+/* Long names, IDs, paths and values wrap inside their box instead of overflowing it (tests/test_ui_overflow.mjs). */
+/* break-word (not anywhere): only words that cannot fit are split, so short words never break mid-word */
+h1, h2, h3, p, label, legend, summary, dt, dd, li, td, .hint, .key, .brand span, .toast p { overflow-wrap: break-word; word-break: normal; }
+.badge, .pill, th { white-space: nowrap; }
+.badge, .pill { flex: none; }
+.row > *, .card-head > *, .page-head > *, .hero > *, .input-group > *, .grid > *, .stack > * { min-width: 0; max-width: 100%; }
 
 /* ------------------------------------------------------------------ layout */
 .app { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
@@ -137,8 +143,8 @@ code, pre, kbd { font-family: var(--mono); font-size: .875em; }
 .page-head input[type="search"] { width: min(280px, 100%); }
 
 .grid { display: grid; gap: 1rem; }
-.grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
-.grid.cols-3 { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); }
+.grid.cols-3 { grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); }
 .card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 1.1rem 1.2rem; box-shadow: var(--shadow); min-width: 0;
@@ -155,7 +161,8 @@ code, pre, kbd { font-family: var(--mono); font-size: .875em; }
   display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
   min-height: 36px; padding: .4rem .9rem; border-radius: var(--radius-sm);
   border: 1px solid var(--b-bd); background: var(--b-bg); color: var(--b-fg);
-  font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; white-space: nowrap;
+  font: inherit; font-weight: 600; cursor: pointer; text-decoration: none;
+  max-width: 100%; text-align: center; overflow-wrap: break-word;
   transition: background-color .15s, border-color .15s, color .15s;
 }
 .btn svg { width: 16px; height: 16px; }
@@ -225,24 +232,34 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); widt
 .hero .dot.on { background: var(--primary); box-shadow: 0 0 0 5px var(--primary-soft); }
 .hero .big { font-size: 1.35rem; font-weight: 700; }
 
-dl.kv { display: grid; grid-template-columns: minmax(120px, max-content) minmax(0, 1fr); gap: .35rem 1rem; margin: 0; }
+dl.kv { display: grid; grid-template-columns: fit-content(45%) minmax(0, 1fr); gap: .35rem 1rem; margin: 0; }
 dl.kv dt { color: var(--muted); font-size: .875rem; }
-dl.kv dd { margin: 0; overflow-wrap: anywhere; font-size: .875rem; }
+dl.kv dd { margin: 0; overflow-wrap: anywhere; font-size: .875rem; min-width: 0; }
 
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .55rem .6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
 th { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); font-weight: 600; }
 tbody tr:hover { background: var(--surface-2); }
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; position: relative; }  /* relative: clips absolutely positioned (sr-only) cells too */
 td.actions { text-align: right; white-space: nowrap; }
+td.data { overflow-wrap: anywhere; min-width: 12rem; }  /* names and descriptions are data: wrap them, keep the columns visible */
+/* phones: each row becomes a labelled card instead of a table that scrolls sideways */
+@media (max-width: 600px) {
+  .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; width: 100%; }
+  .table-wrap thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .table-wrap tr { border-bottom: 1px solid var(--border); padding: .5rem 0; }
+  .table-wrap td { border: 0; padding: .2rem 0; min-width: 0; }
+  .table-wrap td[data-label]:not(.data)::before { content: attr(data-label); display: inline-block; min-width: 5.5rem; color: var(--muted); font-size: .8rem; }
+  .table-wrap td.actions { text-align: left; white-space: normal; }
+}
 
 .list { list-style: none; margin: 0; padding: 0; }
-.list li { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .45rem 0; border-bottom: 1px solid var(--border); }
+.list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem; padding: .45rem 0; border-bottom: 1px solid var(--border); }
 .list li:last-child { border-bottom: 0; }
-.list code { overflow-wrap: anywhere; }
+.list code { overflow-wrap: anywhere; min-width: min(17ch, 100%); }
 .empty { color: var(--muted); padding: .75rem 0; text-align: center; font-size: .9rem; }
 
-.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .4rem; }
+.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr)); gap: .4rem; }
 .chip { display: flex; align-items: center; gap: .5rem; padding: .45rem .6rem; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; background: var(--surface); min-width: 0; }
 .chip > input { flex: none; }
 .chip > span:not(.badge) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -258,14 +275,13 @@ pre.output, pre.log {
 pre.log { max-height: 65vh; }
 
 .settings-group { margin-bottom: 1rem; }
-.settings-group .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem 1.25rem; }
+.settings-group .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 1rem 1.25rem; }
 .setting.changed input, .setting.changed select { border-color: var(--accent-strong); box-shadow: 0 0 0 1px var(--accent-strong); }
 details.settings-group > summary { cursor: pointer; padding: .2rem 0; }
 details.settings-group[open] > summary { margin-bottom: 1rem; }
-.setting .hint { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .setting .key { font-family: var(--mono); font-size: .75rem; color: var(--muted); font-weight: 400; }
 .sticky-bar {
-  position: sticky; bottom: 0; z-index: 4; display: flex; gap: .75rem; align-items: center; justify-content: flex-end;
+  position: sticky; bottom: 0; z-index: 4; display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; justify-content: flex-end;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .65rem 1rem; box-shadow: var(--shadow); margin-top: 1rem;
 }
 .sticky-bar .muted { margin-right: auto; }
@@ -308,11 +324,11 @@ dialog.wide { width: min(860px, calc(100vw - 2rem)); }
 
 /* --------------------------------------------------------------- API docs */
 .docs { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
-.docs header.topbar { position: sticky; }
+.topbar.docs-top { flex-wrap: wrap; row-gap: .5rem; }
 .op { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); margin-bottom: .5rem; }
 .op > summary { list-style: none; display: flex; align-items: center; gap: .75rem; padding: .55rem .8rem; cursor: pointer; }
 .op > summary::-webkit-details-marker { display: none; }
-.op > summary .path { font-family: var(--mono); font-size: .9rem; font-weight: 600; overflow-wrap: anywhere; }
+.op > summary .path { font-family: var(--mono); font-size: .9rem; font-weight: 600; min-width: 0; }
 .op > summary .sum { color: var(--muted); font-size: .9rem; margin-left: auto; text-align: right; }
 .op[open] > summary { border-bottom: 1px solid var(--border); }
 .op .op-body { padding: .9rem; display: flex; flex-direction: column; gap: .9rem; }

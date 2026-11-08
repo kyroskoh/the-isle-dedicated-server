@@ -62,7 +62,7 @@
   function operation(path, method, op) {
     var params = op.parameters || [];
     var needsAuth = !(op.security && op.security.length === 0);
-    var summary = h("summary", null, h("span", { class: "method " + method, text: method.toUpperCase() }), h("span", { class: "path", text: path }),
+    var summary = h("summary", null, h("span", { class: "method " + method, text: method.toUpperCase() }), pathWithBreaks(path),
       needsAuth ? h("span", { class: "lock", title: "Needs the Bearer token" }, svgUse("i-lock")) : null, h("span", { class: "sum", text: op.summary || "" }));
     var body = h("div", { class: "op-body" });
     var details = h("details", { class: "op", id: op.operationId }, summary, body);
@@ -146,6 +146,15 @@
       body.appendChild(responses);
     });
     return details;
+  }
+  // break long paths after "/" rather than inside a word
+  function pathWithBreaks(path) {
+    var span = h("span", { class: "path" });
+    path.split("/").forEach(function (part, i) {
+      if (i) { span.appendChild(document.createTextNode("/")); span.appendChild(document.createElement("wbr")); }
+      span.appendChild(document.createTextNode(part));
+    });
+    return span;
   }
   function svgUse(id) {
     var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");

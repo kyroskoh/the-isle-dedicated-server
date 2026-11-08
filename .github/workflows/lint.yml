@@ -383,6 +383,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Web UI in a browser (UI-01..05)
         run: UI_SCREENSHOTS="$RUNNER_TEMP/ui-shots" node tests/test_ui.mjs
+      - name: Layout edge cases - long text at 320-1440 px (UI-02)
+        run: node tests/test_ui_overflow.mjs
       - name: Screenshots
         if: always()
         uses: actions/upload-artifact@v4

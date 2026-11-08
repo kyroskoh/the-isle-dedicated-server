@@ -24,7 +24,8 @@ Bug reports, distro fixes and new config keys are welcome.
    the local `theisle` container and volume). Then run the fast tests: `bash tests/test_config_tools.sh` and `python3 -m unittest tests/test_plugins.py`.
    On Windows run `tests\test_config_tools.ps1`. New plugins go in `plugins/available/<name>/` plus an entry in
    `plugins/catalog.json` (see PLUGINS.md).
-9. API or web UI changes: `python3 -m unittest tests/test_api.py` and `node tests/test_ui.mjs` (Playwright +
+9. API or web UI changes: `python3 -m unittest tests/test_api.py`, `node tests/test_ui.mjs` and `node tests/test_ui_overflow.mjs`
+   (long names, IDs and values at 320-1440 px must not overflow, clip or break words) (Playwright +
    Chromium: `npm i playwright@1.48.2 && npx playwright install chromium`). If the UI looks different, regenerate
    the documentation screenshots with `node tests/ui_screenshots.mjs` (writes `docs/images/ui/*.png`; needs Pillow
    to shrink them).

@@ -169,6 +169,7 @@
       pill.textContent = s.busy_job ? "Working…" : (s.running ? "Running" : "Stopped");
       if (s.busy_job) pill.className = "pill warn";
       $("#server-name").textContent = s.server_name || "The Isle";
+      $("#server-name").title = s.server_name || "";
       $("#runtime-badge").textContent = s.runtime === "docker" ? "Docker" : "Native";
       document.dispatchEvent(new CustomEvent("isle-status", { detail: s }));
     }, function (e) {
@@ -433,7 +434,7 @@
       d.known.forEach(function (k) {
         var cb = h("input", { type: "checkbox", checked: chosen[k.name] });
         cb.addEventListener("change", function () { chosen[k.name] = cb.checked; paint(); });
-        grid.appendChild(h("label", { class: "chip" }, cb, h("span", { text: k.name }),
+        grid.appendChild(h("label", { class: "chip", title: k.name + (k.diet ? " (" + k.diet + ")" : "") }, cb, h("span", { text: k.name }),
           k.diet ? h("span", { class: "badge diet " + (k.diet === "carnivore" ? "amber" : k.diet === "herbivore" ? "green" : ""), text: k.diet }) : null));
       });
       var setAll = function (v) { grid.querySelectorAll("input").forEach(function (cb, i) { cb.checked = v; chosen[d.known[i].name] = v; }); paint(); };
@@ -547,7 +548,7 @@
       el.appendChild(h("section", { class: "card" }, h("h2", { text: "Presets" }), presets));
       var tbody = h("tbody");
       d.plugins.forEach(function (p) {
-        var actions = h("td", { class: "actions" });
+        var actions = h("td", { class: "actions", "data-label": "Actions" });
         var act = function (op, label, kind, confirmText) {
           var b = btn(label, { kind: "sm " + (kind || ""), aria: label + " " + p.name });
           b.addEventListener("click", function () {
@@ -567,10 +568,10 @@
           act("remove", "Remove", "danger", "Its code is removed; its settings are kept.");
         }
         var tr = h("tr", null,
-          h("td", null, h("strong", { text: p.name }), h("br"), h("span", { class: "muted small", text: p.description })),
-          h("td", { text: p.version || "–" }),
-          h("td", null, h("span", { class: "badge", text: p.source })),
-          h("td", null, p.installed ? h("span", { class: "badge " + (p.enabled ? "green" : ""), text: p.enabled ? "enabled" : "installed" }) : h("span", { class: "muted small", text: "available" })),
+          h("td", { class: "data", "data-label": "Plugin" }, h("strong", { text: p.name }), h("br"), h("span", { class: "muted small", text: p.description })),
+          h("td", { "data-label": "Version", text: p.version || "–" }),
+          h("td", { "data-label": "Source" }, h("span", { class: "badge", text: p.source })),
+          h("td", { "data-label": "State" }, p.installed ? h("span", { class: "badge " + (p.enabled ? "green" : ""), text: p.enabled ? "enabled" : "installed" }) : h("span", { class: "muted small", text: "available" })),
           actions);
         tr.dataset.search = (p.name + " " + p.description + " " + (p.tags || []).join(" ")).toLowerCase();
         tbody.appendChild(tr);
@@ -657,9 +658,10 @@
             });
           });
           var src = s.source ? [s.source.os, s.source.runtime, s.source.host].filter(Boolean).join(" · ") : "–";
-          tbody.appendChild(h("tr", null, h("td", null, h("code", { text: s.name }), h("br"), h("span", { class: "muted small", text: (s.server_name || "") })),
-            h("td", { text: fmtTime(s.created) }), h("td", { text: src }), h("td", { text: (s.parts || []).join(", ") }), h("td", { text: fmtBytes(s.bytes) }),
-            h("td", { class: "actions" }, restore, " ", del)));
+          tbody.appendChild(h("tr", null, h("td", { class: "data", "data-label": "Snapshot" }, h("code", { text: s.name }), h("br"), h("span", { class: "muted small", text: (s.server_name || "") })),
+            h("td", { "data-label": "Created", text: fmtTime(s.created) }), h("td", { "data-label": "From", text: src }),
+            h("td", { "data-label": "Parts", text: (s.parts || []).join(", ") }), h("td", { "data-label": "Size", text: fmtBytes(s.bytes) }),
+            h("td", { class: "actions", "data-label": "Actions" }, restore, " ", del)));
         });
         list.appendChild(h("div", { class: "table-wrap" }, h("table", null, h("thead", null, h("tr", null,
           ["Snapshot", "Created", "From", "Parts", "Size"].map(function (t) { return h("th", { scope: "col", text: t }); }), h("th", null, h("span", { class: "sr-only", text: "Actions" })))), tbody)));
@@ -748,7 +750,7 @@
   };
   function navigate() {
     if (!state.token) return;
-    var path = (location.hash || "#/").slice(1) || "/";
+    var path = ((location.hash || "#/").slice(1) || "/").split("?")[0] || "/";
     var r = ROUTES[path] || ROUTES["/"];
     if (typeof state.cleanup === "function") { try { state.cleanup(); } catch (e) { /* ignore */ } }
     var content = clear($("#content"));
