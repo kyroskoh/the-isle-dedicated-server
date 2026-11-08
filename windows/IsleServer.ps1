@@ -145,7 +145,7 @@ function Get-LogFiles([string]$kind) {
 function Remove-OldLogs([string]$kind) {
     $keep = 0; [void][int]::TryParse((C 'LOG_RETENTION' '14'), [ref]$keep)
     if ($keep -le 0) { return }
-    $all = Get-LogFiles $kind
+    $all = @(Get-LogFiles $kind)   # @(): PS 5.1 unwraps a single result, and .Count on it throws under StrictMode
     if ($all.Count -gt $keep) { $all | Select-Object -First ($all.Count - $keep) | ForEach-Object { Remove-Item (Join-Path $script:LogDir $_.Name) -Force -ErrorAction SilentlyContinue } }
 }
 function Remove-OldGameLogs {

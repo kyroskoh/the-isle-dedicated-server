@@ -27,7 +27,9 @@ const PY = process.env.PYTHON || (process.platform === "win32" ? "python" : "pyt
 const TOKEN = "ui-test-token-0123456789abcdef";
 const SHOTS = process.env.UI_SCREENSHOTS || "";
 let fails = 0;
+let step = "start";
 async function ck(label, fn) {
+  step = label;
   let ok = false;
   try { ok = Boolean(await fn()); } catch (e) { console.log("    error: " + e.message.split("\n")[0]); }
   console.log((ok ? "  PASS " : "  FAIL ") + label);
@@ -84,8 +86,11 @@ const problems = [];
 async function newPage(opts = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 }, deviceScaleFactor: SHOTS ? 2 : 1, ...opts });
   const page = await ctx.newPage();
-  page.on("console", (m) => { if (m.type() === "error" && !/401|409|502|Failed to load resource/.test(m.text())) problems.push(m.text()); });
-  page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
+  page.on("console", (m) => { if (m.type() === "error" && !/401|409|502|Failed to load resource/.test(m.text())) problems.push(`[after "${step}"] ${m.text()}`); });
+  page.on("pageerror", (e) => problems.push(`[after "${step}"] pageerror: ${e.message}`));
+  // details of every CSP violation (directive, source, sample) to tell app code from test tooling
+  await page.addInitScript(() => document.addEventListener("securitypolicyviolation", (e) =>
+    console.error(`CSP ${e.violatedDirective} blocked=${e.blockedURI} source=${e.sourceFile}:${e.lineNumber} sample=${(e.sample || "").slice(0, 80)}`)));
   return { ctx, page };
 }
 const shot = async (page, name) => { if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, name + ".png"), fullPage: false, caret: "initial", animations: "allow" }); } };
@@ -95,7 +100,7 @@ const conf_ = (k) => (readFileSync(conf, "utf8").match(new RegExp("^" + k + "=(.
 try {
   console.log("## sign-in");
   const { ctx, page } = await newPage({ colorScheme: "light" });
-  await page.goto(BASE + "/");
+  await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
   await ck("login form shown", () => page.isVisible("#login-form"));
   await shot(page, "01-login-light");
   await page.fill("#token", "wrong-token-xxxxxxxxxx");
@@ -115,7 +120,7 @@ try {
   await shot(page, "02-dashboard-dark");
   await page.click('#theme-switch input[value="light"]', { force: true });
   await ck("light overrides a dark OS", async () => (await page.getAttribute("html", "data-theme")) === "light" && (await bg(page)) === "rgb(244, 246, 242)");
-  await page.reload();
+  await page.reload({ waitUntil: "domcontentloaded" });
   await ck("theme choice remembered", async () => (await page.getAttribute("html", "data-theme")) === "light" && await page.isChecked('#theme-switch input[value="light"]'));
   await page.click('#theme-switch input[value="dark"]', { force: true });
   await page.emulateMedia({ colorScheme: "light" });
@@ -199,19 +204,19 @@ try {
   await page.fill("#date-format-custom", "EEEE d MMMM 'at' HH:mm ZZ");
   await ck("custom pattern preview", async () => / at \d{2}:\d{2} UTC$/.test(await page.textContent("output.preview")));
   await page.click("#modal button:has-text('Save')");
-  await page.reload();
+  await page.reload({ waitUntil: "domcontentloaded" });
   await ck("preferences survive a reload", async () => { await page.waitForSelector(".list time"); return / at \d{2}:\d{2} UTC$/.test(await page.textContent(".list time")); });
   await page.evaluate(() => { localStorage.removeItem("isle-tz"); localStorage.removeItem("isle-datefmt"); });
-  await page.reload();
+  await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForSelector(".list time");
 
   console.log("## responsive + docs");
   const mobile = await newPage({ viewport: { width: 390, height: 844 }, colorScheme: "dark", hasTouch: true, isMobile: MOBILE });
-  await mobile.page.goto(BASE + "/");
+  await mobile.page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
   await mobile.page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
-  await mobile.page.reload();
+  await mobile.page.reload({ waitUntil: "domcontentloaded" });
   await ck("phone: no horizontal scroll", async () => { await mobile.page.waitForSelector("h1:text('Dashboard')"); return mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth); });
-  await mobile.page.goto(BASE + "/#/roster");
+  await mobile.page.goto(BASE + "/#/roster", { waitUntil: "domcontentloaded" });
   await mobile.page.waitForSelector(".chip");
   await ck("phone: tap shows cut-off text (touch peek)", async () => {
     const chip = mobile.page.locator(".chip", { hasText: "Pachycephalosaurus" }).first();
@@ -221,7 +226,7 @@ try {
     await mobile.page.waitForSelector("#peek:not([hidden])", { timeout: 2000 });
     return (await mobile.page.textContent("#peek")).includes("Pachycephalosaurus");
   });
-  await mobile.page.goto(BASE + "/#/");
+  await mobile.page.goto(BASE + "/#/", { waitUntil: "domcontentloaded" });
   await mobile.page.waitForSelector("h1:text('Dashboard')");
   await mobile.page.click("#menu");
   await ck("phone: menu opens", async () => (await mobile.page.getAttribute("#menu", "aria-expanded")) === "true");

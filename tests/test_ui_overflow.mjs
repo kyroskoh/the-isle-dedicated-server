@@ -112,7 +112,7 @@ function audit() {
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const el = node.parentElement;
     if (!el || !node.textContent.trim() || exempt(el) || !shown(el)) continue;
-    const re = /[^\s\-/|]+/g; let m;  // hyphens, slashes and bars are normal break points
+    const re = /[^\s\-/\\|]+/g; let m;  // hyphens, slashes, backslashes and bars are normal break points
     while ((m = re.exec(node.textContent))) {
       if (m[0].length < 2 || m[0].length > 20) continue;  // very long tokens (IDs, paths) may wrap
       const range = document.createRange();
@@ -146,7 +146,7 @@ try {
     for (const width of WIDTHS) {
       const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: scheme, reducedMotion: "reduce" });
       const page = await ctx.newPage();
-      await page.goto(BASE + "/");
+      await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
       if (scheme === "light" && width === WIDTHS[0]) {
         report(`login @${width}`, await page.evaluate(audit));
         // the audit must catch a known-bad layout, or every PASS below means nothing
@@ -162,7 +162,7 @@ try {
         if (caught) console.log("  PASS audit self-check catches a spilling badge"); else { fails++; console.log("  FAIL audit self-check: a spilling badge was not reported"); }
       }
       await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
-      await page.reload();
+      await page.reload({ waitUntil: "domcontentloaded" });
       const nav = async (route) => { await page.evaluate((r) => { location.hash = "#/" + r + (location.hash === "#/" + r ? "?" : ""); }, route); await page.waitForSelector("#content h1"); };
       for (const route of ROUTES) {
         await nav(route);
@@ -233,9 +233,9 @@ try {
     const touch = w < 1300;
     const ctx = await browser.newContext({ viewport: { width: w, height: hgt }, hasTouch: touch, isMobile: touch && MOBILE, reducedMotion: "reduce" });
     const page = await ctx.newPage();
-    await page.goto(BASE + "/");
+    await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
     await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
-    await page.reload();
+    await page.reload({ waitUntil: "domcontentloaded" });
     for (const route of ROUTES) {
       await page.evaluate((r) => { location.hash = "#/" + r; }, route);
       await page.waitForSelector("#content h1");
