@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.4 |
-| **Product version** | 1.7.1 (released) |
+| **Product version** | 1.8.0 (planned), 1.7.1 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -84,6 +84,8 @@ cover ongoing operation or offer a single workflow for both Windows and Linux.
 | US-14 | P2/P3 | set **any** `Game.ini`/`Engine.ini` key and start from ready-made profiles and presets | I can run a realism, casual, PvP or private server without hand-writing ini files |
 | US-15 | P2 | manage admins, the whitelist and the playable roster with commands | moderation doesn't mean editing files by hand, and live changes apply without a restart where the game allows |
 | US-16 | P2/P3 | search, install and manage plugins (scheduled restarts, Discord alerts, off-site backups) with presets | common server chores are one command away |
+| US-17 | P2/P3 | switch native <-> docker by reinstalling, choosing whether to copy, move or not carry my data, and which parts | I can try the other runtime safely or move over completely |
+| US-18 | P2/P3 | take a portable snapshot and restore it on another machine or OS, in either runtime | I can move hosts (e.g. Windows PC -> Linux VPS -> Docker) or clone a server |
 | US-13 | P1/P2 | choose at uninstall what to keep and what to delete (game files, worlds, backups, settings) | I can free disk space without losing my world, or wipe only what I want |
 
 ## 5. Platform support
@@ -263,6 +265,19 @@ Priority: **M** = must, **S** = should, **C** = could.
 | PLG-06 | S | **File add-ons** | `"type": "files"` entries copy files into the server folder (for example `TheIsle/Content/Paks/~mods`). Documented as **untested with Evrima**, which has no official mod support |
 | PLG-07 | M | Tests | `tests/test_plugins.py` (unittest, offline: local HTTP server for remote installs, good and bad hashes, path traversal) and `tests/test_config_tools.sh` (overrides, profiles, presets, admins, whitelist, classes). Windows CI runs the PowerShell equivalents |
 
+### 6.14 Snapshots & migration (MIG)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| MIG-01 | M | **Snapshot create** | `snapshot create [--include worlds,backups,settings,overrides,plugins] [--output FILE] [--no-save]`. Default include: worlds, settings, overrides, plugins. Works in both runtimes (Docker: read from the `theisle-data` volume). If the server is running it is saved first (RCON) |
+| MIG-02 | M | **Portable format** | One `.tar.gz` with `snapshot.json` (format version, created, tool version, source OS/runtime/host, server name, parts with file counts and sizes) plus `world/Saved/`, `backups/`, `settings/server.conf`, `overrides/*.ini`, `plugins/state/`, `plugins/installed/`. Same format on Windows and Linux. File mode 600 (it holds passwords) |
+| MIG-03 | M | **Snapshot restore** | `snapshot restore FILE [--include ...] [--overwrite] [--all-settings] [--stop]` into the current runtime and OS. Refuses while running (or stops it with `--stop`). Worlds are never overwritten without `--overwrite`, and the replaced world is kept as `Saved.pre-snapshot-<ts>`. Settings are merged without machine-specific keys (paths, runtime, Docker image/build, PUID/PGID, MultiHome) unless `--all-settings`. The current `server.conf` is backed up first. Overrides and plugin settings are copied with backups of replaced files. Plugin code is restored only when `plugins` is included, with the third-party warning |
+| MIG-04 | M | **Inspect** | `snapshot info FILE` (manifest and parts), `snapshot list` (snapshots folder). Archives with absolute paths, `..`, links or unknown format versions are refused |
+| MIG-05 | M | **Mode switch data choices** | Installers: `--data copy\|move\|fresh` (Windows `-Data`), `--carry worlds,backups,settings,overrides,plugins` (`-Carry`), `--overwrite` (`-Overwrite`). copy (default) carries the chosen parts into the new mode and keeps the source. move also clears the source worlds (and carried backups) once the restore is verified. fresh carries nothing. A world already in the target is kept unless `--overwrite` |
+| MIG-06 | M | **New machine from a snapshot** | `install.sh --from-snapshot FILE` / `Install.ps1 -FromSnapshot FILE` installs (either mode) and restores the snapshot (default parts + `--carry`) |
+| MIG-07 | M | Parity | `isle-server snapshot ...`, `IsleServer.ps1 Snapshot ...` (also `Manage.bat Snapshot ...`). One shared engine (`tools/isle_snapshot.py`, standard library only). Python 3 is installed by both installers in both modes when the package manager allows |
+| MIG-08 | M | Tests | `tests/test_snapshot.py` (offline: create/restore, include filters, machine-key filtering, overwrite rules, archive safety, Windows-made archive). Installer cycle: switches with copy/move/fresh and carry, a snapshot restored into a second "machine" in the other runtime, `--from-snapshot`. Windows CI: PowerShell snapshot round trip and restoring a Linux-made snapshot |
+
 ## 7. CLI contract
 
 | Command | Linux (`isle-server.sh`) | Windows (`IsleServer.ps1`) | Exit codes |
@@ -366,6 +381,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M10 Reinstall with retained data (v1.5.0) | INS-19: import retained worlds across modes on reinstall, both installers, CI | ✅ Done (v1.5.0). Linux verified by the cycle test. Windows import paths parse-checked only (they need Docker Desktop with Linux containers) |
 | M11 Uninstall data choices (v1.6.0) | INS-20: keep/remove per data category, menu, safety backup, both installers, CI | ✅ Done (v1.6.0). Linux verified by the cycle test (70 checks). Windows native paths covered by Windows CI; Windows Docker-volume paths parse-checked only |
 | M12 Config tools & plugins (v1.7.0) | CFX-01 – CFX-09, PLG-01 – PLG-07 | ✅ Done (v1.7.0). Linux + PowerShell 7 verified locally, Windows PowerShell 5.1 by CI. Live RCON pushes and real Discord/NAS targets need a live server (M6) |
+| **M13 Snapshots & mode-switch data choices (v1.8.0)** | **MIG-01 – MIG-08** | 🔜 In progress |
 
 ## 12. Traceability matrix
 
@@ -389,6 +405,8 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | CFX-01 – CFX-03 | `merge_ini` (Linux), `Merge-IniOverrides` (Windows), compose overrides mount, `config/reference/` | `tests/test_config_tools.sh`, Windows CI | Done (v1.7) |
 | CFX-04 – CFX-09 | `cmd_profile`/`cmd_preset`/`cmd_list_edit` (Linux), `Invoke-ProfileCommand`/`Invoke-ListCommand` (Windows), `config/profiles|presets|rosters|classes.txt` | `tests/test_config_tools.sh`, Windows CI | Done (v1.7) |
 | PLG-01 – PLG-07 | `tools/isle_plugins.py`, `plugins/`, launcher hook calls | `tests/test_plugins.py` | Done (v1.7) |
+| MIG-01 – MIG-04, MIG-07 | `tools/isle_snapshot.py`, `snapshot` in both launchers | `tests/test_snapshot.py`, Windows CI | **Planned v1.8** |
+| MIG-05 – MIG-06 | `install.sh` / `Install.ps1` (`--data`, `--carry`, `--overwrite`, `--from-snapshot`) | `tests/installer-cycle.sh` | **Planned v1.8** |
 | CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |
 | CFG-03/04 | `render_*_ini`/`configure`, `Get-*Ini`/`Set-ServerConfig` | CI smoke (grep sections) | Done |
 | CFG-05 | `check_config` / `Test-ServerConfig`, called by configure/run/start/install | CI smoke (positive + negative) | Done (v1.1) |
