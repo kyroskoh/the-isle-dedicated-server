@@ -59,9 +59,10 @@ plain text.
 | Dashboard | State, Start/Stop/Restart/Save/Backup, Update/Verify game files, server details, recent jobs with their output |
 | Settings | Every `server.conf` key, grouped and searchable. Secrets are masked. Changes are checked with `check` and rolled back if invalid. Machine-specific keys (paths, runtime, UI address) are read-only here |
 | Players | Admins and whitelist (add, remove, on/off) |
-| Roster | Playable classes and disabled AI as tick boxes, plus roster presets |
+| Roster | Playable classes as tick boxes (with diets), plus roster presets |
+| Map & AI | Switch maps (with their Steam branch), AI spawning, density (live), spawn interval, AI presets, disabled AI classes with their roles |
 | Profiles & presets | Apply a profile, or several presets in order |
-| Plugins | Search, install, enable/disable, update, remove, configure, plugin presets |
+| Plugins | Search, install, enable/disable, update, remove, configure, plugin presets, catalog sources, community resources |
 | Snapshots & backups | Create, restore (choose parts, overwrite, stop first) and delete snapshots; back up now |
 | Logs | The game's log or any rotated `launcher_` / `server_` / `ui_` log file, last 100–2000 lines, with auto-refresh |
 | RCON console | Send RCON commands to the running server |
@@ -108,17 +109,27 @@ Changed fields are highlighted until you save. Machine-specific keys sit read-on
 
 ![Players page](docs/images/ui/players.png)
 
-**Roster.** Playable classes and disabled AI as tick boxes, with diets and roster presets.
+**Roster.** Playable classes as tick boxes, with diets and roster presets.
 
 ![Roster page](docs/images/ui/roster.png)
+
+**Map & AI.** Pick the map (its Steam branch switches with it), and set AI spawning, density, spawn interval, AI presets
+and disabled AI classes.
+
+| Map | AI creatures |
+|---|---|
+| ![Map & AI page](docs/images/ui/map-ai.png) | ![AI creatures](docs/images/ui/map-ai-creatures.png) |
 
 **Profiles & presets.** Profile cards show what they change. Presets can be applied together, in order.
 
 ![Profiles and presets](docs/images/ui/profiles.png)
 
-**Plugins.** Search, install, enable, configure, update, remove, and plugin presets.
+**Plugins.** Search, install, enable, configure, update, remove, and plugin presets, plus community catalog sources and a
+list of community tools and guides.
 
-![Plugins page](docs/images/ui/plugins.png)
+| Plugins | Catalog sources & community |
+|---|---|
+| ![Plugins page](docs/images/ui/plugins.png) | ![Catalog sources and community](docs/images/ui/plugins-community.png) |
 
 **Snapshots & backups.** Create snapshots with chosen parts, then restore (choosing parts, overwrite and stop first) or delete them.
 
@@ -165,8 +176,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
 | Settings | `GET config`, `PATCH config`, `GET config/check` |
 | Players | `GET/POST admins`, `DELETE admins/{id}`, `GET/POST whitelist`, `DELETE whitelist/{id}`, `PUT whitelist/enabled` |
 | Roster | `GET/PUT classes`, `POST classes/preset`, `GET rosters`, `GET/PUT ai-classes` |
+| Map & AI | `GET maps`, `PUT map`, `GET/PATCH ai`, `POST ai/preset` |
 | Profiles | `GET profiles`, `POST profiles/{name}/apply`, `GET presets`, `POST presets/apply` |
-| Plugins | `GET plugins`, `GET plugins/{name}`, `POST plugins/{name}/{install\|remove\|enable\|disable\|update}`, `PATCH plugins/{name}/config`, `POST plugins/presets/{preset}` |
+| Plugins | `GET/POST/DELETE plugins/sources`, `GET plugins/community`, `GET plugins`, `GET plugins/{name}`, `POST plugins/{name}/{install\|remove\|enable\|disable\|update}`, `PATCH plugins/{name}/config`, `POST plugins/presets/{preset}` |
 | Snapshots | `GET snapshots`, `POST snapshots`, `POST snapshots/{name}/restore`, `DELETE snapshots/{name}` |
 
 How the API behaves:

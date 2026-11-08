@@ -368,6 +368,13 @@ dialog.wide { width: min(860px, calc(100vw - 2rem)); }
 .lock { color: var(--muted); }
 .tag-head { margin: 1.5rem 0 .6rem; }
 
+/* ---------------------------------------------------------- map & plugins */
+.gap-top { margin-top: 1rem; }
+.map.current { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+input[type="range"] { accent-color: var(--primary); width: 100%; min-width: 0; }
+.input-group > input[type="number"] { flex: 0 0 6.5rem; }
+li.community { display: block; }
+
 /* ------------------------------------------------------------ peek / time */
 .peek {
   position: fixed; z-index: 200; max-width: min(420px, calc(100vw - 16px)); padding: .4rem .6rem; border-radius: var(--radius-sm);

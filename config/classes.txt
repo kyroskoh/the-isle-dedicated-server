@@ -30,9 +30,10 @@ Tenontosaurus       herbivore
 Triceratops         herbivore
 
 [ai]
-Compsognathus
-Pterodactylus
-Boar
-Deer
-Goat
-Seaturtle
+# AI creatures (DisallowedAIClasses / "isle-server ai-classes"); second column = role
+Compsognathus       carnivore
+Pterodactylus       flying
+Boar                prey
+Deer                prey
+Goat                prey
+Seaturtle           aquatic

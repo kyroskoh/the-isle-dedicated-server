@@ -445,7 +445,7 @@
         var cb = h("input", { type: "checkbox", checked: chosen[k.name] });
         cb.addEventListener("change", function () { chosen[k.name] = cb.checked; cb.parentNode.classList.toggle("checked", cb.checked); paint(); });
         grid.appendChild(h("label", { class: "chip" + (chosen[k.name] ? " checked" : "") }, cb, h("span", { text: k.name }),
-          k.diet ? h("span", { class: "badge diet " + (k.diet === "carnivore" ? "amber" : k.diet === "herbivore" ? "green" : ""), text: k.diet }) : null));
+          k.diet ? h("span", { class: "badge diet " + ({ carnivore: "amber", herbivore: "green", prey: "green", flying: "", aquatic: "" }[k.diet] || ""), text: k.diet }) : null));
       });
       var setAll = function (v) { grid.querySelectorAll("input").forEach(function (cb, i) { cb.checked = v; cb.parentNode.classList.toggle("checked", v); chosen[d.known[i].name] = v; }); paint(); };
       var saveBtn = btn("Save", { kind: "primary" });
@@ -497,7 +497,7 @@
     };
     add(c, h("div", { class: "grid" },
       classPicker("Playable roster", "Ticked classes can be chosen. All ticked = every class.", "/classes", true, presetRow),
-      classPicker("Disabled AI", "Ticked AI creatures do not spawn.", "/ai-classes", false)));
+      h("p", { class: "muted small" }, "AI creatures (spawning, density, disabled classes) are on the ", h("a", { href: "#/world", text: "Map & AI" }), " page.")));
   }
 
   function overlayCard(o, onApply, selectable) {
@@ -565,6 +565,7 @@
         presets.appendChild(b);
       });
       el.appendChild(h("section", { class: "card" }, h("h2", { text: "Presets" }), presets));
+      el.appendChild(h("div", { class: "grid cols-2 gap-top" }, sourcesCard(reload), communityCard()));
       var tbody = h("tbody");
       d.plugins.forEach(function (p) {
         var actions = h("td", { class: "actions", "data-label": "Actions" });
@@ -605,6 +606,136 @@
         tbody.querySelectorAll("tr").forEach(function (tr) { tr.hidden = q && tr.dataset.search.indexOf(q) < 0; });
       };
     });
+  }
+
+  /* extra plugin catalogs (JSON over HTTPS) */
+  function sourcesCard(reloadPlugins) {
+    var card = h("section", { class: "card stack" }, h("h2", { text: "Catalog sources" }),
+      h("p", { class: "muted small", text: "Add a plugin catalog published by the community (a JSON file over HTTPS, same format as plugins/catalog.json). Its plugins then appear above. Plugins run with the server user's rights - add only catalogs you trust." }));
+    var input = h("input", { type: "url", placeholder: "https://example.org/isle-catalog.json", "aria-label": "Catalog URL", spellcheck: "false", autocomplete: "off" });
+    var addBtn = btn("Add", { kind: "primary", type: "submit" });
+    var list = h("div");
+    var form = h("form", { class: "input-group" }, input, addBtn);
+    add(card, [form, list]);
+    function load() {
+      api("GET", "/plugins/sources").then(function (d) {
+        clear(list);
+        if (!d.sources.length) { list.appendChild(h("p", { class: "empty", text: "No extra catalogs." })); return; }
+        var ul = h("ul", { class: "list" });
+        d.sources.forEach(function (u) {
+          var rm = btn("Remove", { kind: "sm", aria: "Remove " + u });
+          rm.addEventListener("click", function () {
+            confirmDialog({ title: "Remove this catalog?", text: u, ok: "Remove", danger: true }).then(function (yes) {
+              if (yes) busy(rm, api("DELETE", "/plugins/sources?url=" + encodeURIComponent(u)).then(function () { toast("Catalog removed"); load(); reloadPlugins(); }, fail));
+            });
+          });
+          add(ul, h("li", null, h("code", { text: u }), rm));
+        });
+        list.appendChild(ul);
+      }, function (e) { clear(list).appendChild(h("p", { class: "empty", text: e.message })); });
+    }
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var u = input.value.trim();
+      if (!/^https:\/\/\S+$/.test(u)) { input.setAttribute("aria-invalid", "true"); toast("Use an https:// URL", "", "error"); return; }
+      input.removeAttribute("aria-invalid");
+      confirmDialog({ title: "Add this catalog?", text: u + " - plugins from it run with the server user's rights.", ok: "Add catalog" }).then(function (yes) {
+        if (yes) busy(addBtn, api("POST", "/plugins/sources", { url: u }).then(function () { input.value = ""; toast("Catalog added"); load(); reloadPlugins(); }, fail));
+      });
+    });
+    load();
+    return card;
+  }
+  /* community tools, libraries and guides (third-party; links only) */
+  function communityCard() {
+    var card = h("section", { class: "card stack" }, h("h2", { text: "Community" }));
+    api("GET", "/plugins/community").then(function (d) {
+      var ul = h("ul", { class: "list" });
+      (d.links || []).forEach(function (l) {
+        add(ul, h("li", { class: "community" }, h("div", null,
+          h("a", { href: l.url, target: "_blank", rel: "noopener noreferrer", text: l.name }), " ",
+          h("span", { class: "badge", text: l.kind }), l.language ? h("span", { class: "muted small", text: " · " + l.language }) : null,
+          h("br"), h("span", { class: "muted small", text: l.description }))));
+      });
+      add(card, [h("p", { class: "muted small", text: "Third-party projects - listed, not installed or endorsed. Check what you download." }), ul]);
+      if (d.mods) card.appendChild(h("p", { class: "callout small", text: d.mods }));
+    }, function (e) { card.appendChild(h("p", { class: "empty", text: e.message })); });
+    return card;
+  }
+
+  // ----------------------------------------------------------- map & AI
+  function pageWorld(c) {
+    c.appendChild(pageHead("Map & AI", "Which map the server loads, and how AI creatures spawn. Changes apply on the next restart (AI density also live)."));
+    var maps = h("section", { class: "card" });
+    c.appendChild(maps);
+    section(maps, function () { return api("GET", "/maps"); }, function (el, d, reload) {
+      el.appendChild(h("div", { class: "card-head" }, h("h2", { text: "Map" }),
+        h("span", { class: "muted small", text: "Steam branch: " + (d.branch || "(public)") })));
+      var grid = h("div", { class: "grid cols-2" });
+      d.maps.forEach(function (m) {
+        var use = btn(m.current ? "Current map" : "Use " + m.name, { kind: m.current ? "" : "primary", disabled: m.current });
+        use.addEventListener("click", function () {
+          var branchNote = m.branch !== "-" && m.branch !== d.branch ? " It also switches the Steam branch to " + m.branch + ": stop the server and run Verify game files (validate) before starting." : "";
+          var archived = m.status === "archived" ? " This is an archived build: no updates or new species." : "";
+          confirmDialog({ title: "Switch to " + m.name + "?", text: "The server loads " + m.name + " after a restart." + branchNote + archived, ok: "Switch map" }).then(function (yes) {
+            if (yes) busy(use, api("PUT", "/map", { name: m.name }).then(function () { toast("Map set to " + m.name, branchNote ? "Now stop the server and verify game files." : "Restart to load it."); reload(); }, fail));
+          });
+        });
+        grid.appendChild(h("article", { class: "card stack map" + (m.current ? " current" : "") },
+          h("div", { class: "card-head" }, h("h3", { text: m.name }),
+            h("span", { class: "badge " + (m.status === "current" ? "green" : "amber"), text: m.status })),
+          h("p", { class: "muted small", text: m.description }),
+          h("dl", { class: "kv small" }, h("dt", { text: "Steam branch" }), h("dd", { text: m.branch })),
+          h("div", { class: "row" }, use)));
+      });
+      el.appendChild(grid);
+      el.appendChild(h("p", { class: "muted small", text: "Maps come from config/maps.txt - add a line there when the developers release a new map. Names are case-sensitive." }));
+    });
+
+    var ai = h("section", { class: "card" });
+    ai.style.marginTop = "1rem";
+    c.appendChild(ai);
+    section(ai, function () { return api("GET", "/ai"); }, function (el, d, reload) {
+      var spawn = h("input", { type: "checkbox", role: "switch", id: "ai-spawn", checked: d.spawn });
+      var range = h("input", { type: "range", id: "ai-density-range", min: "0", max: "3", step: "0.1", value: String(d.density), "aria-label": "AI density" });
+      var density = h("input", { type: "number", id: "ai-density", min: "0", max: "10", step: "0.1", value: String(d.density) });
+      var interval = h("input", { type: "number", id: "ai-interval", min: "1", max: "86400", step: "1", value: String(d.interval) });
+      range.addEventListener("input", function () { density.value = range.value; });
+      density.addEventListener("input", function () { range.value = density.value; });
+      var save = btn("Save AI settings", { kind: "primary" });
+      save.addEventListener("click", function () {
+        var dv = parseFloat(density.value), iv = parseInt(interval.value, 10);
+        if (isNaN(dv) || dv < 0 || dv > 10) { density.setAttribute("aria-invalid", "true"); toast("Density must be 0-10", "", "error"); return; }
+        if (isNaN(iv) || iv < 1 || String(iv) !== interval.value.trim()) { interval.setAttribute("aria-invalid", "true"); toast("Interval must be whole seconds", "", "error"); return; }
+        density.removeAttribute("aria-invalid"); interval.removeAttribute("aria-invalid");
+        busy(save, api("PATCH", "/ai", { spawn: spawn.checked, density: dv, interval: iv }).then(function () {
+          toast("AI settings saved", "Density applies now if the server is running; the rest on the next restart."); reload();
+        }, fail));
+      });
+      var presets = h("div", { class: "row" });
+      d.presets.forEach(function (p) {
+        var b = btn(p.name.replace(/^ai-/, ""), { kind: "sm", title: p.description });
+        b.setAttribute("data-peek", p.description || p.name);
+        b.addEventListener("click", function () {
+          confirmDialog({ title: "Apply " + p.name + "?", text: p.description, ok: "Apply" }).then(function (yes) {
+            if (yes) busy(b, api("POST", "/ai/preset", { name: p.name }).then(function () { toast(p.name + " applied"); reload(); }, fail));
+          });
+        });
+        presets.appendChild(b);
+      });
+      add(el, [
+        h("div", { class: "card-head" }, h("h2", { text: "AI creatures" }), h("label", { class: "switch" }, spawn, h("span", { class: "track" }), h("span", { text: "Spawn AI" }))),
+        h("div", { class: "grid cols-2" },
+          h("div", { class: "field" }, h("label", { for: "ai-density", text: "Density" }), h("div", { class: "input-group" }, range, density),
+            h("span", { class: "hint", text: "0.5 = half as many AI, 2 = twice as many. Lower it before turning AI off - carnivores need the food." })),
+          h("div", { class: "field" }, h("label", { for: "ai-interval", text: "Spawn interval (seconds)" }), interval,
+            h("span", { class: "hint", text: "How often the server checks to spawn AI (default 40). Lower = AI comes back faster." }))),
+        h("div", { class: "row gap-top" }, save),
+        h("h3", { class: "gap-top", text: "AI presets" }), presets]);
+    });
+    var dis = classPicker("Disabled AI", "Ticked AI creatures do not spawn (role in the badge).", "/ai-classes", false);
+    dis.style.marginTop = "1rem";
+    c.appendChild(dis);
   }
 
   function configurePlugin(name, after) {
@@ -815,7 +946,8 @@
   var ROUTES = {
     "/": ["Dashboard", pageDashboard], "/settings": ["Settings", pageSettings], "/players": ["Players", pagePlayers],
     "/roster": ["Roster", pageRoster], "/profiles": ["Profiles & presets", pageProfiles], "/plugins": ["Plugins", pagePlugins],
-    "/snapshots": ["Snapshots & backups", pageSnapshots], "/logs": ["Logs", pageLogs], "/console": ["RCON console", pageConsole]
+    "/snapshots": ["Snapshots & backups", pageSnapshots], "/logs": ["Logs", pageLogs], "/console": ["RCON console", pageConsole],
+    "/world": ["Map & AI", pageWorld]
   };
   function navigate() {
     if (!state.token) return;

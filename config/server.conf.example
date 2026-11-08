@@ -59,7 +59,8 @@ FIREWALL_OPEN_RCON=false
 
 # ------------------------------------------------------------ Server info ----
 SERVER_NAME="My Evrima Server"
-# Map name. "Gateway" is the current Evrima map.
+# Map name (MapName=, case-sensitive). "Gateway" is the current Evrima map.
+# See config/maps.txt or "isle-server maps list"; "isle-server maps set <name>" also switches STEAM_BRANCH.
 MAP_NAME=Gateway
 MAX_PLAYERS=100
 # Leave empty for a public server.
@@ -93,9 +94,12 @@ ALLOW_RECORDING_REPLAY=true
 # Spawn plants / food and their density multiplier.
 SPAWN_PLANTS=true
 PLANT_SPAWN_MULTIPLIER=1
-# AI creatures.
+# AI creatures (see also "isle-server ai" and the Map & AI page of the web UI).
 SPAWN_AI=true
+# AI density multiplier: 0.5 = half as many AI, 2 = twice as many (0-2 recommended; live via RCON).
 AI_DENSITY=1
+# Seconds between AI spawn checks (AISpawnInterval). Lower = AI comes back faster.
+AI_SPAWN_INTERVAL=40
 # Comma separated list of AI classes to disable, e.g. Compsognathus,Pterodactylus
 DISABLED_AI_CLASSES=
 # Migration zones.

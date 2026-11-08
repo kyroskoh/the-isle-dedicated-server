@@ -16,6 +16,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -361,6 +362,58 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(any(re.match(r"^theisle-snapshot_\d{8}_\d{6}\.tar\.gz$", n) for n in names), names)
         for n in names:
             self.s.call("DELETE", "/api/v1/snapshots/" + n)
+
+    def test_maps(self):
+        body = self.s.call("GET", "/api/v1/maps")[1]
+        names = [m["name"] for m in body["maps"]]
+        self.assertIn("Gateway", names)
+        self.assertIn("Isla_Spiro", names)
+        self.assertEqual([m["name"] for m in body["maps"] if m["current"]], [body["current"]])
+        code, out, _ = self.s.call("PUT", "/api/v1/map", {"name": "Isla_Spiro"})
+        self.assertEqual(code, 200, out)
+        self.assertEqual(self.conf("MAP_NAME"), "Isla_Spiro")
+        self.assertEqual(self.conf("STEAM_BRANCH"), "spiro0.11.59.04")
+        self.assertEqual(self.s.call("PUT", "/api/v1/map", {"name": "gateway"})[0], 404, "names are case-sensitive")
+        self.assertEqual(self.s.call("PUT", "/api/v1/map", {"name": "Gateway; rm -rf /"})[0], 404)
+        self.assertEqual(self.s.call("PUT", "/api/v1/map", {})[0], 422)
+        self.assertEqual(self.s.call("PUT", "/api/v1/map", {"name": "Gateway", "keep_branch": True})[0], 200)
+        self.assertEqual(self.conf("STEAM_BRANCH"), "spiro0.11.59.04", "keep_branch leaves the branch alone")
+        self.s.call("PUT", "/api/v1/map", {"name": "Gateway"})
+        self.assertEqual(self.conf("STEAM_BRANCH"), "evrima")
+
+    def test_ai(self):
+        body = self.s.call("GET", "/api/v1/ai")[1]
+        self.assertIn(body["spawn"], (True, False))
+        self.assertEqual(body["interval"], 40)
+        self.assertTrue(any(k["name"] == "Compsognathus" and k["diet"] == "carnivore" for k in body["known"]))
+        self.assertTrue(any(p["name"] == "ai-prey-only" for p in body["presets"]))
+        self.assertTrue(all(p["name"].startswith("ai-") for p in body["presets"]))
+        code, out, _ = self.s.call("PATCH", "/api/v1/ai", {"spawn": False, "density": 0.5, "interval": 25})
+        self.assertEqual(code, 200, out)
+        self.assertEqual((self.conf("SPAWN_AI"), self.conf("AI_DENSITY"), self.conf("AI_SPAWN_INTERVAL")), ("false", "0.5", "25"))
+        for bad in ({"density": "lots"}, {"density": -1}, {"interval": 0}, {"interval": 2.5}, {"spawn": "yes"}, {"colour": "red"}, {}):
+            self.assertEqual(self.s.call("PATCH", "/api/v1/ai", bad)[0], 422, bad)
+        self.assertEqual(self.s.call("POST", "/api/v1/ai/preset", {"name": "ai-prey-only"})[0], 200)
+        self.assertEqual(self.conf("DISABLED_AI_CLASSES"), "Compsognathus,Pterodactylus")
+        self.assertEqual(self.s.call("POST", "/api/v1/ai/preset", {"name": "casual"})[0], 404, "only ai-* presets")
+        self.s.call("PATCH", "/api/v1/ai", {"spawn": True, "density": 1, "interval": 40})
+
+    def test_plugin_sources_and_community(self):
+        self.assertEqual(self.s.call("GET", "/api/v1/plugins/sources")[1], {"sources": []})
+        url = "https://example.org/isle/catalog.json"
+        self.assertEqual(self.s.call("POST", "/api/v1/plugins/sources", {"url": url})[0], 200)
+        self.assertEqual(self.s.call("GET", "/api/v1/plugins/sources")[1]["sources"], [url])
+        for bad in ("http://example.org/c.json", "file:///etc/passwd", "https://a b", "ftp://x"):
+            self.assertEqual(self.s.call("POST", "/api/v1/plugins/sources", {"url": bad})[0], 422, bad)
+        self.assertEqual(self.s.call("DELETE", "/api/v1/plugins/sources?url=https%3A%2F%2Fnope.example%2Fx.json")[0], 404)
+        self.assertEqual(self.s.call("DELETE", "/api/v1/plugins/sources?url=" + urllib.parse.quote(url, safe=""))[0], 200)
+        self.assertEqual(self.s.call("GET", "/api/v1/plugins/sources")[1]["sources"], [])
+        community = self.s.call("GET", "/api/v1/plugins/community")[1]
+        self.assertTrue(community["links"])
+        for link in community["links"]:
+            self.assertTrue(link["url"].startswith("https://"), link)
+            self.assertTrue(link["name"] and link["description"], link)
+        self.assertIn("mods", community)
 
     def test_rcon_validation(self):
         self.assertEqual(self.s.call("POST", "/api/v1/rcon", {"command": "rm -rf"})[0], 422)

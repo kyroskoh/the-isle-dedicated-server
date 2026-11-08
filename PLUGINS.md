@@ -120,6 +120,23 @@ sys.exit(main(sys.argv[1:]))
 
 Install your own plugin from a folder or archive: `isle-server plugins install ./my-plugin`.
 
+## Community resources and catalogs
+
+`isle-server plugins community` (Windows: `Manage.bat Plugins community`), and the **Community** card on the web UI's
+Plugins page, list community tools, libraries and guides from `plugins/community.json`: Evrima RCON libraries for
+Node.js and PHP, an RCON desktop client, CubeCoders' AMP templates and a hosting guide. They are third-party projects:
+listed with checked links, not installed or endorsed.
+
+**Mods:** Evrima has no official mod or Steam Workshop support. Server-side modding (UE4SS, `.pak`) is niche,
+unofficial and can break with every update, and community mods are shared through Discord servers, forums and GitHub.
+For anything you download, use a catalog entry with a `sha256`, or `plugins install <url>#sha256=<hex>`, so the file
+you run is the file you checked.
+
+Community catalogs (below) can also be added from the web UI (**Plugins → Catalog sources**), and their plugins then
+appear in the list. Only https:// URLs are accepted there.
+
+![Catalog sources and community resources](docs/images/ui/plugins-community.png)
+
 ## Third-party catalogs
 
 A catalog is a JSON file served over HTTP(S):

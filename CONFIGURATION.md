@@ -58,6 +58,51 @@ Windows: `IsleServer.ps1 Profile apply realism`, `IsleServer.ps1 Preset apply ai
 Profiles never touch names, passwords or ports. Your own profiles and presets are just `KEY=VALUE` files in
 `config/profiles/` and `config/presets/`. The first comment line is the description.
 
+## Maps
+
+| Linux | Windows | Effect |
+|---|---|---|
+| `isle-server maps list` | `Manage.bat Maps list` | Known maps from `config/maps.txt`, the current one marked `*` |
+| `isle-server maps show [name]` | `Manage.bat Maps show Isla_Spiro` | Branch, status and description |
+| `isle-server maps set <name> [--keep-branch]` | `Manage.bat Maps set Isla_Spiro` | Sets `MAP_NAME` and the map's `STEAM_BRANCH`. If the branch changes, stop the server and run `validate` |
+
+| Map | `MAP_NAME` | Steam branch | Status |
+|---|---|---|---|
+| Gateway | `Gateway` | `evrima` | current, default |
+| Isla Spiro | `Isla_Spiro` | `spiro0.11.59.04` | archived build: no updates or new species |
+
+Map names are case-sensitive. There is no official map list; the Isla Spiro branch name comes from community hosting
+templates, so verify it on first install. When the developers release a new map, add a line to `config/maps.txt`
+(`NAME  BRANCH  STATUS  description`); a `MAP_NAME` that isn't listed only produces a warning in `check`. The web UI
+has a **Map & AI** page for the same things:
+
+![Map & AI page](docs/images/ui/map-ai.png)
+
+## AI creatures
+
+| Linux | Windows | Effect |
+|---|---|---|
+| `isle-server ai status` | `Manage.bat AI status` | Spawning, density, spawn interval and disabled classes |
+| `isle-server ai on\|off` | `Manage.bat AI off` | `SPAWN_AI` (next restart) |
+| `isle-server ai density 0.5` | `Manage.bat AI density 0.5` | `AI_DENSITY`, also applied live over RCON (`aidensity`) |
+| `isle-server ai interval 25` | `Manage.bat AI interval 25` | `AI_SPAWN_INTERVAL`, the seconds between spawn checks (next restart) |
+| `isle-server ai preset ai-prey-only` | `Manage.bat AI preset ai-prey-only` | Applies an `ai-*` preset |
+| `isle-server ai-classes set Boar Deer` | `Manage.bat AIClasses set Boar Deer` | `DISABLED_AI_CLASSES`, live over RCON |
+
+AI presets: `ai-normal`, `ai-low`, `ai-high`, `ai-off`, `ai-fast-respawn` (20 s), `ai-slow-respawn` (90 s) and
+`ai-prey-only` (no Compsognathus or Pterodactylus). The AI classes and their roles are listed in `config/classes.txt`:
+
+| Class | Role |
+|---|---|
+| Compsognathus | carnivore |
+| Pterodactylus | flying |
+| Boar, Deer, Goat | prey |
+| Seaturtle | aquatic |
+
+Lower the density before you turn AI off: carnivores live on AI.
+
+![AI creatures on the Map & AI page](docs/images/ui/map-ai-creatures.png)
+
 ## Admins, whitelist and playable roster
 
 In the [web UI](UI.md) these are the **Players** and **Roster** pages:
@@ -189,6 +234,7 @@ In docker mode, `STEAMCMD_DIR`, `SERVER_DIR` and `BACKUP_DIR` are ignored. The c
 | `PLANT_SPAWN_MULTIPLIER` | `PlantSpawnMultiplier` | `1` |
 | `SPAWN_AI` | `bSpawnAI` | `true` |
 | `AI_DENSITY` | `AIDensity` | `1` |
+| `AI_SPAWN_INTERVAL` | `AISpawnInterval` | `40` |
 | `DISABLED_AI_CLASSES` | `DisallowedAIClasses=` (one line each) | empty |
 | `ENABLE_MIGRATION` | `bEnableMigration` | `true` |
 | `MAX_MIGRATION_TIME` | `MaxMigrationTime` | `5400` |

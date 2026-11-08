@@ -1,0 +1,44 @@
+{
+  "description": "Community resources for The Isle (Evrima) servers, shown by 'isle-server plugins community' and the web UI. These are third-party projects: they are listed for convenience, not installed, reviewed or endorsed. Links were checked when they were added (2026-11).",
+  "mods": "Evrima has no official mod or Steam Workshop support. Server-side modding (UE4SS, .pak) is niche, unofficial and can break with every game update; community mods are shared through Discord servers, forums and GitHub. Use the plugin manager's catalogs and 'install <url>#sha256=...' for anything you download, so the file you run is the file you checked.",
+  "catalogs": [],
+  "catalog_help": "A catalog is a JSON file over HTTPS with the same format as plugins/catalog.json. Add one with 'isle-server plugins sources add <https-url>' or on the Plugins page of the web UI. Entries that download code must carry a sha256.",
+  "links": [
+    {
+      "name": "isle-evrima-rcon",
+      "kind": "rcon-library",
+      "language": "TypeScript / Node.js",
+      "url": "https://github.com/menix1337/isle-evrima-rcon",
+      "also": "https://www.npmjs.com/package/isle-evrima-rcon",
+      "description": "RCON client library for Evrima (npm package isle-evrima-rcon) - for Discord bots and web panels"
+    },
+    {
+      "name": "evrima-rcon (PHP)",
+      "kind": "rcon-library",
+      "language": "PHP",
+      "url": "https://github.com/Theislemanager/evrima-rcon",
+      "description": "PHP library for The Isle Evrima RCON - for PHP admin panels and websites"
+    },
+    {
+      "name": "The Isle Evrima Server Tools",
+      "kind": "rcon-client",
+      "language": "Python",
+      "url": "https://github.com/modernham/The-Isle-Evrima-Server-Tools",
+      "description": "Desktop RCON client and server tools for Evrima"
+    },
+    {
+      "name": "AMP templates (The Isle Evrima)",
+      "kind": "reference",
+      "language": "JSON / INI",
+      "url": "https://github.com/CubeCoders/AMPTemplates",
+      "description": "CubeCoders AMP's Evrima template: a maintained list of Game.ini settings, maps and their Steam branches (theisle-evrima*.json)"
+    },
+    {
+      "name": "Host a dedicated Evrima server (Steam guide)",
+      "kind": "guide",
+      "language": "",
+      "url": "https://steamcommunity.com/sharedfiles/filedetails/?id=2952501611",
+      "description": "Community Steam guide for hosting an Evrima dedicated server"
+    }
+  ]
+}

@@ -36,6 +36,8 @@
     Whitelist      list|add|remove <SteamID64...>|on|off      (live via RCON when running)
     Classes        list|known|set|add|remove <Class...>|reset|preset [roster]
     AIClasses      list|known|set|add|remove <Class...>|reset (disabled AI)
+    AI             status|on|off|density <n>|interval <s>|preset <ai-name>  (AI spawning and density)
+    Maps           list|show [name]|set <name> [--keep-branch]  (config\maps.txt; set also switches STEAM_BRANCH)
     Profile        list|show <name>|apply <name>              (whole play styles)
     Preset         list|show <name>|apply <name...>           (stackable tweaks)
     Plugins        list|search|info|install|remove|enable|disable|update|preset|run|config|sources
@@ -70,7 +72,7 @@ param(
     [ValidateSet('Install', 'Update', 'Validate', 'Check', 'Configure', 'Start', 'Stop', 'Restart', 'Status', 'Run',
                  'Logs', 'Backup', 'Restore', 'Rcon', 'Save', 'Firewall', 'RemoveFirewall',
                  'InstallService', 'RemoveService', 'Info', 'Version', 'Help',
-                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot', 'UI', 'UiToken')]
+                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot', 'UI', 'UiToken', 'AI', 'Maps')]
     [string]$Command = 'Help',
 
     [string]$ConfigPath,
@@ -257,6 +259,10 @@ function Test-ServerConfig {
     foreach ($k in 'LOG_RETENTION', 'LOG_MAX_SIZE_MB') {
         if ((C $k '0') -notmatch '^\d+$') { $errors.Add("$k='$(C $k)' must be a whole number (0 = no limit)") }
     }
+    $mapName = C 'MAP_NAME'
+    if ($mapName -and (Test-Path (Join-Path $RepoDir 'config\maps.txt')) -and -not (Get-MapEntry $mapName)) {
+        $warnings.Add("MAP_NAME='$mapName' is not in config\maps.txt (known: $((Get-MapEntries | ForEach-Object Name) -join ',')) - names are case-sensitive")
+    }
     $v = C 'UI_PORT'
     $n = 0
     if ($v -and -not ($v -match '^\d+$' -and [int]::TryParse($v, [ref]$n) -and $n -ge 1 -and $n -le 65535)) {
@@ -291,7 +297,7 @@ function Test-ServerConfig {
         $v = C $k
         if ($v -and $v -notmatch '^\d+(\.\d+)?$') { $errors.Add("$k='$v' must be a number") }
     }
-    foreach ($k in 'MAX_MIGRATION_TIME', 'MASS_MIGRATION_TIME', 'MASS_MIGRATION_DISABLE_TIME', 'STOP_TIMEOUT', 'BACKUP_RETENTION', 'REGION_SPAWN_COOLDOWN_SECONDS', 'NET_TICK_RATE') {
+    foreach ($k in 'MAX_MIGRATION_TIME', 'MASS_MIGRATION_TIME', 'MASS_MIGRATION_DISABLE_TIME', 'STOP_TIMEOUT', 'BACKUP_RETENTION', 'REGION_SPAWN_COOLDOWN_SECONDS', 'NET_TICK_RATE', 'AI_SPAWN_INTERVAL') {
         $v = C $k
         if ($v -and $v -notmatch '^\d+$') { $errors.Add("$k='$v' must be a whole number") }
     }
@@ -428,6 +434,7 @@ function Get-GameIni {
     $o.Add("PlantSpawnMultiplier=$(C 'PLANT_SPAWN_MULTIPLIER' '1')")
     $o.Add("bSpawnAI=$(UeBool (C 'SPAWN_AI' 'true'))")
     $o.Add("AIDensity=$(C 'AI_DENSITY' '1')")
+    $o.Add("AISpawnInterval=$(C 'AI_SPAWN_INTERVAL' '40')")
     $o.Add("bEnableMigration=$(UeBool (C 'ENABLE_MIGRATION' 'true'))")
     $o.Add("MaxMigrationTime=$(C 'MAX_MIGRATION_TIME' '5400')")
     $o.Add("bEnableMassMigration=$(UeBool (C 'ENABLE_MASS_MIGRATION' 'true'))")
@@ -1223,6 +1230,90 @@ function Invoke-ListCommand([string]$kind) {
 
 # ------------------------------------------------------ profiles / presets --
 function Get-OverlayDescription([string]$file) { return ((Get-Content $file -TotalCount 1) -replace '^# [A-Za-z]+: \S+ - ', '') }
+# ------------------------------------------------------------------- maps ---
+function Get-MapEntries {
+    $file = Join-Path $RepoDir 'config\maps.txt'
+    if (-not (Test-Path $file)) { return @() }
+    $out = foreach ($line in [IO.File]::ReadAllLines($file)) {
+        $t = $line.Trim()
+        if (-not $t -or $t.StartsWith('#')) { continue }
+        $f = $t -split '\s+', 4
+        $desc = ''; if ($f.Count -gt 3) { $desc = $f[3] }
+        [pscustomobject]@{ Name = $f[0]; Branch = $f[1]; Status = $f[2]; Description = $desc }
+    }
+    return @($out)
+}
+function Get-MapEntry([string]$name) { return (Get-MapEntries | Where-Object { $_.Name -ceq $name } | Select-Object -First 1) }
+function Invoke-MapsCommand {
+    $sub = 'list'; $rest = @()
+    if ($Items -and $Items.Count -gt 0) { $sub = $Items[0].ToLowerInvariant(); $rest = @($Items | Select-Object -Skip 1) }
+    $cur = C 'MAP_NAME'
+    $known = (Get-MapEntries | ForEach-Object Name) -join ' '
+    switch ($sub) {
+        'list' {
+            foreach ($m in Get-MapEntries) {
+                $mark = ' '; if ($m.Name -ceq $cur) { $mark = '*' }
+                Write-Host ('{0} {1,-12} {2,-18} {3,-9} {4}' -f $mark, $m.Name, $m.Branch, $m.Status, $m.Description)
+            }
+            Write-Host ''; Write-Host "  * = current (MAP_NAME=$cur, STEAM_BRANCH=$(C 'STEAM_BRANCH'))"
+        }
+        'show' {
+            $name = $cur; if ($rest.Count) { $name = $rest[0] }
+            $m = Get-MapEntry $name
+            if (-not $m) { throw "Unknown map '$name' (known: $known)" }
+            Write-Host ("Map          : {0}`nSteam branch : {1}`nStatus       : {2}`nAbout        : {3}" -f $m.Name, $m.Branch, $m.Status, $m.Description)
+        }
+        'set' {
+            if (-not $rest.Count) { throw 'Usage: IsleServer.ps1 Maps set <name> [--keep-branch]' }
+            $m = Get-MapEntry $rest[0]
+            if (-not $m) { throw "Unknown map '$($rest[0])' (known: $known). Names are case-sensitive; add new maps to config\maps.txt" }
+            Set-ConfigValue 'MAP_NAME' $m.Name
+            if ($rest -notcontains '--keep-branch' -and $m.Branch -ne '-' -and $m.Branch -ne (C 'STEAM_BRANCH')) {
+                Set-ConfigValue 'STEAM_BRANCH' $m.Branch
+                Write-Ok "Map set to $($m.Name) and Steam branch to $($m.Branch)"
+                Write-Warn 'Different branch: stop the server, then run IsleServer.ps1 Validate to download that build before starting'
+            } else { Write-Ok "Map set to $($m.Name)" }
+            if ($m.Status -eq 'archived') { Write-Warn "$($m.Name) is an archived build: it receives no updates or new species" }
+            Write-Step 'Restart the server to load the new map'
+        }
+        default { throw 'Usage: IsleServer.ps1 Maps list|show [name]|set <name> [--keep-branch]' }
+    }
+}
+
+# --------------------------------------------------------------------- AI ---
+function Invoke-AICommand {
+    $sub = 'status'; $rest = @()
+    if ($Items -and $Items.Count -gt 0) { $sub = $Items[0].ToLowerInvariant(); $rest = @($Items | Select-Object -Skip 1) }
+    switch ($sub) {
+        'status' {
+            $dis = C 'DISABLED_AI_CLASSES'; if (-not $dis) { $dis = '(none - every AI class spawns)' }
+            Write-Host ("Spawn AI       : {0}`nDensity        : {1}`nSpawn interval : {2} s`nDisabled       : {3}" -f (C 'SPAWN_AI' 'true'), (C 'AI_DENSITY' '1'), (C 'AI_SPAWN_INTERVAL' '40'), $dis)
+        }
+        { $_ -in 'on', 'off' } {
+            $v = 'false'; if ($sub -eq 'on') { $v = 'true' }
+            Set-ConfigValue 'SPAWN_AI' $v
+            Write-Ok "AI spawning $sub - applied on the next restart"
+        }
+        'density' {
+            if (-not $rest.Count -or $rest[0] -notmatch '^\d+(\.\d+)?$') { throw 'Usage: IsleServer.ps1 AI density <number>, e.g. 0.5 (half), 1 (default), 2 (double)' }
+            Set-ConfigValue 'AI_DENSITY' $rest[0]
+            Write-Ok "AI density $($rest[0])"
+            Send-LiveRcon @('aidensity', $rest[0])
+        }
+        'interval' {
+            if (-not $rest.Count -or $rest[0] -notmatch '^\d+$' -or [int]$rest[0] -lt 1) { throw 'Usage: IsleServer.ps1 AI interval <seconds>, e.g. 40 (default)' }
+            Set-ConfigValue 'AI_SPAWN_INTERVAL' $rest[0]
+            Write-Ok "AI spawn interval $($rest[0])s - applied on the next restart"
+        }
+        'preset' {
+            if (-not $rest.Count -or -not $rest[0].StartsWith('ai-')) { throw 'Usage: IsleServer.ps1 AI preset <ai-name> (see: IsleServer.ps1 Preset list)' }
+            $script:Items = @('apply', $rest[0])
+            Invoke-OverlayCommand 'Preset'
+        }
+        default { throw 'Usage: IsleServer.ps1 AI status|on|off|density <n>|interval <s>|preset <ai-name>' }
+    }
+}
+
 function Invoke-OverlayCommand([string]$kind) {
     $dir = Join-Path $RepoDir ("config\" + $kind.ToLowerInvariant() + 's')
     $sub = 'list'; $rest = @()
@@ -1296,6 +1387,8 @@ function Invoke-ConfigTool([string]$cmd) {
     switch ($cmd) {
         { $_ -in 'Admins', 'Whitelist', 'Classes', 'AIClasses' } { Invoke-ListCommand $cmd; return $true }
         { $_ -in 'Profile', 'Preset' } { Invoke-OverlayCommand $cmd; return $true }
+        'Maps' { Invoke-MapsCommand; return $true }
+        'AI' { Invoke-AICommand; return $true }
         'Plugins' {
             $a = @('list'); if ($Items -and $Items.Count) { $a = $Items }
             $rc = Invoke-Plugins $a

@@ -66,7 +66,7 @@ PS_NAMES = {"start": "Start", "stop": "Stop", "restart": "Restart", "save": "Sav
             "update": "Update", "validate": "Validate", "status": "Status", "info": "Info", "check": "Check",
             "logs": "Logs", "admins": "Admins", "whitelist": "Whitelist", "classes": "Classes",
             "ai-classes": "AIClasses", "profile": "Profile", "preset": "Preset", "plugins": "Plugins",
-            "snapshot": "Snapshot", "version": "Version"}
+            "snapshot": "Snapshot", "version": "Version", "ai": "AI", "maps": "Maps"}
 
 
 class ApiError(Exception):
@@ -266,6 +266,27 @@ def overlay_files(kind):
             settings = dict(l.split("=", 1) for l in lines if re.match(r"^[A-Z_][A-Z0-9_]*=", l))
             items.append({"name": name[:-5], "description": desc, "settings": settings})
     return items
+
+
+def map_catalog():
+    """config/maps.txt -> [{name, branch, status, description}]"""
+    path = os.path.join(REPO, "config", "maps.txt")
+    out = []
+    if os.path.isfile(path):
+        for line in open(path, encoding="utf-8"):
+            t = line.strip()
+            if t and not t.startswith("#"):
+                parts = t.split(None, 3)
+                out.append({"name": parts[0], "branch": parts[1] if len(parts) > 1 else "-",
+                            "status": parts[2] if len(parts) > 2 else "", "description": parts[3] if len(parts) > 3 else ""})
+    return out
+
+
+def number(value, default):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def snapshot_manifest(path):
@@ -629,6 +650,78 @@ class Api(object):
             raise ApiError(404, "Unknown preset", ", ".join(bad) or "no presets given")
         return ensure_ok(*self.env.run("preset", ["apply"] + names))
 
+    # ------------------------------------------------------------- map & AI
+    @route("GET", "/api/v1/maps", "listMaps", "World", "Known maps (config/maps.txt) and the current map",
+           responses={"200": obj({"current": STR, "branch": STR, "maps": {"type": "array", "items": obj({
+               "name": STR, "branch": STR, "status": STR, "description": STR, "current": {"type": "boolean"}})}})})
+    def world_maps(self, req):
+        v = self.env.values()
+        cur = v.get("MAP_NAME", "Gateway")
+        items = map_catalog()
+        for m in items:
+            m["current"] = m["name"] == cur
+        return {"current": cur, "branch": v.get("STEAM_BRANCH", ""), "maps": items}
+
+    @route("PUT", "/api/v1/map", "setMap", "World", "Switch the map (and its Steam branch; update before the next start)",
+           body=obj({"name": STR, "keep_branch": {"type": "boolean"}}, ["name"]), responses={"200": OUTPUT})
+    def world_map_set(self, req):
+        name = need(req.body, "name", "str")
+        if name not in [m["name"] for m in map_catalog()]:
+            raise ApiError(404, "Unknown map", "%s (names are case-sensitive; see GET /api/v1/maps)" % name)
+        args = ["set", name] + (["--keep-branch"] if req.body.get("keep_branch") is True else [])
+        return ensure_ok(*self.env.run("maps", args))
+
+    @route("GET", "/api/v1/ai", "getAi", "World", "AI spawning, density, spawn interval, disabled classes and AI presets",
+           responses={"200": obj({"spawn": {"type": "boolean"}, "density": {"type": "number"}, "interval": {"type": "integer"},
+                                  "disabled": STR_LIST, "known": {"type": "array", "items": obj({"name": STR, "diet": {"type": ["string", "null"]}})},
+                                  "presets": {"type": "array", "items": {"$ref": "#/components/schemas/Overlay"}}})})
+    def world_ai(self, req):
+        v = self.env.values()
+        return {"spawn": v.get("SPAWN_AI", "true").lower() in ("true", "yes", "1", "on"),
+                "density": number(v.get("AI_DENSITY"), 1.0), "interval": int(number(v.get("AI_SPAWN_INTERVAL"), 40)),
+                "disabled": list_value(v, "DISABLED_AI_CLASSES"), "known": known_classes("ai"),
+                "presets": [p for p in overlay_files("preset") if p["name"].startswith("ai-")]}
+
+    @route("PATCH", "/api/v1/ai", "setAi", "World", "Change AI spawning, density (live via RCON) and spawn interval",
+           body=obj({"spawn": {"type": "boolean"}, "density": {"type": "number", "minimum": 0, "maximum": 10},
+                     "interval": {"type": "integer", "minimum": 1, "maximum": 86400}}), responses={"200": OUTPUT})
+    def world_ai_patch(self, req):
+        body = req.body if isinstance(req.body, dict) else {}
+        if not body:
+            raise ApiError(422, "Validation failed", "send spawn, density and/or interval")
+        unknown = [k for k in body if k not in ("spawn", "density", "interval")]
+        if unknown:
+            raise ApiError(422, "Validation failed", "unknown field(s): %s" % ", ".join(unknown))
+        steps = []
+        if "spawn" in body:
+            if not isinstance(body["spawn"], bool):
+                raise ApiError(422, "Validation failed", "'spawn' must be true or false")
+            steps.append(["on" if body["spawn"] else "off"])
+        if "density" in body:
+            d = body["density"]
+            if isinstance(d, bool) or not isinstance(d, (int, float)) or not 0 <= d <= 10:
+                raise ApiError(422, "Validation failed", "'density' must be a number from 0 to 10")
+            steps.append(["density", ("%g" % d)])
+        if "interval" in body:
+            i = body["interval"]
+            if isinstance(i, bool) or not isinstance(i, int) or not 1 <= i <= 86400:
+                raise ApiError(422, "Validation failed", "'interval' must be whole seconds from 1 to 86400")
+            steps.append(["interval", str(i)])
+        out = []
+        for args in steps:
+            code, text = self.env.run("ai", args)
+            ensure_ok(code, text)
+            out.append(text.strip())
+        return result(0, "\n".join(out))
+
+    @route("POST", "/api/v1/ai/preset", "applyAiPreset", "World", "Apply an AI preset (ai-*)",
+           body=obj({"name": STR}, ["name"]), responses={"200": OUTPUT})
+    def world_ai_preset(self, req):
+        name = need(req.body, "name", "str")
+        if not name.startswith("ai-") or name not in [p["name"] for p in overlay_files("preset")]:
+            raise ApiError(404, "Unknown AI preset", name)
+        return ensure_ok(*self.env.run("ai", ["preset", name]))
+
     # --------------------------------------------------------------- plugins
     def _plugin_ctx(self):
         return isle_plugins.Context(self.env.conf, self.env.launcher, self.env.runtime())
@@ -647,6 +740,33 @@ class Api(object):
                         "installed": name in inst, "enabled": name in enabled,
                         "source": entries.get(name, {}).get("catalog", "local"), "tags": entries.get(name, {}).get("tags", [])})
         return {"plugins": out, "presets": presets}
+
+    @route("GET", "/api/v1/plugins/sources", "listPluginSources", "Plugins", "Extra plugin catalogs (JSON over HTTPS)",
+           responses={"200": obj({"sources": STR_LIST})})
+    def plugin_sources(self, req):
+        return {"sources": self._plugin_ctx().sources()}
+
+    @route("POST", "/api/v1/plugins/sources", "addPluginSource", "Plugins", "Add a plugin catalog URL (third-party code: add only catalogs you trust)",
+           body=obj({"url": {"type": "string", "pattern": "^https://"}}, ["url"]), responses={"200": OUTPUT})
+    def plugin_source_add(self, req):
+        url = need(req.body, "url", "str").strip()
+        if not re.match(r"^https://[^\s]+$", url) or len(url) > 500:
+            raise ApiError(422, "Validation failed", "a catalog must be an https:// URL")
+        return ensure_ok(*self.env.run("plugins", ["sources", "add", url]))
+
+    @route("DELETE", "/api/v1/plugins/sources", "removePluginSource", "Plugins", "Remove a plugin catalog URL",
+           params=[{"name": "url", "in": "query", "required": True, "schema": STR}], responses={"200": OUTPUT})
+    def plugin_source_remove(self, req):
+        url = (req.query.get("url") or [""])[0]
+        if url not in self._plugin_ctx().sources():
+            raise ApiError(404, "Unknown catalog", url)
+        return ensure_ok(*self.env.run("plugins", ["sources", "remove", url]))
+
+    @route("GET", "/api/v1/plugins/community", "listCommunity", "Plugins",
+           "Community tools, libraries and guides (third-party, listed not endorsed) and notes on mods",
+           responses={"200": {"type": "object"}})
+    def plugin_community(self, req):
+        return isle_plugins.community_data()
 
     @route("GET", "/api/v1/plugins/{name}", "getPlugin", "Plugins", "Plugin details and settings (secrets masked)",
            params=[{"name": "name", "in": "path", "required": True, "schema": STR}],
@@ -790,7 +910,7 @@ def build_spec():
                  "license": {"name": "MIT", "identifier": "MIT"}},
         "servers": [{"url": "/"}],
         "security": [{"bearerAuth": []}],
-        "tags": [{"name": t} for t in ("System", "Server", "Jobs", "Settings", "Players", "Roster", "Profiles", "Plugins", "Snapshots")],
+        "tags": [{"name": t} for t in ("System", "Server", "Jobs", "Settings", "Players", "Roster", "World", "Profiles", "Plugins", "Snapshots")],
         "paths": paths,
         "components": {
             "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},

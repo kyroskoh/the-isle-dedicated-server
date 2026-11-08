@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.4 |
-| **Product version** | 1.10.0 (released) |
+| **Product version** | 1.11.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -309,6 +309,19 @@ Priority: **M** = must, **S** = should, **C** = could.
 | LOG-04 | M | **Dated names** | Backups, final backups, snapshots, replaced worlds and config backups end with `_yyyymmdd_hhmmss`; older `-yyyymmdd-hhmmss` names are still recognised |
 | LOG-05 | M | **Access** | `isle-server logs [-f] [game\|server\|launcher\|ui\|list]`, `IsleServer.ps1 Logs launcher\|ui\|list`, `GET /api/v1/log-files[/{name}]`, the UI Logs page |
 
+### 6.17 Maps, AI and community sources (MAP, AIX, PLG)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| MAP-01 | M | **Map catalog** `config/maps.txt` (name, Steam branch, status, description) | Gateway (`evrima`, current) and Isla Spiro (`spiro0.11.59.04`, archived, branch community-reported); a new map is one line |
+| MAP-02 | M | **Switch maps** | `isle-server maps list\|show\|set` / `IsleServer.ps1 Maps`, `PUT /api/v1/map`, UI Map & AI page: sets `MAP_NAME` and the map's `STEAM_BRANCH` (`--keep-branch` to keep it), warns to validate and about archived builds; names are case-sensitive |
+| MAP-03 | S | **Validation** | `check` warns (does not fail) on a `MAP_NAME` that is not in the catalog |
+| AIX-01 | M | **AI settings** | `AI_SPAWN_INTERVAL` → `AISpawnInterval`; `ai status\|on\|off\|density\|interval\|preset` on both OSes; density also live over RCON; `GET/PATCH /api/v1/ai`; validated (density 0-10, interval whole seconds) |
+| AIX-02 | M | **AI presets** | `ai-normal`, `ai-low`, `ai-high`, `ai-off`, `ai-fast-respawn`, `ai-slow-respawn`, `ai-prey-only`; `POST /api/v1/ai/preset` accepts only `ai-*` |
+| AIX-03 | S | **AI roles** | `config/classes.txt` gives each AI class a role (carnivore, flying, prey, aquatic) shown in the UI |
+| PLG-08 | M | **Community resources** | `plugins/community.json` (checked links; third-party, not endorsed; note on mods), `plugins community`, `GET /api/v1/plugins/community`, UI card; links open in a new tab with `noopener` |
+| PLG-09 | M | **Catalog sources in the UI/API** | `GET/POST/DELETE /api/v1/plugins/sources` (https only), UI card with confirmation and the trust warning |
+
 ## 7. CLI contract
 
 | Command | Linux (`isle-server.sh`) | Windows (`IsleServer.ps1`) | Exit codes |
@@ -413,6 +426,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M11 Uninstall data choices (v1.6.0) | INS-20: keep/remove per data category, menu, safety backup, both installers, CI | ✅ Done (v1.6.0). Linux verified by the cycle test (70 checks). Windows native paths covered by Windows CI; Windows Docker-volume paths parse-checked only |
 | M12 Config tools & plugins (v1.7.0) | CFX-01 – CFX-09, PLG-01 – PLG-07 | ✅ Done (v1.7.0). Linux + PowerShell 7 verified locally, Windows PowerShell 5.1 by CI. Live RCON pushes and real Discord/NAS targets need a live server (M6) |
 | M13 Snapshots & mode-switch data choices (v1.8.0) | MIG-01 – MIG-08 | ✅ Done (v1.8.0). Linux cycle (92 checks), snapshot tests, PowerShell 7 suites locally; Windows PowerShell 5.1 and Windows Docker Desktop paths via CI/field test (M6) |
+| M16 Maps, AI options & community sources (v1.11.0) | MAP-01 – MAP-03, AIX-01 – AIX-03, PLG-08 – PLG-09 | ✅ Done (v1.11.0). Config tool suites (bash, PowerShell), API and UI tests; Isla Spiro branch needs a field check (M6) |
 | M15 Logs, time zone, date display, peek & responsive (v1.10.0) | LOG-01 – LOG-05, UI-06 – UI-08 | ✅ Done (v1.10.0). `tests/test_logs.py`, `tests/test_logs.ps1`, UI suites on Chromium/Firefox/WebKit in CI |
 | M14 API, web UI & Debian verification (v1.9.0) | API-01 – API-05, UI-01 – UI-05, DEB-01 | ✅ Done (v1.9.0). API and UI suites on Linux and in the Debian image, Playwright UI test in CI, native Debian install job. Systemd `theisle-ui` unit and the Windows `TheIsleServer-UI` task need a field test (M6) |
 
@@ -443,6 +457,8 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | API-01 – API-05 | `tools/isle_api.py` (spec generated at `/openapi.json`) | `tests/test_api.py` | ✅ v1.9 |
 | UI-01 – UI-05 | `ui/`, `ui` command in both launchers, installer `--ui` / `-UI` | `tests/test_ui.mjs` (Playwright), `tests/test_native_debian.sh`, CI | ✅ v1.9 |
 | DEB-01 | CI `docker` (real Debian image), `debian-native` job | `tests/test_native_debian.sh`, CI | ✅ v1.9 |
+| MAP-01 – MAP-03, AIX-01 – AIX-03 | `config/maps.txt`, `cmd_maps`/`cmd_ai` (Linux), `Invoke-MapsCommand`/`Invoke-AICommand` (Windows), API, `pageWorld` | `tests/test_config_tools.sh`, `tests/test_config_tools.ps1`, `tests/test_api.py`, `tests/test_ui.mjs` | ✅ v1.11 |
+| PLG-08 – PLG-09 | `plugins/community.json`, `isle_plugins.py community`, API, Plugins page | `tests/test_api.py`, `tests/test_ui.mjs` | ✅ v1.11 |
 | LOG-01 – LOG-05 | `tools/isle_logs.py`, `file_log`/`log_writer` (Linux), `Write-FileLog` (Windows), installers, API | `tests/test_logs.py`, `tests/test_logs.ps1`, `tests/test_api.py` | ✅ v1.10 |
 | UI-06 – UI-08 | `ui/datetime.js`, `ui/peek.js`, `ui/styles.css` | `tests/test_ui.mjs`, `tests/test_ui_overflow.mjs` (3 engines in CI) | ✅ v1.10 |
 | CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |

@@ -27,8 +27,12 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 - **Native or Docker, same launcher.** Set `RUNTIME=docker` (or pass `--docker` / `-Runtime Docker`) and the same commands and `.bat` files manage a container instead.
 - **Switch, clone and migrate.** Switch native <-> Docker by reinstalling with `--data copy|move|fresh` and `--carry worlds,backups,settings,overrides,plugins`. **Portable snapshots** move or clone a server to another machine or OS, in either runtime, with `snapshot create` and then `--from-snapshot`. See [MIGRATION.md](MIGRATION.md).
 - **Every Game.ini / Engine.ini key** through override files, an annotated key reference, **7 profiles** (realism, casual, hardcore-pvp, ...), **22 stackable presets**, and **roster presets**.
+- **Maps and AI.** `isle-server maps set Isla_Spiro` switches the map together with its Steam branch (Gateway or the
+  archived Isla Spiro build). `isle-server ai density|interval|on|off|preset` tunes AI creatures, and the web UI has a
+  **Map & AI** page for both.
 - **Admin, whitelist and roster commands** (`admins`, `whitelist`, `classes`, `ai-classes`) with SteamID and class validation. Whitelist and roster changes apply live over RCON.
-- **Plugin manager** with search, install, update and presets (base, recommended, full). First-party plugins: scheduled restart countdown, Discord notifications, off-site backups, welcome announcement. Third-party catalogs must be SHA-256-pinned. See [PLUGINS.md](PLUGINS.md).
+- **Plugin manager** with community catalog sources, a list of community tools (`plugins community`), search, install,
+  update and presets (base, recommended, full). First-party plugins: scheduled restart countdown, Discord notifications, off-site backups, welcome announcement. Third-party catalogs must be SHA-256-pinned. See [PLUGINS.md](PLUGINS.md).
 - **Config validation.** `check` catches bad ports, typos in true/false values, a missing RCON password and malformed SteamIDs before the server launches.
 - **Installers with two modes, native or Docker** (you choose, or pick at the prompt). They set up dependencies, SteamCMD, the server (Steam app `412680`, branch `evrima`), firewall rules and a boot-time service, or a container. Re-run them to update or to switch modes. **Uninstall lets you choose** what to keep: everything (default), everything except the re-downloadable game files, no worlds, or nothing. A later reinstall in either mode picks it up again, importing it from the other mode if needed. `--purge` wipes everything.
 - **Optional web UI and REST API** (`isle-server ui`, `UI.bat`, or at boot with `install.sh --ui` / `Install.bat -UI`).
@@ -101,6 +105,7 @@ Then forward these ports on your router or cloud firewall:
 | Check the config | `isle-server check` | `IsleServer.ps1 Check` |
 | Apply a profile / presets | `isle-server profile apply realism`, `isle-server preset apply ai-low short-nights` | `Manage.bat Profile apply realism` |
 | Admins / whitelist | `isle-server admins add <id>`, `isle-server whitelist add <id>` | `Manage.bat Admins add <id>`, `Manage.bat Whitelist add <id>` |
+| Map / AI | `isle-server maps set Isla_Spiro`, `isle-server ai density 0.5` | `Manage.bat Maps set Isla_Spiro`, `Manage.bat AI density 0.5` |
 | Playable roster | `isle-server classes preset carnivores`, `isle-server classes add Triceratops` | `Manage.bat Classes preset carnivores` |
 | Plugins | `isle-server plugins preset recommended` | `Manage.bat Plugins preset recommended` |
 | Snapshot (move/clone) | `isle-server snapshot create`, `isle-server snapshot restore <file>` | `Manage.bat Snapshot create` |

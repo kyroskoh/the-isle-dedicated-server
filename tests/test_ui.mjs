@@ -154,7 +154,7 @@ try {
   await ck("cancel keeps it running", async () => { await sleep(800); return (await page.textContent("#status-pill")) === "Running"; });
 
   console.log("## pages");
-  const pages = [["settings", "Settings"], ["players", "Players"], ["roster", "Roster"], ["profiles", "Profiles & presets"], ["plugins", "Plugins"],
+  const pages = [["settings", "Settings"], ["players", "Players"], ["roster", "Roster"], ["world", "Map & AI"], ["profiles", "Profiles & presets"], ["plugins", "Plugins"],
     ["snapshots", "Snapshots & backups"], ["logs", "Logs"], ["console", "RCON console"]];
   for (const [route, title] of pages) {
     await page.click(`#nav a[href="#/${route}"]`);
@@ -196,6 +196,35 @@ try {
   await page.click(".chip:has-text('Tyrannosaurus') >> nth=0");
   await page.click(".card-head button:has-text('Save') >> nth=0");
   await ck("roster saved", async () => { await page.waitForSelector(".toast:has-text('Playable roster saved')"); return conf_("ALLOWED_CLASSES") === "Tyrannosaurus"; });
+
+  console.log("## map & AI, plugin sources");
+  await page.click('#nav a[href="#/world"]');
+  await page.waitForSelector(".map h3");
+  await ck("maps listed with branch and status", async () => (await page.locator(".map h3").allTextContents()).includes("Isla_Spiro") && (await page.isVisible(".map.current")));
+  await page.click(".map:has-text('Isla_Spiro') button");
+  await ck("switching map warns about the branch", async () => { await page.waitForSelector("#confirm[open]"); return /spiro0\.11\.59\.04/.test(await page.textContent("#confirm-text")); });
+  await page.click("#confirm button[value='ok']");
+  await ck("map and branch written", async () => { await page.waitForSelector(".toast:has-text('Map set to Isla_Spiro')"); return conf_("MAP_NAME") === "Isla_Spiro" && conf_("STEAM_BRANCH") === "spiro0.11.59.04"; });
+  await page.fill("#ai-density", "0.6");
+  await page.fill("#ai-interval", "30");
+  await page.click("button:has-text('Save AI settings')");
+  await ck("AI settings saved", async () => { await page.waitForSelector(".toast:has-text('AI settings saved')"); return conf_("AI_DENSITY") === "0.6" && conf_("AI_SPAWN_INTERVAL") === "30"; });
+  await page.fill("#ai-interval", "2.5");
+  await page.click("button:has-text('Save AI settings')");
+  await ck("bad interval refused in the browser", async () => (await page.getAttribute("#ai-interval", "aria-invalid")) === "true" && conf_("AI_SPAWN_INTERVAL") === "30");
+  await ck("disabled AI picker with roles", async () => (await page.locator(".chip .badge", { hasText: "aquatic" }).count()) === 1);
+  await page.click('#nav a[href="#/plugins"]');
+  await page.waitForSelector("input[aria-label='Catalog URL']");
+  await page.fill("input[aria-label='Catalog URL']", "http://insecure.example/c.json");
+  await page.click("form.input-group button:has-text('Add')");
+  await ck("catalog must be https", async () => (await page.getAttribute("input[aria-label='Catalog URL']", "aria-invalid")) === "true");
+  await page.fill("input[aria-label='Catalog URL']", "https://example.org/isle/catalog.json");
+  await page.click("form.input-group button:has-text('Add')");
+  await page.click("#confirm button[value='ok']");
+  await ck("catalog added", async () => { await page.waitForSelector("code:text('https://example.org/isle/catalog.json')"); return true; });
+  await ck("community links open in a new tab", async () => { await page.waitForSelector("li.community a");
+    return page.evaluate(() => [...document.querySelectorAll("li.community a")].every((a) => a.target === "_blank" && /noopener/.test(a.rel) && a.href.startsWith("https://"))); });
+  await shot(page, "06-plugins-community");
 
   console.log("## date & time preferences");
   await page.click('#nav a[href="#/"]');

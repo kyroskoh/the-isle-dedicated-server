@@ -171,14 +171,33 @@ async function open(ctx, page, url) {
     }
   }
 }
+/* page events (errors, crashes) per page, printed when a step fails, to tell app bugs from engine/emulation issues */
+const events = new WeakMap();
+function watch(page) {
+  const list = [];
+  events.set(page, list);
+  page.on("console", (m) => { if (m.type() === "error" || m.type() === "warning") list.push(`console.${m.type()}: ${m.text().slice(0, 200)}`); });
+  page.on("pageerror", (e) => list.push("pageerror: " + e.message.slice(0, 200)));
+  page.on("crash", () => list.push("crash"));
+  return page;
+}
+function dump(page, why) {
+  const list = events.get(page) || [];
+  console.log(`  note: ${why}; page events: ${list.length ? "\n    " + list.slice(-12).join("\n    ") : "none"}`);
+}
 /* reload; a crashed tab or a stuck reload is retried once on a new page (a crash our page caused would repeat) */
 async function reloadPage(ctx, page) {
   try { await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }); return page; } catch (e) {
-    console.log(`  note: reload failed (${e.message.split("\n")[0]}) - retrying on a new page`);
+    dump(page, `reload failed (${e.message.split("\n")[0]}) - retrying on a new page`);
     const url = page.url();
     try { await page.close(); } catch { /* crashed */ }
-    const fresh = await ctx.newPage();
+    const fresh = watch(await ctx.newPage());
     await fresh.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // sessionStorage is per tab: a new page needs the token again
+    await fresh.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
+    const u = new URL(url);
+    u.search = "?retry=" + Date.now();   // a real load (a hash change would not re-run the app with the token)
+    await fresh.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
     return fresh;
   }
 }
@@ -186,13 +205,13 @@ const settle = async (page) => {
   for (let i = 0; i < 80; i++) { if (await page.evaluate(() => !document.querySelector("#content [role=status]"))) break; await sleep(100); }
   await sleep(150);
 };
-const ROUTES = ["", "settings", "players", "roster", "profiles", "plugins", "snapshots", "logs", "console"];
+const ROUTES = ["", "settings", "players", "roster", "world", "profiles", "plugins", "snapshots", "logs", "console"];
 const WIDTHS = [1440, 1280, 1024, 820, 600, 390, 320];
 try {
   for (const scheme of ["light", "dark"]) {
     for (const width of WIDTHS) {
       const ctx = await newCtx({ viewport: { width, height: 900 }, colorScheme: scheme, ...MOTION });
-      let page = await ctx.newPage();
+      let page = watch(await ctx.newPage());
       page = await open(ctx, page, BASE + "/");
       if (scheme === "light" && width === WIDTHS[0]) {
         report(`login @${width}`, await page.evaluate(audit));
@@ -279,13 +298,13 @@ try {
   for (const [label, w, hgt] of DEVICES) {
     const touch = w < 1300;
     const ctx = await newCtx({ viewport: { width: w, height: hgt }, hasTouch: touch, isMobile: touch && MOBILE, ...MOTION });
-    let page = await ctx.newPage();
+    let page = watch(await ctx.newPage());
     page = await open(ctx, page, BASE + "/");
     await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
     page = await reloadPage(ctx, page);
     for (const route of ROUTES) {
       await page.evaluate((r) => { location.hash = "#/" + r; }, route);
-      await page.waitForSelector("#content h1");
+      try { await page.waitForSelector("#content h1", { timeout: 20000 }); } catch (e) { dump(page, `${label} ${route || "dashboard"} did not render`); throw e; }
       await settle(page);
       report(`${label} ${route || "dashboard"}`, await page.evaluate(audit));
     }

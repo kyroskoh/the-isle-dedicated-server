@@ -19,6 +19,7 @@ Commands:
     run <name> [command] [args...]     run a plugin command (default: "run")
     config <name> [KEY=VALUE ...]      show or change a plugin's settings
     sources [add <url>|remove <url>]   extra catalogs (JSON over HTTPS)
+    community [--json]                 community tools, libraries and guides (plugins/community.json)
     hook <event>                       run hooks of enabled plugins (used by the launchers)
 
 Layout:
@@ -605,6 +606,34 @@ def cmd_sources(ctx, opts):
     return 0
 
 
+def community_data():
+    path = os.path.join(REPO, "plugins", "community.json")
+    if not os.path.isfile(path):
+        return {"links": [], "catalogs": [], "mods": "", "catalog_help": ""}
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def cmd_community(ctx, opts):
+    data = community_data()
+    if getattr(opts, "json", False):
+        print(json.dumps(data, indent=2))
+        return 0
+    say("Community resources (third-party - listed, not installed or endorsed):")
+    for item in data.get("links", []):
+        say("  %-34s %-13s %s" % (item["name"], item.get("kind", ""), item["url"]))
+        if item.get("description"):
+            say("      " + item["description"])
+    for cat in data.get("catalogs", []):
+        say("  catalog: %s  (add with: isle-server plugins sources add %s)" % (cat.get("name", ""), cat.get("url", "")))
+    if data.get("mods"):
+        say("")
+        say("Mods: " + data["mods"])
+    if data.get("catalog_help"):
+        say("Catalogs: " + data["catalog_help"])
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="isle-server plugins", description="Plugin manager")
     parser.add_argument("--conf", default=os.environ.get("ISLE_CONF"))
@@ -623,13 +652,14 @@ def main(argv=None):
     p = sub.add_parser("run"); p.add_argument("name"); p.add_argument("plugin_command", nargs="?"); p.add_argument("args", nargs=argparse.REMAINDER)
     p = sub.add_parser("config"); p.add_argument("name"); p.add_argument("pairs", nargs="*")
     p = sub.add_parser("sources"); p.add_argument("source_action", nargs="?", choices=["add", "remove"]); p.add_argument("url", nargs="?")
+    p = sub.add_parser("community"); p.add_argument("--json", action="store_true")
     p = sub.add_parser("hook"); p.add_argument("event")
     opts = parser.parse_args(argv)
     ctx = Context(opts.conf, opts.launcher, opts.runtime)
     handlers = {
         "list": cmd_list, "search": cmd_search, "info": cmd_info, "install": cmd_install,
         "remove": cmd_remove, "update": cmd_update, "preset": cmd_preset, "run": cmd_run,
-        "config": cmd_config, "sources": cmd_sources,
+        "config": cmd_config, "sources": cmd_sources, "community": cmd_community,
         "enable": lambda c, o: cmd_enable(c, o, True), "disable": lambda c, o: cmd_enable(c, o, False),
         "hook": lambda c, o: run_hooks(c, o.event),
     }

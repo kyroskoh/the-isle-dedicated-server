@@ -101,6 +101,21 @@ ck "Engine override"              "[ \$(grep -c '^NetServerMaxTickRate=' $EI) = 
 sed -i "s|^INI_OVERRIDES_DIR=.*|INI_OVERRIDES_DIR=$T/nowhere|" "$ISLE_CONF"; out configure >/dev/null
 ck "INI_OVERRIDES_DIR is honoured" "grep -q '^NetServerMaxTickRate=30' $EI"
 
+echo "## maps and AI (MAP-01..03, AIX-01..03)"
+ck "maps list"                    "out maps list | grep -q '^\* Gateway' && out maps list | grep -q Isla_Spiro"
+ck "maps set switches branch"     "out maps set Isla_Spiro >/dev/null && [ \"\$(conf MAP_NAME)\" = Isla_Spiro ] && [ \"\$(conf STEAM_BRANCH)\" = spiro0.11.59.04 ]"
+ck "maps set --keep-branch"       "out maps set Gateway --keep-branch >/dev/null && [ \"\$(conf STEAM_BRANCH)\" = spiro0.11.59.04 ]"
+ck "maps names are case-sensitive" "! out maps set gateway >/dev/null && out maps set Gateway >/dev/null && [ \"\$(conf STEAM_BRANCH)\" = evrima ]"
+ck "unknown MAP_NAME only warns"  "sed -i 's/^MAP_NAME=.*/MAP_NAME=NewMap/' $ISLE_CONF && out check | grep -q 'not in config/maps.txt' && out maps set Gateway >/dev/null"
+ck "ai density + interval"        "out ai density 0.5 >/dev/null && out ai interval 25 >/dev/null && [ \"\$(conf AI_DENSITY)\" = 0.5 ] && [ \"\$(conf AI_SPAWN_INTERVAL)\" = 25 ]"
+ck "ai bad values refused"        "! out ai density lots >/dev/null && ! out ai interval 0 >/dev/null && ! out ai interval 2.5 >/dev/null"
+ck "ai off/on"                    "out ai off >/dev/null && [ \"\$(conf SPAWN_AI)\" = false ] && out ai on >/dev/null && [ \"\$(conf SPAWN_AI)\" = true ]"
+ck "ai preset (ai-* only)"        "out ai preset ai-prey-only >/dev/null && [ \"\$(conf DISABLED_AI_CLASSES)\" = Compsognathus,Pterodactylus ] && ! out ai preset casual >/dev/null"
+ck "AISpawnInterval rendered"     "out configure >/dev/null && grep -q '^AISpawnInterval=25' $GI && grep -q '^AIDensity=0.5' $GI"
+ck "AI roles listed"              "grep -q '^Seaturtle *aquatic' $R/config/classes.txt && out ai-classes known | grep -qx Seaturtle"
+ck "bad AI_SPAWN_INTERVAL rejected" "sed -i 's/^AI_SPAWN_INTERVAL=.*/AI_SPAWN_INTERVAL=often/' $ISLE_CONF && ! out check >/dev/null; sed -i 's/^AI_SPAWN_INTERVAL=.*/AI_SPAWN_INTERVAL=40/' $ISLE_CONF"
+ck "plugins community"            "out plugins community | grep -q isle-evrima-rcon"
+
 echo "## validation"
 sed -i 's|^NET_TICK_RATE=.*|NET_TICK_RATE=fast|' "$ISLE_CONF"
 ck "bad NET_TICK_RATE rejected"   "! out check >/dev/null"

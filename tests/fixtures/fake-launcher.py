@@ -87,6 +87,34 @@ if cmd in ("admins", "whitelist", "classes", "ai-classes"):
     elif sub == "preset":
         cur = ["Tyrannosaurus", "Carnotaurus"]
     put(key, ",".join(cur)); print("[ OK ] %s: %s" % (cmd, ",".join(cur) or "(none)")); sys.exit(0)
+if cmd == "maps" and rest[:1] == ["set"]:
+    branches = {"Gateway": "evrima", "Isla_Spiro": "spiro0.11.59.04"}
+    put("MAP_NAME", rest[1])
+    if "--keep-branch" not in rest:
+        put("STEAM_BRANCH", branches.get(rest[1], get("STEAM_BRANCH")))
+    print("[ OK ] Map set to %s" % rest[1]); sys.exit(0)
+if cmd == "ai":
+    sub = rest[0] if rest else "status"
+    if sub in ("on", "off"):
+        put("SPAWN_AI", "true" if sub == "on" else "false")
+    elif sub == "density":
+        put("AI_DENSITY", rest[1])
+    elif sub == "interval":
+        put("AI_SPAWN_INTERVAL", rest[1])
+    elif sub == "preset":
+        put("DISABLED_AI_CLASSES", "Compsognathus,Pterodactylus") if rest[1] == "ai-prey-only" else None
+    print("[ OK ] ai %s" % " ".join(rest)); sys.exit(0)
+if cmd == "plugins" and rest[:1] == ["sources"]:
+    state = os.path.join(os.path.dirname(conf), "plugins")
+    os.makedirs(state, exist_ok=True)
+    path = os.path.join(state, "sources.txt")
+    cur = [l.strip() for l in open(path)] if os.path.isfile(path) else []
+    if rest[1] == "add" and rest[2] not in cur:
+        cur.append(rest[2])
+    if rest[1] == "remove":
+        cur = [c for c in cur if c != rest[2]]
+    open(path, "w").write("".join(c + "\n" for c in cur))
+    print("[ OK ] Catalog sources: %d" % len(cur)); sys.exit(0)
 if cmd in ("profile", "preset", "plugins", "snapshot"):
     if cmd == "snapshot" and rest[:1] == ["create"]:
         out = rest[rest.index("--output") + 1]

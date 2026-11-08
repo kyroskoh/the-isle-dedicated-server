@@ -17,7 +17,7 @@ Set a key in one of two ways:
 | Key | Type | Default | server.conf | Status | Description |
 |---|---|---|---|---|---|
 | `ServerName` | text | | `SERVER_NAME` | core | Name in the server browser |
-| `MapName` | text | `Gateway` | `MAP_NAME` | core | Map to load |
+| `MapName` | text | `Gateway` | `MAP_NAME` | core | Map to load (case-sensitive). `config/maps.txt` lists the known maps and their Steam branch; `isle-server maps set` switches both |
 | `MaxPlayerCount` | int | `100` | `MAX_PLAYERS` | core | Player slots |
 | `bServerPassword` / `ServerPassword` | bool / text | `false` / | `SERVER_PASSWORD` | core | Password-protect the server (set automatically when a password is given) |
 | `bQueueEnabled` | bool | `true` | `QUEUE_ENABLED` | core | Join queue when full |
@@ -44,7 +44,8 @@ Set a key in one of two ways:
 | `bSpawnPlants` | bool | `true` | `SPAWN_PLANTS` | core | Spawn plants |
 | `PlantSpawnMultiplier` | float | `1` | `PLANT_SPAWN_MULTIPLIER` | core | Plant density |
 | `bSpawnAI` | bool | `true` | `SPAWN_AI` | core | Spawn AI creatures |
-| `AIDensity` | float | `1` | `AI_DENSITY` | core | AI density |
+| `AIDensity` | float | `1` | `AI_DENSITY` | core | AI density multiplier (0-2 recommended; live: `isle-server ai density`) |
+| `AISpawnInterval` | int | `40` | `AI_SPAWN_INTERVAL` | core | Seconds between AI spawn checks |
 | `DisallowedAIClasses` | list | | `DISABLED_AI_CLASSES` / `ai-classes` cmd | core | AI classes that don't spawn |
 | `bEnableMigration` | bool | `true` | `ENABLE_MIGRATION` | core | Migration zones |
 | `MaxMigrationTime` | int (s) | `5400` | `MAX_MIGRATION_TIME` | core | Time to finish a migration |

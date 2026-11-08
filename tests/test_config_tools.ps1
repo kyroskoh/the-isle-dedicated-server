@@ -44,6 +44,14 @@ ck 'override replaces list'  { (@($gi | Where-Object { $_ -like 'AllowedClasses=
 ck '+array passes through'   { $gi -contains '+Arr=1' }
 ck 'new section appended'    { ($gi -contains '[/Script/TheIsle.Custom]') -and ($gi -contains 'Foo=Bar') }
 ck 'optional keys rendered'  { ($gi -contains 'bUseRegionSpawning=true') -and ($ei -contains 'NetServerMaxTickRate=30') }
+ck 'Maps list'               { (run Maps list) -match '\* Gateway' }
+ck 'Maps set switches branch' { run Maps set Isla_Spiro | Out-Null; ((conf MAP_NAME) -eq 'Isla_Spiro') -and ((conf STEAM_BRANCH) -eq 'spiro0.11.59.04') }
+ck 'Maps case-sensitive'     { $o = run Maps set gateway; ($o -match 'Unknown map') -and ((conf MAP_NAME) -eq 'Isla_Spiro') }
+ck 'Maps back to Gateway'    { run Maps set Gateway | Out-Null; (conf STEAM_BRANCH) -eq 'evrima' }
+ck 'AI density/interval'     { run AI density 0.5 | Out-Null; run AI interval 25 | Out-Null; ((conf AI_DENSITY) -eq '0.5') -and ((conf AI_SPAWN_INTERVAL) -eq '25') }
+ck 'AI bad values refused'   { ((run AI density lots) -match 'Usage') -and ((run AI interval 0) -match 'Usage') }
+ck 'AI preset ai-* only'     { run AI preset ai-prey-only | Out-Null; ((conf DISABLED_AI_CLASSES) -eq 'Compsognathus,Pterodactylus') -and ((run AI preset casual) -match 'Usage') }
+ck 'AISpawnInterval rendered' { run Configure | Out-Null; (Get-Content (Join-Path $W 'srv/TheIsle/Saved/Config/WindowsServer/Game.ini')) -contains 'AISpawnInterval=25' }
 Remove-Item $W -Recurse -Force -ErrorAction SilentlyContinue
 "RESULT: $fails failure(s)"
 if ($fails -gt 0) { exit 1 }

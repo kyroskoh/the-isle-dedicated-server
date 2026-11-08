@@ -133,8 +133,14 @@ try {
     await snap(page, "settings");
     await go(page, "players"); await snap(page, "players");
     await go(page, "roster"); await snap(page, "roster");
+    await go(page, "world"); await page.waitForSelector(".map h3"); await page.waitForSelector("#ai-density"); await snap(page, "map-ai");
+    await page.evaluate(() => document.querySelector("#ai-density").closest(".card").scrollIntoView({ block: "start" }));
+    await snap(page, "map-ai-creatures");
     await go(page, "profiles"); await snap(page, "profiles");
     await go(page, "plugins"); await snap(page, "plugins");
+    await page.waitForSelector("li.community a");
+    await page.evaluate(() => document.querySelector("li.community").closest(".card").scrollIntoView({ block: "start" }));
+    await snap(page, "plugins-community");
     await go(page, "snapshots"); await snap(page, "snapshots");
     await page.click("table button:has-text('Restore')");
     await page.waitForSelector("#confirm[open]");

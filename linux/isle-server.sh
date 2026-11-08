@@ -29,6 +29,10 @@
 #    whitelist    list|add|remove <SteamID64...>|on|off  (live via RCON when running)
 #    classes      list|known|set|add|remove <Class...>|reset|preset [roster]
 #    ai-classes   list|known|set|add|remove <Class...>|reset  (disabled AI)
+#    ai           status|on|off|density <n>|interval <s>|preset <name>
+#                 AI spawning, density (live via RCON), spawn interval, AI presets
+#    maps         list|show [name]|set <name> [--keep-branch]
+#                 known maps (config/maps.txt); set also switches STEAM_BRANCH
 #    profile      list|show <name>|apply <name>          (whole play styles)
 #    preset       list|show <name>|apply <name...>       (stackable tweaks)
 #    plugins      list|search|info|install|remove|enable|disable|update|
@@ -206,7 +210,7 @@ BOOL_KEYS=(UPDATE_ON_START VALIDATE_ON_UPDATE FIREWALL_OPEN_RCON WHITELIST_ENABL
 NUMBER_KEYS=(GROWTH_MULTIPLIER CORPSE_DECAY_MULTIPLIER PLANT_SPAWN_MULTIPLIER AI_DENSITY
              DAY_LENGTH_MINUTES NIGHT_LENGTH_MINUTES WEATHER_MIN_INTERVAL WEATHER_MAX_INTERVAL)
 INT_KEYS=(MAX_MIGRATION_TIME MASS_MIGRATION_TIME MASS_MIGRATION_DISABLE_TIME STOP_TIMEOUT BACKUP_RETENTION
-          REGION_SPAWN_COOLDOWN_SECONDS NET_TICK_RATE)
+          REGION_SPAWN_COOLDOWN_SECONDS NET_TICK_RATE AI_SPAWN_INTERVAL)
 
 # Validate server.conf (PRD CFG-05). Prints every problem; returns 1 on errors.
 check_config() {
@@ -263,6 +267,9 @@ check_config() {
   fi
   [[ -n "$(cfg EOS_CLIENT_ID)" && -n "$(cfg EOS_CLIENT_SECRET)" ]] \
     || errors+=("EOS_CLIENT_ID / EOS_CLIENT_SECRET are empty - the server will not be listed")
+  if [[ -n "$(cfg MAP_NAME)" ]] && [[ -f "$REPO_DIR/config/maps.txt" ]] && ! map_line "$(cfg MAP_NAME)" >/dev/null; then
+    warnings+=("MAP_NAME='$(cfg MAP_NAME)' is not in config/maps.txt (known: $(map_names | paste -sd, -)) - names are case-sensitive")
+  fi
   [[ -n "$RAW_SERVER_NAME" ]] || warnings+=("SERVER_NAME is empty - using '$(cfg SERVER_NAME)'")
   for k in ADMIN_STEAM_IDS WHITELIST_IDS; do
     IFS=',' read -r -a ids <<< "$(cfg "$k")"
@@ -403,6 +410,7 @@ render_game_ini() {
   printf 'PlantSpawnMultiplier=%s\n' "$(cfg PLANT_SPAWN_MULTIPLIER 1)"
   printf 'bSpawnAI=%s\n' "$(ue_bool "$(cfg SPAWN_AI true)")"
   printf 'AIDensity=%s\n' "$(cfg AI_DENSITY 1)"
+  printf 'AISpawnInterval=%s\n' "$(cfg AI_SPAWN_INTERVAL 40)"
   printf 'bEnableMigration=%s\n' "$(ue_bool "$(cfg ENABLE_MIGRATION true)")"
   printf 'MaxMigrationTime=%s\n' "$(cfg MAX_MIGRATION_TIME 5400)"
   printf 'bEnableMassMigration=%s\n' "$(ue_bool "$(cfg ENABLE_MASS_MIGRATION true)")"
@@ -775,6 +783,78 @@ list_norm() { tr ',' '\n' | tr -d ' \t\r' | awk 'NF && !seen[$0]++' | paste -sd,
 list_show() { if [[ -z "$1" ]]; then echo "${2:-(empty)}"; else tr ',' '\n' <<< "$1" | sed '/^$/d'; fi; }
 list_count() { if [[ -z "$1" ]]; then echo 0; else tr ',' '\n' <<< "$1" | sed '/^$/d' | wc -l | tr -d ' '; fi; }
 
+# ------------------------------------------------------------------ maps ---
+map_names() { [[ -f "$REPO_DIR/config/maps.txt" ]] && awk '$1 !~ /^#/ && NF { print $1 }' "$REPO_DIR/config/maps.txt"; return 0; }
+map_line() {  # NAME -> "name branch status description" (exit 1 if unknown)
+  [[ -f "$REPO_DIR/config/maps.txt" ]] || return 1
+  awk -v want="$1" '$1 !~ /^#/ && $1 == want { print; found = 1 } END { exit !found }' "$REPO_DIR/config/maps.txt"
+}
+cmd_maps() {  # list | show [name] | set <name> [--keep-branch]
+  local sub="${1:-list}" name line branch status desc cur
+  shift || true
+  cur="$(cfg MAP_NAME)"
+  case "$sub" in
+    list)
+      [[ -f "$REPO_DIR/config/maps.txt" ]] || die "config/maps.txt is missing"
+      awk -v cur="$cur" '$1 !~ /^#/ && NF { d = ""; for (i = 4; i <= NF; i++) d = d (i > 4 ? " " : "") $i;
+        printf "%s %-12s %-18s %-9s %s\n", ($1 == cur ? "*" : " "), $1, $2, $3, d }' "$REPO_DIR/config/maps.txt"
+      printf '\n  * = current (MAP_NAME=%s, STEAM_BRANCH=%s)\n' "$cur" "$(cfg STEAM_BRANCH)" ;;
+    show)
+      name="${1:-$cur}"
+      line="$(map_line "$name")" || die "Unknown map '$name' (known: $(map_names | paste -sd' ' -))"
+      read -r name branch status desc <<< "$line"
+      printf 'Map          : %s%s\nSteam branch : %s\nStatus       : %s\nAbout        : %s\n' "$name" \
+        "$([[ "$name" == "$cur" ]] && echo ' (current)')" "$branch" "$status" "$desc" ;;
+    set)
+      name="${1:-}"; [[ -n "$name" ]] || die "Usage: $0 maps set <name> [--keep-branch]"
+      line="$(map_line "$name")" || die "Unknown map '$name' (known: $(map_names | paste -sd' ' -)). Names are case-sensitive; add new maps to config/maps.txt"
+      read -r name branch status desc <<< "$line"
+      set_conf MAP_NAME "$name"
+      if [[ "${2:-}" != --keep-branch && "$branch" != "-" && "$branch" != "$(cfg STEAM_BRANCH)" ]]; then
+        set_conf STEAM_BRANCH "$branch"
+        ok "Map set to $name and Steam branch to $branch"
+        warn "Different branch: stop the server, then run '$0 validate' to download that build before starting"
+      else
+        ok "Map set to $name"
+      fi
+      [[ "$status" == archived ]] && warn "$name is an archived build: it receives no updates or new species"
+      log "Restart the server to load the new map" ;;
+    *) die "Usage: $0 maps list|show [name]|set <name> [--keep-branch]" ;;
+  esac
+}
+
+# -------------------------------------------------------------------- AI ---
+cmd_ai() {  # status | on | off | density <n> | interval <s> | preset <name>
+  local sub="${1:-status}" v
+  shift || true
+  case "$sub" in
+    status)
+      printf 'Spawn AI       : %s\nDensity        : %s\nSpawn interval : %s s\nDisabled       : %s\n' \
+        "$(cfg SPAWN_AI true)" "$(cfg AI_DENSITY 1)" "$(cfg AI_SPAWN_INTERVAL 40)" "$(cfg DISABLED_AI_CLASSES)"
+      [[ -n "$(cfg DISABLED_AI_CLASSES)" ]] || printf '                 (none - every AI class spawns)\n' ;;
+    on|off)
+      set_conf SPAWN_AI "$([[ "$sub" == on ]] && echo true || echo false)"
+      ok "AI spawning $sub - applied on the next restart (RCON 'toggleai' only flips the current state)" ;;
+    density)
+      v="${1:-}"
+      [[ "$v" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "Usage: $0 ai density <number>, e.g. 0.5 (half), 1 (default), 2 (double)"
+      awk -v x="$v" 'BEGIN { exit !(x > 5) }' && warn "AI density $v is very high - expect server load"
+      set_conf AI_DENSITY "$v"
+      ok "AI density $v"
+      live_rcon aidensity "$v" ;;
+    interval)
+      v="${1:-}"
+      if ! [[ "$v" =~ ^[0-9]+$ ]] || (( 10#$v < 1 )); then die "Usage: $0 ai interval <seconds>, e.g. 40 (default)"; fi
+      set_conf AI_SPAWN_INTERVAL "$v"
+      ok "AI spawn interval ${v}s - applied on the next restart" ;;
+    preset)
+      [[ -n "${1:-}" ]] || die "Usage: $0 ai preset <name>  (AI presets: $(find "$REPO_DIR/config/presets" -name 'ai-*.conf' -printf '%f\n' | sed 's/\.conf$//' | sort | paste -sd' ' -))"
+      [[ "$1" == ai-* ]] || die "AI presets start with ai- (see: $0 preset list)"
+      cmd_overlay preset apply "$1" ;;
+    *) die "Usage: $0 ai status|on|off|density <n>|interval <s>|preset <name>" ;;
+  esac
+}
+
 known_classes() {  # SECTION (playable|ai) -> one name per line
   local file="$REPO_DIR/config/classes.txt"
   [[ -f "$file" ]] || return 0
@@ -1013,6 +1093,8 @@ config_tool() {  # dispatch shared by both runtimes; returns 1 if CMD is not a c
     whitelist)  cmd_whitelist "$@" ;;
     classes)    cmd_classes ALLOWED_CLASSES playable updateplayables classes "$@" ;;
     ai-classes) cmd_classes DISABLED_AI_CLASSES ai disableaiclasses ai-classes "$@" ;;
+    ai)         cmd_ai "$@" ;;
+    maps)       cmd_maps "$@" ;;
     profile)    cmd_overlay profile "$@" ;;
     preset)     cmd_overlay preset "$@" ;;
     plugins)    cmd_plugins "$@" ;;

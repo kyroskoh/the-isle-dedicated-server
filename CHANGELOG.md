@@ -6,6 +6,42 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-08
+
+Planned in [PRD.md](PRD.md) as milestone M16 (MAP-01 to MAP-03, AIX-01 to AIX-03, PLG-08 to PLG-09).
+
+### Added
+- **Maps:** `config/maps.txt` lists Gateway (branch `evrima`, the default) and Isla Spiro (`Isla_Spiro`, archived
+  branch `spiro0.11.59.04`).
+  - `isle-server maps list|show|set` and `IsleServer.ps1 Maps` switch `MAP_NAME` together with `STEAM_BRANCH`, and
+    warn to validate the game files and about archived builds.
+  - `check` warns about unknown map names.
+  - In the API and UI: `GET /api/v1/maps`, `PUT /api/v1/map`, and a new **Map & AI** page.
+- **AI options:** `AI_SPAWN_INTERVAL` (`AISpawnInterval`, default 40 s).
+  - `isle-server ai status|on|off|density|interval|preset` and `IsleServer.ps1 AI`; density also applies live over
+    RCON.
+  - Three new presets: `ai-normal`, `ai-fast-respawn` and `ai-slow-respawn`, plus `ai-prey-only`.
+  - AI classes now have roles (carnivore, flying, prey, aquatic).
+  - API: `GET/PATCH /api/v1/ai` and `POST /api/v1/ai/preset`.
+  - UI: a density slider, the spawn interval, AI presets and the disabled-AI picker on the Map & AI page.
+- **Community sources:** `plugins/community.json` lists community RCON libraries, tools and guides with checked
+  links, plus a note on the state of Evrima modding.
+  - `isle-server plugins community` lists them.
+  - API: `GET /api/v1/plugins/community`, and `GET/POST/DELETE /api/v1/plugins/sources` to manage community catalogs
+    (https only).
+  - UI: Catalog sources and Community cards on the Plugins page.
+- Screenshots of the Map & AI page and the community card; updated docs (CONFIGURATION, PLUGINS, UI, README, PRD).
+
+### Changed
+- Disabled AI moved from the Roster page to the Map & AI page.
+- The API answers one request per connection (no idle keep-alive threads).
+
+### Fixed
+- **Firefox and WebKit in the browser tests:**
+  - Firefox: stuck navigations caused by stale keep-alive connections.
+  - WebKit: `<select>` width in rows (the roster preset now shows its description as a hint), and a crashed or stuck
+    reload is retried with diagnostics.
+
 ## [1.10.0] - 2026-11-08
 
 Planned in [PRD.md](PRD.md) as milestone M15 (LOG-01 to LOG-05, UI-06 to UI-08).
