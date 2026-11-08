@@ -155,7 +155,14 @@ h1, h2, h3, p, label, legend, summary, dt, dd, li, td, .hint, .key, .brand span,
 .card-head > h2, .card-head > h3, .card-head > div:first-child { flex: 1 1 10rem; }
 .card-head > label, .card-head > button, .card-head > .row { flex: none; }
 /* a select never forces its row wider than the screen (WebKit sizes it to the longest option) */
-select { max-width: 100%; min-width: 0; text-overflow: ellipsis; }
+select:not([multiple]) {   /* more specific than the generic input/select rule, whose background would hide the arrow */
+  max-width: 100%; min-width: 0; text-overflow: ellipsis;
+  /* drawn by us: Safari's native menu list keeps the width of its longest option */
+  -webkit-appearance: none; appearance: none; padding-right: 2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%237a867e' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right .65rem center; background-size: 12px 8px;
+}
+select::-ms-expand { display: none; }
 .row > .grow { flex: 1 1 12rem; min-width: 0; }
 .row > .grow > select { width: 100%; }
 .card-head h2, .card-head h3 { margin: 0; }
@@ -280,7 +287,7 @@ td.data { overflow-wrap: anywhere; min-width: 12rem; }  /* names and description
 .list code { overflow-wrap: anywhere; min-width: min(17ch, 100%); }
 .empty { color: var(--muted); padding: .75rem 0; text-align: center; font-size: .9rem; }
 
-.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr)); gap: .4rem; }
+.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: .4rem; }
 .chip { display: flex; align-items: center; gap: .5rem; padding: .45rem .6rem; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; background: var(--surface); min-width: 0; }
 .chip > input { flex: none; }
 .chip > span:not(.badge) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
