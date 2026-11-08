@@ -171,6 +171,17 @@ async function open(ctx, page, url) {
     }
   }
 }
+/* reload; a crashed tab or a stuck reload is retried once on a new page (a crash our page caused would repeat) */
+async function reloadPage(ctx, page) {
+  try { await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }); return page; } catch (e) {
+    console.log(`  note: reload failed (${e.message.split("\n")[0]}) - retrying on a new page`);
+    const url = page.url();
+    try { await page.close(); } catch { /* crashed */ }
+    const fresh = await ctx.newPage();
+    await fresh.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    return fresh;
+  }
+}
 const settle = async (page) => {
   for (let i = 0; i < 80; i++) { if (await page.evaluate(() => !document.querySelector("#content [role=status]"))) break; await sleep(100); }
   await sleep(150);
@@ -198,7 +209,7 @@ try {
         if (caught) console.log("  PASS audit self-check catches a spilling badge"); else { fails++; console.log("  FAIL audit self-check: a spilling badge was not reported"); }
       }
       await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
-      await page.reload({ waitUntil: "domcontentloaded" });
+      page = await reloadPage(ctx, page);
       const nav = async (route) => { await page.evaluate((r) => { location.hash = "#/" + r + (location.hash === "#/" + r ? "?" : ""); }, route); await page.waitForSelector("#content h1"); };
       for (const route of ROUTES) {
         await nav(route);
@@ -271,7 +282,7 @@ try {
     let page = await ctx.newPage();
     page = await open(ctx, page, BASE + "/");
     await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
-    await page.reload({ waitUntil: "domcontentloaded" });
+    page = await reloadPage(ctx, page);
     for (const route of ROUTES) {
       await page.evaluate((r) => { location.hash = "#/" + r; }, route);
       await page.waitForSelector("#content h1");

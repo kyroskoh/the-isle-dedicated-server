@@ -98,6 +98,13 @@ async function newPage(opts = {}) {
     console.error(`CSP ${e.violatedDirective} blocked=${e.blockedURI} source=${e.sourceFile}:${e.lineNumber} sample=${(e.sample || "").slice(0, 80)}`)));
   return { ctx, page };
 }
+/* reload; a stuck reload (seen in Firefox on CI) is retried once by navigating to the same URL */
+async function reloadPage(page) {
+  try { await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }); } catch (e) {
+    console.log(`  note: reload failed (${e.message.split("\n")[0]}) - navigating again`);
+    await page.goto(page.url(), { waitUntil: "domcontentloaded", timeout: 30000 });
+  }
+}
 let shooting = false;
 const shot = async (page, name) => { if (SHOTS) { shooting = true; try { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, name + ".png"), fullPage: false, caret: "initial", animations: "allow" }); await sleep(100); } finally { shooting = false; } } };
 const bg = (page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
@@ -126,7 +133,7 @@ try {
   await shot(page, "02-dashboard-dark");
   await page.click('#theme-switch input[value="light"]', { force: true });
   await ck("light overrides a dark OS", async () => (await page.getAttribute("html", "data-theme")) === "light" && (await bg(page)) === "rgb(244, 246, 242)");
-  await page.reload({ waitUntil: "domcontentloaded" });
+  await reloadPage(page);
   await ck("theme choice remembered", async () => (await page.getAttribute("html", "data-theme")) === "light" && await page.isChecked('#theme-switch input[value="light"]'));
   await page.click('#theme-switch input[value="dark"]', { force: true });
   await page.emulateMedia({ colorScheme: "light" });
@@ -210,17 +217,17 @@ try {
   await page.fill("#date-format-custom", "EEEE d MMMM 'at' HH:mm ZZ");
   await ck("custom pattern preview", async () => / at \d{2}:\d{2} UTC$/.test(await page.textContent("output.preview")));
   await page.click("#modal button:has-text('Save')");
-  await page.reload({ waitUntil: "domcontentloaded" });
+  await reloadPage(page);
   await ck("preferences survive a reload", async () => { await page.waitForSelector(".list time"); return / at \d{2}:\d{2} UTC$/.test(await page.textContent(".list time")); });
   await page.evaluate(() => { localStorage.removeItem("isle-tz"); localStorage.removeItem("isle-datefmt"); });
-  await page.reload({ waitUntil: "domcontentloaded" });
+  await reloadPage(page);
   await page.waitForSelector(".list time");
 
   console.log("## responsive + docs");
   const mobile = await newPage({ viewport: { width: 390, height: 844 }, colorScheme: "dark", hasTouch: true, isMobile: MOBILE });
   await mobile.page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
   await mobile.page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
-  await mobile.page.reload({ waitUntil: "domcontentloaded" });
+  await reloadPage(mobile.page);
   await ck("phone: no horizontal scroll", async () => { await mobile.page.waitForSelector("h1:text('Dashboard')"); return mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth); });
   await mobile.page.goto(BASE + "/#/roster", { waitUntil: "domcontentloaded" });
   await mobile.page.waitForSelector(".chip");

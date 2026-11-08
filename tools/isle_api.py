@@ -850,7 +850,9 @@ def make_handler(api, token, cors, tls, spec):
     class Handler(BaseHTTPRequestHandler):
         server_version = "TheIsleAPI"
         sys_version = ""
-        protocol_version = "HTTP/1.1"
+        # One request per connection: no idle keep-alive threads, and browsers never reuse a connection
+        # this threaded server has stopped reading (seen as stuck navigations in Firefox).
+        protocol_version = "HTTP/1.0"
 
         def log_message(self, fmt, *args):  # replaced by structured access log
             pass
