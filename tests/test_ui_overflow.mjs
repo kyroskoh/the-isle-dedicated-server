@@ -135,6 +135,19 @@ const report = (label, found) => {
   if (found.length) { fails++; console.log(`  FAIL ${label}`); found.slice(0, 8).forEach((f) => console.log("       " + f)); if (found.length > 8) console.log(`       ... ${found.length - 8} more`); }
   else console.log(`  PASS ${label}`);
 };
+const MOTION = ENGINE === "firefox" ? {} : { reducedMotion: "reduce" };   // Firefox: emulation not needed for the audit
+/* navigate; on a timeout, say whether the API still answers (server vs browser problem) and retry on a fresh page */
+async function open(ctx, page, url) {
+  try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }); return page; } catch (e) {
+    let alive = "no";
+    try { const r = await fetch(BASE + "/api/v1/health", { signal: AbortSignal.timeout(5000) }); alive = "HTTP " + r.status; } catch (x) { alive = String(x); }
+    console.log(`  note: ${url} did not load (${e.message.split("\n")[0]}); API health from Node: ${alive}; retrying on a new page`);
+    try { await page.close(); } catch { /* already gone */ }
+    const fresh = await ctx.newPage();
+    await fresh.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    return fresh;
+  }
+}
 const settle = async (page) => {
   for (let i = 0; i < 80; i++) { if (await page.evaluate(() => !document.querySelector("#content [role=status]"))) break; await sleep(100); }
   await sleep(150);
@@ -144,9 +157,9 @@ const WIDTHS = [1440, 1280, 1024, 820, 600, 390, 320];
 try {
   for (const scheme of ["light", "dark"]) {
     for (const width of WIDTHS) {
-      const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: scheme, reducedMotion: "reduce" });
-      const page = await ctx.newPage();
-      await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
+      const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: scheme, ...MOTION });
+      let page = await ctx.newPage();
+      page = await open(ctx, page, BASE + "/");
       if (scheme === "light" && width === WIDTHS[0]) {
         report(`login @${width}`, await page.evaluate(audit));
         // the audit must catch a known-bad layout, or every PASS below means nothing
@@ -231,9 +244,9 @@ try {
   ];
   for (const [label, w, hgt] of DEVICES) {
     const touch = w < 1300;
-    const ctx = await browser.newContext({ viewport: { width: w, height: hgt }, hasTouch: touch, isMobile: touch && MOBILE, reducedMotion: "reduce" });
-    const page = await ctx.newPage();
-    await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
+    const ctx = await browser.newContext({ viewport: { width: w, height: hgt }, hasTouch: touch, isMobile: touch && MOBILE, ...MOTION });
+    let page = await ctx.newPage();
+    page = await open(ctx, page, BASE + "/");
     await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
     await page.reload({ waitUntil: "domcontentloaded" });
     for (const route of ROUTES) {

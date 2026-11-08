@@ -86,14 +86,20 @@ const problems = [];
 async function newPage(opts = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 }, deviceScaleFactor: SHOTS ? 2 : 1, ...opts });
   const page = await ctx.newPage();
-  page.on("console", (m) => { if (m.type() === "error" && !/401|409|502|Failed to load resource/.test(m.text())) problems.push(`[after "${step}"] ${m.text()}`); });
+  page.on("console", (m) => {
+    if (m.type() !== "error" || /401|409|502|Failed to load resource/.test(m.text())) return;
+    // Playwright's WebKit screenshot injects its own <style>; the CSP blocks it. Not app code: no source file, only while shooting.
+    if (shooting && /Refused to apply a stylesheet|CSP style-src-elem blocked=inline source=:\d+ sample=$/.test(m.text())) return;
+    problems.push(`[after "${step}"] ${m.text()}`);
+  });
   page.on("pageerror", (e) => problems.push(`[after "${step}"] pageerror: ${e.message}`));
   // details of every CSP violation (directive, source, sample) to tell app code from test tooling
   await page.addInitScript(() => document.addEventListener("securitypolicyviolation", (e) =>
     console.error(`CSP ${e.violatedDirective} blocked=${e.blockedURI} source=${e.sourceFile}:${e.lineNumber} sample=${(e.sample || "").slice(0, 80)}`)));
   return { ctx, page };
 }
-const shot = async (page, name) => { if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, name + ".png"), fullPage: false, caret: "initial", animations: "allow" }); } };
+let shooting = false;
+const shot = async (page, name) => { if (SHOTS) { shooting = true; try { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, name + ".png"), fullPage: false, caret: "initial", animations: "allow" }); await sleep(100); } finally { shooting = false; } } };
 const bg = (page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 const conf_ = (k) => (readFileSync(conf, "utf8").match(new RegExp("^" + k + "=(.*)$", "m")) || [])[1];
 
