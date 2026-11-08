@@ -471,9 +471,9 @@
     c.appendChild(pageHead("Roster", "Which dinosaurs players can pick, and which AI creatures are switched off."));
     var presetRow = function (reload) {
       var row = h("form", { class: "row" });
-      var sel = h("select", { "aria-label": "Roster preset" }, h("option", { value: "", text: "Loading presets…" }));
+      var sel = h("select", { "aria-label": "Roster preset", id: "roster-preset" }, h("option", { value: "", text: "Loading presets…" }));
       var apply = btn("Apply preset", { type: "submit" });
-      add(row, [h("label", { text: "Preset", class: "small" }), h("div", null, sel), apply]);
+      add(row, [h("label", { text: "Preset", class: "small", for: "roster-preset" }), h("div", { class: "grow" }, sel), apply]);
       row.style.marginBottom = ".75rem";
       api("GET", "/rosters").then(function (rs) {
         clear(sel);
