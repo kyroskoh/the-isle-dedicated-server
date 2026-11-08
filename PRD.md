@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.4 |
-| **Product version** | 1.8.0 (released) |
+| **Product version** | 1.9.0 (planned), 1.8.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -86,6 +86,8 @@ cover ongoing operation or offer a single workflow for both Windows and Linux.
 | US-16 | P2/P3 | search, install and manage plugins (scheduled restarts, Discord alerts, off-site backups) with presets | common server chores are one command away |
 | US-17 | P2/P3 | switch native <-> docker by reinstalling, choosing whether to copy, move or not carry my data, and which parts | I can try the other runtime safely or move over completely |
 | US-18 | P2/P3 | take a portable snapshot and restore it on another machine or OS, in either runtime | I can move hosts (e.g. Windows PC -> Linux VPS -> Docker) or clone a server |
+| US-19 | P1/P2 | manage the server from a browser (status, start/stop, settings, admins, roster, plugins, snapshots, logs, RCON) in light or dark mode | I don't need a terminal for day-to-day admin |
+| US-20 | P3 | automate the server through a documented REST API (OpenAPI at /docs) | I can script it or build bots and dashboards |
 | US-13 | P1/P2 | choose at uninstall what to keep and what to delete (game files, worlds, backups, settings) | I can free disk space without losing my world, or wipe only what I want |
 
 ## 5. Platform support
@@ -278,6 +280,22 @@ Priority: **M** = must, **S** = should, **C** = could.
 | MIG-07 | M | Parity | `isle-server snapshot ...`, `IsleServer.ps1 Snapshot ...` (also `Manage.bat Snapshot ...`). One shared engine (`tools/isle_snapshot.py`, standard library only). Python 3 is installed by both installers in both modes when the package manager allows |
 | MIG-08 | M | Tests | `tests/test_snapshot.py` (offline: create/restore, include filters, machine-key filtering, overwrite rules, archive safety, Windows-made archive). Installer cycle: switches with copy/move/fresh and carry, a snapshot restored into a second "machine" in the other runtime, `--from-snapshot`. Windows CI: PowerShell snapshot round trip and restoring a Linux-made snapshot |
 
+### 6.15 REST API, web UI and Debian verification (API, UI, DEB)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| API-01 | M | **REST API** `/api/v1` served by `tools/isle_api.py` (Python standard library, no dependencies). Endpoints wrap the launcher, so they behave the same on both OSes and runtimes | health, status, info, server actions (start/stop/restart/save/backup/update/validate), jobs, logs, config (read/patch/check), admins, whitelist, classes, AI classes, rosters, profiles, presets, plugins, snapshots, RCON |
+| API-02 | M | **OpenAPI 3.1** at `/openapi.json`, human docs at **`/docs`** (self-hosted, no CDN). Every route is in the spec (enforced by a test) | Each operation has an operationId, tag, summary, parameters/body schema and responses, including errors |
+| API-03 | M | **Security by default** | Binds `127.0.0.1` unless told otherwise (warns on non-loopback without TLS). Bearer token (random, `config/ui-token`, mode 600, or `ISLE_UI_TOKEN`) with constant-time compare. Lockout after repeated bad tokens (429). Optional TLS (`--cert/--key`). No cookies (no CSRF surface). No CORS unless configured. Security headers (CSP, nosniff, frame-deny, referrer policy, no-store for API). Request size limit. Secrets masked in responses. Subprocesses only with argument lists (no shell) |
+| API-04 | M | **Backend best practices** | Versioned paths, RFC 7807 `application/problem+json` errors, input validation (SteamID64, class names, known config keys, part names), 202 + job resource for long actions, 409 when a lifecycle action is already running, request IDs (`X-Request-ID`), structured access log, health endpoint without auth, graceful shutdown |
+| API-05 | M | **Config editing** | `PATCH /config` accepts only known `server.conf` keys and never machine/path/runtime keys. Masked values (`********`) are ignored. The file is validated with the launcher's `check` and rolled back on errors |
+| UI-01 | M | **Web UI** at `/` (vanilla HTML/CSS/JS, no build step, no external assets) | Pages: Dashboard, Settings, Players & roster, Profiles & presets, Plugins, Snapshots & backups, Logs, RCON console, API docs link |
+| UI-02 | M | **UX best practices** | Clear status and next action. Confirmation for destructive actions. Progress for jobs with live output. Toasts for results. Disabled buttons while busy. Form validation with inline errors. Keyboard navigation, visible focus, ARIA labels and live regions, skip link. Responsive down to phones. `prefers-reduced-motion` |
+| UI-03 | M | **Themes** | Light, dark and **system** (follows `prefers-color-scheme` live), saved per browser. Palette: jungle green primary + amber accent with WCAG AA contrast in both themes |
+| UI-04 | M | **Run optionally** | `isle-server ui [--host H] [--port P] [--open]` / `IsleServer.ps1 UI` (+ `UI.bat`), `ui-token [--rotate]`. Installer `--ui` / `-UI` adds a boot service (systemd `theisle-ui` / scheduled task `TheIsleServer-UI`). `UI_HOST`, `UI_PORT` in `server.conf`. The scripts keep working without the UI |
+| UI-05 | M | Tests | `tests/test_api.py` (offline, fake launcher: auth, lockout, validation, problem+json, jobs, config rollback, spec covers every route, headers, static path traversal). `tests/test_ui.py` (Playwright: login, navigation, theme light/dark/system, server actions, screenshots) |
+| DEB-01 | M | **Debian verification** | Every Linux test suite also runs on Debian: the real `debian:bookworm-slim` image in CI (container smoke, e2e, launcher, installer cycle, unit suites inside the image), and a native install with real apt dependencies on `debian:bookworm` |
+
 ## 7. CLI contract
 
 | Command | Linux (`isle-server.sh`) | Windows (`IsleServer.ps1`) | Exit codes |
@@ -382,6 +400,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M11 Uninstall data choices (v1.6.0) | INS-20: keep/remove per data category, menu, safety backup, both installers, CI | ✅ Done (v1.6.0). Linux verified by the cycle test (70 checks). Windows native paths covered by Windows CI; Windows Docker-volume paths parse-checked only |
 | M12 Config tools & plugins (v1.7.0) | CFX-01 – CFX-09, PLG-01 – PLG-07 | ✅ Done (v1.7.0). Linux + PowerShell 7 verified locally, Windows PowerShell 5.1 by CI. Live RCON pushes and real Discord/NAS targets need a live server (M6) |
 | M13 Snapshots & mode-switch data choices (v1.8.0) | MIG-01 – MIG-08 | ✅ Done (v1.8.0). Linux cycle (92 checks), snapshot tests, PowerShell 7 suites locally; Windows PowerShell 5.1 and Windows Docker Desktop paths via CI/field test (M6) |
+| **M14 API, web UI & Debian verification (v1.9.0)** | **API-01 – API-05, UI-01 – UI-05, DEB-01** | 🔜 In progress |
 
 ## 12. Traceability matrix
 
@@ -407,6 +426,9 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | PLG-01 – PLG-07 | `tools/isle_plugins.py`, `plugins/`, launcher hook calls | `tests/test_plugins.py` | Done (v1.7) |
 | MIG-01 – MIG-04, MIG-07 | `tools/isle_snapshot.py`, `snapshot` in both launchers | `tests/test_snapshot.py`, Windows CI | Done (v1.8) |
 | MIG-05 – MIG-06 | `install.sh` / `Install.ps1` (`--data`, `--carry`, `--overwrite`, `--from-snapshot`) | `tests/installer-cycle.sh` | Done (v1.8) |
+| API-01 – API-05 | `tools/isle_api.py`, `tools/openapi.json` | `tests/test_api.py` | **Planned v1.9** |
+| UI-01 – UI-04 | `ui/`, `ui` command in both launchers, installer `--ui` | `tests/test_ui.py` (Playwright) | **Planned v1.9** |
+| DEB-01 | CI `docker` (real Debian image), `debian-native` job | CI | **Planned v1.9** |
 | CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |
 | CFG-03/04 | `render_*_ini`/`configure`, `Get-*Ini`/`Set-ServerConfig` | CI smoke (grep sections) | Done |
 | CFG-05 | `check_config` / `Test-ServerConfig`, called by configure/run/start/install | CI smoke (positive + negative) | Done (v1.1) |
