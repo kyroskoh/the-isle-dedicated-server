@@ -6,6 +6,34 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-08
+
+Planned in [PRD.md](PRD.md) as milestone M13 (requirements MIG-01 to MIG-08). Guide: [MIGRATION.md](MIGRATION.md).
+
+### Added
+- **Portable snapshots:** `snapshot create|restore|info|list` in both launchers (`IsleServer.ps1 Snapshot ...`).
+  One `.tar.gz` format with a manifest, shared by Linux and Windows, native and Docker. Choose the parts (worlds,
+  backups, settings, overrides, plugins). Restore merges settings without machine-specific keys, never overwrites a
+  world without `--overwrite` (the old world is kept aside), refuses while running (or `--stop`), and refuses unsafe archives.
+- **Mode switch data choices** in both installers: `--data copy|move|fresh`, `--carry LIST`, `--overwrite`. Mode
+  switches now carry worlds, settings, overrides and plugins through the snapshot engine. `move` clears only what
+  was restored and keeps the snapshot as a safety copy.
+- **New machine from a snapshot:** `install.sh --from-snapshot FILE` / `Install.ps1 -FromSnapshot FILE`, in either mode.
+- `--image REF` / `-Image` to install docker mode from a prebuilt or registry image.
+- Python 3 is now installed in both modes (Windows) or when a snapshot needs it (Linux docker mode).
+- Tests: `tests/test_snapshot.py`, `tests/test_snapshot.ps1` (including a Linux-made snapshot restored by
+  PowerShell), and installer-cycle steps for move, fresh, overwrite and two machine migrations
+  (native -> docker and docker -> native via `--from-snapshot`).
+
+### Fixed
+- **A server with a working install failed to start when SteamCMD couldn't update** (for example, Steam down):
+  the "start the existing build" fallback was cut short by `exit`. A failed SteamCMD download is now also
+  reported at once.
+- **`start` reported "failed to start" during a long update** (background mode): the watchdog wrote its PID file
+  only after the update.
+- **On Windows, output from Python tools and Docker couldn't be captured or redirected** (`Out-Host`). It now
+  goes through `Write-Host`. Also avoided a Windows PowerShell 5.1 trap where stderr from native tools stops the script.
+
 ## [1.7.1] - 2026-11-08
 
 Found by new end-to-end container testing (an RCON-speaking fake server, real `tini`, the real package list).
@@ -209,7 +237,8 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.5.0...v1.6.0

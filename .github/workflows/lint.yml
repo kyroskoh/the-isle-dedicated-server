@@ -22,6 +22,8 @@ jobs:
         run: bash tests/test_config_tools.sh
       - name: Plugin manager tests
         run: python3 -m unittest -v tests/test_plugins.py
+      - name: Snapshot engine tests
+        run: python3 -m unittest -v tests/test_snapshot.py
       - name: Render config with a fake server
         run: |
           set -e
@@ -231,6 +233,16 @@ jobs:
         run: |
           python -m unittest -v tests\test_plugins.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Snapshot engine tests (Windows Python)
+        shell: powershell
+        run: |
+          python -m unittest -v tests\test_snapshot.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Snapshots via IsleServer.ps1 (incl. a Linux-made snapshot)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests\test_snapshot.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Plugins via IsleServer.ps1
         shell: powershell
         run: |
@@ -265,6 +277,10 @@ jobs:
           if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -Native -Docker'; exit 1 }
           .\windows\Install.ps1 -Purge -InstallRoot $root
           if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -Purge without -Uninstall'; exit 1 }
+          .\windows\Install.ps1 -Carry nonsense -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -Carry nonsense'; exit 1 }
+          .\windows\Install.ps1 -FromSnapshot C:\nope\missing.tar.gz -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted a missing -FromSnapshot file'; exit 1 }
           .\windows\Install.ps1 -Uninstall -InstallRoot $root
           if ($LASTEXITCODE -ne 0) { Write-Host 'uninstall on a clean machine failed'; exit 1 }
           .\windows\Install.ps1 -KeepData -InstallRoot $root

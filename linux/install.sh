@@ -24,6 +24,7 @@
 #  Options:
 #    --native | --docker  install mode (default: ask; non-interactive: current mode, else native)
 #    --start              start the server when finished
+#    --image REF          docker: use this prebuilt/registry image instead of building
 #    --branch NAME        Steam beta branch (default: evrima; "" = public)
 #    --user NAME          native: service user          (default: theisle)
 #    --home DIR           native: home of that user     (default: /home/NAME)
@@ -41,7 +42,16 @@
 #      --remove-settings    delete server.conf and the scripts copy
 #      --purge              delete everything above + the service user + Docker volume
 #    --yes                do not ask for confirmation (deleting worlds/backups/settings)
-#    --no-import          do not import a retained world from the other mode
+#    --data copy|move|fresh   when switching modes (or finding the other mode's data):
+#                         copy  = carry the data over, keep the source (default)
+#                         move  = carry it over, then clear the source worlds/backups
+#                         fresh = carry nothing
+#    --carry LIST         parts to carry: worlds,backups,settings,overrides,plugins
+#                         (default on a mode switch: worlds,settings,overrides,plugins;
+#                          otherwise only a retained world is picked up)
+#    --overwrite          replace a world that already exists in the target
+#    --from-snapshot FILE restore a snapshot after installing (new machine / other OS)
+#    --no-import          same as --data fresh
 #    -h | --help          show this help
 # =============================================================================
 set -Eeuo pipefail
@@ -52,7 +62,9 @@ SVC_HOME=""
 BRANCH=""; BRANCH_SET=0
 MODE=""
 DO_SERVICE=1; DO_FIREWALL=1; DO_DEPS=1; DO_SUDOERS=1; DO_START=0
-DO_UNINSTALL=0; DO_PURGE=0; ASSUME_YES=0; DO_IMPORT=1
+DO_UNINSTALL=0; DO_PURGE=0; ASSUME_YES=0
+DATA=copy; CARRY="worlds,settings,overrides,plugins"; CARRY_SET=0; OVERWRITE=0; FROM_SNAPSHOT=""
+NO_FINAL_BACKUP=0; IMAGE_REF=""
 RM_GAME=0; RM_WORLDS=0; RM_BACKUPS=0; RM_SETTINGS=0; DATA_FLAG=0; KEEP_DATA=0
 SERVICE="theisle-server"
 STATE_DIR="/etc/theisle-server"
@@ -90,7 +102,12 @@ while [[ $# -gt 0 ]]; do
     --remove-backups)    RM_BACKUPS=1; DATA_FLAG=1; shift ;;
     --remove-settings)   RM_SETTINGS=1; DATA_FLAG=1; shift ;;
     --yes|-y)      ASSUME_YES=1; shift ;;
-    --no-import)   DO_IMPORT=0; shift ;;
+    --no-import)   DATA=fresh; shift ;;
+    --data)        DATA="${2:?}"; shift 2 ;;
+    --carry)       CARRY="${2:?}"; CARRY_SET=1; shift 2 ;;
+    --overwrite)   OVERWRITE=1; shift ;;
+    --image)       IMAGE_REF="${2:?}"; shift 2 ;;
+    --from-snapshot) FROM_SNAPSHOT="${2:?}"; shift 2 ;;
     -h|--help)     usage; exit 0 ;;
     *)             usage; die "Unknown option: $1" ;;
   esac
@@ -99,6 +116,17 @@ done
 [[ $EUID -eq 0 ]] || die "Please run as root, e.g.: sudo $0 $*"
 [[ "$(uname -m)" == "x86_64" ]] || die "The Isle dedicated server requires x86_64 (detected $(uname -m))"
 [[ "$SVC_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Invalid user name: $SVC_USER"
+case "$DATA" in copy|move|fresh) ;; *) die "--data must be copy, move or fresh" ;; esac
+if [[ -n "$CARRY" ]]; then
+  for _p in ${CARRY//,/ }; do
+    case "$_p" in worlds|backups|settings|overrides|plugins|all) ;; *) die "--carry: unknown part '$_p' (worlds,backups,settings,overrides,plugins)" ;; esac
+  done
+  [[ "$CARRY" == all ]] && CARRY="worlds,backups,settings,overrides,plugins"
+fi
+if [[ -n "$FROM_SNAPSHOT" ]]; then
+  [[ -f "$FROM_SNAPSHOT" ]] || die "--from-snapshot: no such file $FROM_SNAPSHOT"
+  FROM_SNAPSHOT="$(readlink -f "$FROM_SNAPSHOT")"
+fi
 if (( DATA_FLAG && ! DO_UNINSTALL )); then die "--purge/--keep-data/--remove-* are only valid together with --uninstall"; fi
 if (( KEEP_DATA && (DO_PURGE || RM_GAME || RM_WORLDS || RM_BACKUPS || RM_SETTINGS) )); then
   die "--keep-data cannot be combined with --purge or --remove-*"
@@ -184,10 +212,13 @@ copy_scripts() {  # DEST - copy this repo (minus .git and server.conf) to DEST
   chmod 755 "$dest"/linux/*.sh "$dest"/tools/*.py "$dest"/docker/entrypoint.sh "$dest"/docker/isle-server
 }
 
-seed_conf() {  # DEST - create DEST/config/server.conf, carrying settings over
+seed_conf() {  # DEST [--fresh] - create DEST/config/server.conf, carrying settings over
   local dest="$1" cand
   CONF="$dest/config/server.conf"
   if [[ -f "$CONF" ]]; then ok "Keeping existing $CONF"; return; fi
+  if [[ "${2:-}" == --fresh ]]; then
+    cp "$dest/config/server.conf.example" "$CONF"; ok "Created $CONF from the example (settings not carried)"; return
+  fi
   for cand in "$ST_SCRIPTS_DIR/config/server.conf" "$NATIVE_SCRIPTS_DIR/config/server.conf" \
               "$DOCKER_SCRIPTS_DIR/config/server.conf" "$SRC_DIR/config/server.conf"; do
     if [[ -n "$cand" && -f "$cand" && "$cand" != "$CONF" ]]; then
@@ -310,21 +341,167 @@ volume_has_world() {
     >/dev/null 2>&1
 }
 
-export_volume_world() {  # DEST_DIR -> prints the archive path
-  local dest="$1" img name
-  img="$(helper_image)" || return 1
-  name="theisle-docker-$(date +%Y%m%d-%H%M%S).tar.gz"
-  mkdir -p "$dest"
-  docker run --rm -v "$VOLUME:/data:ro" -v "$dest:/out" --entrypoint sh "$img" -c \
-    "tar -czf /out/$name -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved" >/dev/null 2>&1 || return 1
-  printf '%s/%s' "$dest" "$name"
+
+# ---------------------------------------------------------- dependencies ----
+detect_distro() {
+  DISTRO_ID="unknown"; DISTRO_NAME="Unknown Linux"
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    DISTRO_ID="${ID:-unknown}"; DISTRO_NAME="${PRETTY_NAME:-$DISTRO_ID}"
+  fi
 }
-export_native_world() {  # DEST_DIR -> prints the archive path
-  local dest="$1" saved name
-  saved="$(native_saved_dir)"; name="theisle-native-$(date +%Y%m%d-%H%M%S).tar.gz"
-  mkdir -p "$dest"
-  tar -czf "$dest/$name" -C "$(dirname "$saved")" --exclude=Saved/Logs --exclude=Saved/Crashes Saved || return 1
-  printf '%s/%s' "$dest" "$name"
+
+pkg_try() {  # install packages one by one; returns non-zero if any failed
+  local mgr="$1"; shift
+  local p failed=0
+  for p in "$@"; do
+    if case "$mgr" in
+         apt)    DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$p" >/dev/null 2>&1 ;;
+         dnf)    dnf install -y -q "$p" >/dev/null 2>&1 ;;
+         yum)    yum install -y -q "$p" >/dev/null 2>&1 ;;
+         pacman) pacman -S --noconfirm --needed "$p" >/dev/null 2>&1 ;;
+         zypper) zypper --non-interactive install -y "$p" >/dev/null 2>&1 ;;
+         *)      false ;;
+       esac; then
+      ok "package $p"
+    else
+      warn "could not install package $p"; failed=1
+    fi
+  done
+  return "$failed"
+}
+
+install_deps() {
+  detect_distro
+  step "Installing dependencies for $DISTRO_NAME"
+  if command -v apt-get >/dev/null 2>&1; then
+    dpkg --add-architecture i386 2>/dev/null || true
+    # Ubuntu ships i386 libs in "multiverse"/"universe"; make sure they are on.
+    if [[ "$DISTRO_ID" == "ubuntu" ]] && command -v add-apt-repository >/dev/null 2>&1; then
+      add-apt-repository -y multiverse >/dev/null 2>&1 || true
+    fi
+    apt-get update -q >/dev/null || warn "apt-get update reported errors"
+    pkg_try apt ca-certificates curl wget tar gzip python3 procps locales || true
+    pkg_try apt lib32gcc-s1 || pkg_try apt lib32gcc1 || true
+    pkg_try apt lib32stdc++6 libsdl2-2.0-0 || true
+  elif command -v dnf >/dev/null 2>&1; then
+    pkg_try dnf ca-certificates curl wget tar gzip python3 procps-ng glibc.i686 libstdc++.i686 libgcc.i686 || true
+  elif command -v yum >/dev/null 2>&1; then
+    pkg_try yum ca-certificates curl wget tar gzip python3 procps-ng glibc.i686 libstdc++.i686 libgcc.i686 || true
+  elif command -v pacman >/dev/null 2>&1; then
+    if ! grep -qE '^\[multilib\]' /etc/pacman.conf; then
+      warn "[multilib] is not enabled in /etc/pacman.conf - enabling it (needed for lib32-gcc-libs)"
+      cp /etc/pacman.conf /etc/pacman.conf.bak-theisle
+      sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
+    fi
+    pacman -Sy --noconfirm >/dev/null 2>&1 || warn "pacman -Sy failed"
+    pkg_try pacman ca-certificates curl wget tar gzip python procps-ng lib32-gcc-libs lib32-glibc || true
+  elif command -v zypper >/dev/null 2>&1; then
+    zypper --non-interactive refresh >/dev/null 2>&1 || true
+    pkg_try zypper ca-certificates curl wget tar gzip python3 procps libgcc_s1-32bit glibc-32bit libstdc++6-32bit || true
+  elif command -v apk >/dev/null 2>&1; then
+    die "Alpine (musl) is not supported natively: SteamCMD and the server need glibc. Use --docker instead."
+  else
+    warn "Unknown package manager. Make sure these are installed: curl tar python3 and 32-bit glibc + libgcc + libstdc++."
+  fi
+  command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || die "curl or wget is required"
+  command -v tar  >/dev/null 2>&1 || die "tar is required"
+}
+
+
+# ------------------------------------------------- carry data (snapshots) ---
+# Mode switches and --from-snapshot move data with tools/isle_snapshot.py, the
+# same engine as "isle-server snapshot" (PRD MIG-05/06).
+ensure_python() {
+  command -v python3 >/dev/null 2>&1 && return 0
+  if (( DO_DEPS )); then
+    if command -v apt-get >/dev/null 2>&1; then apt-get update -q >/dev/null 2>&1 || true; pkg_try apt python3 || true
+    elif command -v dnf >/dev/null 2>&1; then pkg_try dnf python3 || true
+    elif command -v yum >/dev/null 2>&1; then pkg_try yum python3 || true
+    elif command -v pacman >/dev/null 2>&1; then pkg_try pacman python || true
+    elif command -v zypper >/dev/null 2>&1; then pkg_try zypper python3 || true; fi
+  fi
+  command -v python3 >/dev/null 2>&1
+}
+snap_tool() {  # SCRIPTS_DIR args... - the install's own copy of the tool (or this repo's)
+  local dir="$1"; shift
+  local tool="$dir/tools/isle_snapshot.py"
+  [[ -f "$tool" ]] || tool="$SRC_DIR/tools/isle_snapshot.py"
+  python3 "$tool" "$@"
+}
+has_part() { [[ ",$1," == *",$2,"* ]]; }
+drop_part() { local out="" p; for p in ${1//,/ }; do [[ "$p" == "$2" ]] || out="${out:+$out,}$p"; done; printf '%s' "$out"; }
+
+SNAP_FILE=""; SNAP_PARTS=""
+make_carry_snapshot() {  # SOURCE(native|docker) PARTS - sets SNAP_FILE/SNAP_PARTS on success
+  local src="$1" parts="$2" out log rc=0
+  [[ -n "$parts" ]] || return 0
+  if ! ensure_python; then
+    warn "python3 is not available - the $src data was not carried over (it is kept; carry it later with: isle-server snapshot)"
+    return 0
+  fi
+  out="/var/tmp/theisle-carry-$src-$(date +%Y%m%d-%H%M%S).tar.gz"; log="$(mktemp)"
+  step "Taking a snapshot of the $src data to carry over ($parts)"
+  if [[ "$src" == native ]]; then
+    snap_tool "$SRC_DIR" --conf "$NATIVE_SCRIPTS_DIR/config/server.conf" --runtime native \
+      --server-dir "$(native_path SERVER_DIR "$SVC_HOME/theisle-server")" \
+      --backup-dir "$(native_path BACKUP_DIR "$SVC_HOME/theisle-backups")" \
+      --overrides-dir "$NATIVE_SCRIPTS_DIR/config/overrides" --plugins-dir "$NATIVE_SCRIPTS_DIR/plugins/installed" \
+      create --include "$parts" --output "$out" --no-save > "$log" 2>&1 || rc=$?
+  else
+    snap_tool "$SRC_DIR" --conf "$DOCKER_SCRIPTS_DIR/config/server.conf" --runtime docker \
+      --overrides-dir "$DOCKER_SCRIPTS_DIR/config/overrides" --plugins-dir "$DOCKER_SCRIPTS_DIR/plugins/installed" \
+      create --include "$parts" --output "$out" --no-save > "$log" 2>&1 || rc=$?
+  fi
+  sed 's/^/  /' "$log"
+  if (( rc == 0 )); then SNAP_FILE="$out"; SNAP_PARTS="$parts"
+  elif grep -q 'nothing to snapshot' "$log"; then ok "Nothing to carry over from $src"
+  else warn "The snapshot failed - the $src data was not carried over (it is kept)"; fi
+  rm -f "$log"
+}
+
+RESTORED_WORLD=0; RESTORED_BACKUPS=0
+restore_snapshot() {  # TARGET(native|docker) SCRIPTS_DIR LAUNCHER FILE PARTS
+  local tgt="$1" dir="$2" launcher_path="$3" file="$4" parts="$5" log rc=0
+  [[ -n "$parts" && -f "$file" ]] || return 0
+  if ! ensure_python; then warn "python3 is not available - restore $file later with: isle-server snapshot restore"; return 0; fi
+  local -a args=(--conf "$CONF" --runtime "$tgt" --launcher "$launcher_path"
+                 --overrides-dir "$dir/config/overrides" --plugins-dir "$dir/plugins/installed")
+  if [[ "$tgt" == native ]]; then
+    args+=(--server-dir "$(conf_get SERVER_DIR)" --backup-dir "$(conf_get BACKUP_DIR)" --owner "$SVC_USER")
+  fi
+  local -a extra=(); if (( OVERWRITE )); then extra=(--overwrite); fi
+  log="$(mktemp)"
+  step "Restoring $(basename "$file") into $tgt ($parts)"
+  snap_tool "$dir" "${args[@]}" restore "$file" --include "$parts" "${extra[@]}" > "$log" 2>&1 || rc=$?
+  sed 's/^/  /' "$log"
+  grep -q 'World restored' "$log" && RESTORED_WORLD=1
+  grep -q 'Backups restored' "$log" && RESTORED_BACKUPS=1
+  rm -f "$log"
+  if (( rc != 0 )); then MIGRATE_HINT="Restoring $file failed - retry with: sudo isle-server snapshot restore $file"; fi
+  return 0
+}
+
+finish_carry() {  # SOURCE TARGET_SCRIPTS_DIR - "move" cleanup + keep the carry snapshot
+  local src="$1" dir="$2"
+  [[ -n "$SNAP_FILE" ]] || return 0
+  if [[ "$DATA" == move ]]; then
+    RM_GAME=0; RM_SETTINGS=0
+    RM_WORLDS=$RESTORED_WORLD
+    RM_BACKUPS=0; if has_part "$SNAP_PARTS" backups && (( RESTORED_BACKUPS )); then RM_BACKUPS=1; fi
+    NO_FINAL_BACKUP=1
+    if (( RM_WORLDS || RM_BACKUPS )); then
+      step "Moving: clearing the $src copy of $(removal_list)"
+      if [[ "$src" == native ]]; then remove_native_data; else remove_docker_data; fi
+    else
+      warn "Nothing was restored, so nothing was removed from $src"
+    fi
+  fi
+  mkdir -p "$dir/snapshots"
+  mv "$SNAP_FILE" "$dir/snapshots/" && SNAP_FILE="$dir/snapshots/$(basename "$SNAP_FILE")"
+  if [[ "$dir" == "$NATIVE_SCRIPTS_DIR" ]] && id "$SVC_USER" >/dev/null 2>&1; then chown -R "$SVC_USER:" "$dir/snapshots"; fi
+  ok "The carry snapshot is kept at $SNAP_FILE"
 }
 
 # ------------------------------------------------------- uninstall choices --
@@ -396,7 +573,7 @@ remove_native_data() {
   scdir="$(native_path STEAMCMD_DIR "$SVC_HOME/steamcmd")"
   bdir="$(native_path BACKUP_DIR "$SVC_HOME/theisle-backups")"
   step "Removing native data: $(removal_list)"
-  if (( RM_WORLDS && ! RM_BACKUPS )) && native_has_world; then
+  if (( RM_WORLDS && ! RM_BACKUPS && ! NO_FINAL_BACKUP )) && native_has_world; then
     mkdir -p "$bdir"
     local f; f="$bdir/theisle-final-$(date +%Y%m%d-%H%M%S).tar.gz"
     if tar -czf "$f" -C "$sdir/TheIsle" --exclude=Saved/Logs --exclude=Saved/Crashes Saved; then
@@ -435,7 +612,7 @@ remove_docker_data() {
       local img; img="$(helper_image)" || img=""
       [[ -n "$img" ]] || die "No image available to edit volume $VOLUME - nothing was deleted"
       local cmd="set -e"
-      if (( RM_WORLDS && ! RM_BACKUPS )) && volume_has_world; then
+      if (( RM_WORLDS && ! RM_BACKUPS && ! NO_FINAL_BACKUP )) && volume_has_world; then
         cmd+="; mkdir -p /data/backups; tar -czf /data/backups/theisle-final-\$(date +%Y%m%d-%H%M%S).tar.gz -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved"
         ok "Taking a final backup of the world into /data/backups"
       fi
@@ -537,25 +714,28 @@ if [[ "$MODE" == docker ]]; then
   docker info >/dev/null 2>&1 || die "The Docker daemon is not running (try: systemctl start docker)"
   ok "$(docker --version)"
 
-  IMPORT_FILE=""
-  if native_active; then step "Switching from native to docker"; retire_native; fi
-  # Retained native world -> volume (only if the volume has no world yet).
-  volume_world=0
-  if volume_has_world; then volume_world=1; fi
-  if native_has_world; then
-    if (( volume_world )); then
-      MIGRATE_HINT="A native world is also kept in $(native_saved_dir); the Docker world was left as is. To use the native one: sudo isle-server stop && sudo isle-server restore <backup>"
-    elif (( DO_IMPORT )); then
-      step "Exporting the retained native world for import"
-      IMPORT_FILE="$(export_native_world /var/tmp)" || IMPORT_FILE=""
-      if [[ -n "$IMPORT_FILE" ]]; then ok "Native world archived to $IMPORT_FILE"; fi
+  switching=0
+  if native_active; then switching=1; step "Switching from native to docker"; retire_native; fi
+  # What to carry from the native side (PRD MIG-05; INS-19 for a retained world).
+  parts=""; reused=0
+  if [[ "$DATA" != fresh ]]; then
+    if (( switching || CARRY_SET )); then parts="$CARRY"; elif native_has_world; then parts="worlds"; fi
+  fi
+  if has_part "$parts" worlds; then
+    if ! native_has_world; then parts="$(drop_part "$parts" worlds)"
+    elif volume_has_world && (( ! OVERWRITE )); then
+      ok "Reusing the world kept in Docker volume $VOLUME (the native world is kept too; --overwrite replaces it)"
+      parts="$(drop_part "$parts" worlds)"; reused=1
     fi
   fi
+  if [[ -n "$parts" ]]; then make_carry_snapshot native "$parts"; fi
 
   step "Installing scripts to $DOCKER_SCRIPTS_DIR"
   copy_scripts "$DOCKER_SCRIPTS_DIR"
-  seed_conf "$DOCKER_SCRIPTS_DIR"
+  if [[ "$DATA" == fresh ]] || { (( CARRY_SET )) && ! has_part "$CARRY" settings; }; then seed_conf "$DOCKER_SCRIPTS_DIR" --fresh
+  else seed_conf "$DOCKER_SCRIPTS_DIR"; fi
   finish_conf docker
+  if [[ -n "$IMAGE_REF" ]]; then conf_set DOCKER_BUILD false; conf_set DOCKER_IMAGE "$IMAGE_REF"; ok "Using prebuilt image $IMAGE_REF"; fi
   link_launcher "$DOCKER_SCRIPTS_DIR"
   launcher="$DOCKER_SCRIPTS_DIR/linux/isle-server.sh"
   export ISLE_CONF="$CONF"
@@ -581,15 +761,15 @@ if [[ "$MODE" == docker ]]; then
     fi
   fi
 
-  if (( volume_world )) || { [[ -z "$IMPORT_FILE" ]] && volume_has_world; }; then
+  if [[ -n "$SNAP_FILE" ]]; then
+    restore_snapshot docker "$DOCKER_SCRIPTS_DIR" "$launcher" "$SNAP_FILE" "$SNAP_PARTS"
+    finish_carry native "$DOCKER_SCRIPTS_DIR"
+  elif [[ -z "$FROM_SNAPSHOT" ]] && (( ! reused )) && volume_has_world; then
     ok "Reusing the world kept in Docker volume $VOLUME"
-  elif [[ -n "$IMPORT_FILE" ]]; then
-    step "Importing the native world into the Docker volume"
-    if "$launcher" --docker restore "$IMPORT_FILE"; then
-      ok "Imported (archive kept at $IMPORT_FILE)"
-    else
-      MIGRATE_HINT="Importing failed - try: sudo isle-server restore $IMPORT_FILE"
-    fi
+  fi
+  if [[ -n "$FROM_SNAPSHOT" ]]; then
+    fs_parts="worlds,settings,overrides,plugins"; if (( CARRY_SET )); then fs_parts="$CARRY"; fi
+    restore_snapshot docker "$DOCKER_SCRIPTS_DIR" "$launcher" "$FROM_SNAPSHOT" "$fs_parts"
   fi
 
   if (( DO_START || was_running )); then step "Starting the container"; "$launcher" --docker start; fi
@@ -615,91 +795,28 @@ fi
 # ==================================================================== NATIVE
 [[ "$MODE" == native ]] || die "Unknown mode: $MODE"
 
-IMPORT_FILE=""
+if (( DO_DEPS )); then install_deps; fi
+
+switching=0
 if docker_installed; then
+  switching=1
   step "Switching from docker to native"
   docker stop -t 90 "$CONTAINER" >/dev/null 2>&1 || true
 fi
-# Retained Docker world -> native (container present or not), only if native has none.
-if (( DO_IMPORT )) && volume_has_world; then
-  if native_has_world; then
-    MIGRATE_HINT="A Docker world is also kept in volume $VOLUME; the native world was left as is."
-  else
-    step "Exporting the world kept in Docker volume $VOLUME for import"
-    IMPORT_FILE="$(export_volume_world /var/tmp)" || IMPORT_FILE=""
-    if [[ -n "$IMPORT_FILE" ]]; then ok "Docker world archived to $IMPORT_FILE"; fi
+# What to carry from the Docker side (PRD MIG-05; INS-19 for a retained world).
+parts=""
+if [[ "$DATA" != fresh ]]; then
+  if (( switching || CARRY_SET )); then parts="$CARRY"; elif volume_has_world; then parts="worlds"; fi
+fi
+if has_part "$parts" worlds; then
+  if ! volume_has_world; then parts="$(drop_part "$parts" worlds)"
+  elif native_has_world && (( ! OVERWRITE )); then
+    ok "Keeping the native world (the Docker world stays in volume $VOLUME; --overwrite replaces it)"
+    parts="$(drop_part "$parts" worlds)"
   fi
 fi
+if [[ -n "$parts" ]]; then make_carry_snapshot docker "$parts"; fi
 if docker_installed; then retire_docker; fi
-
-# ---------------------------------------------------------- dependencies ----
-detect_distro() {
-  DISTRO_ID="unknown"; DISTRO_NAME="Unknown Linux"
-  if [[ -r /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    DISTRO_ID="${ID:-unknown}"; DISTRO_NAME="${PRETTY_NAME:-$DISTRO_ID}"
-  fi
-}
-
-pkg_try() {  # install packages one by one; returns non-zero if any failed
-  local mgr="$1"; shift
-  local p failed=0
-  for p in "$@"; do
-    if case "$mgr" in
-         apt)    DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$p" >/dev/null 2>&1 ;;
-         dnf)    dnf install -y -q "$p" >/dev/null 2>&1 ;;
-         yum)    yum install -y -q "$p" >/dev/null 2>&1 ;;
-         pacman) pacman -S --noconfirm --needed "$p" >/dev/null 2>&1 ;;
-         zypper) zypper --non-interactive install -y "$p" >/dev/null 2>&1 ;;
-         *)      false ;;
-       esac; then
-      ok "package $p"
-    else
-      warn "could not install package $p"; failed=1
-    fi
-  done
-  return "$failed"
-}
-
-install_deps() {
-  detect_distro
-  step "Installing dependencies for $DISTRO_NAME"
-  if command -v apt-get >/dev/null 2>&1; then
-    dpkg --add-architecture i386 2>/dev/null || true
-    # Ubuntu ships i386 libs in "multiverse"/"universe"; make sure they are on.
-    if [[ "$DISTRO_ID" == "ubuntu" ]] && command -v add-apt-repository >/dev/null 2>&1; then
-      add-apt-repository -y multiverse >/dev/null 2>&1 || true
-    fi
-    apt-get update -q >/dev/null || warn "apt-get update reported errors"
-    pkg_try apt ca-certificates curl wget tar gzip python3 procps locales || true
-    pkg_try apt lib32gcc-s1 || pkg_try apt lib32gcc1 || true
-    pkg_try apt lib32stdc++6 libsdl2-2.0-0 || true
-  elif command -v dnf >/dev/null 2>&1; then
-    pkg_try dnf ca-certificates curl wget tar gzip python3 procps-ng glibc.i686 libstdc++.i686 libgcc.i686 || true
-  elif command -v yum >/dev/null 2>&1; then
-    pkg_try yum ca-certificates curl wget tar gzip python3 procps-ng glibc.i686 libstdc++.i686 libgcc.i686 || true
-  elif command -v pacman >/dev/null 2>&1; then
-    if ! grep -qE '^\[multilib\]' /etc/pacman.conf; then
-      warn "[multilib] is not enabled in /etc/pacman.conf - enabling it (needed for lib32-gcc-libs)"
-      cp /etc/pacman.conf /etc/pacman.conf.bak-theisle
-      sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
-    fi
-    pacman -Sy --noconfirm >/dev/null 2>&1 || warn "pacman -Sy failed"
-    pkg_try pacman ca-certificates curl wget tar gzip python procps-ng lib32-gcc-libs lib32-glibc || true
-  elif command -v zypper >/dev/null 2>&1; then
-    zypper --non-interactive refresh >/dev/null 2>&1 || true
-    pkg_try zypper ca-certificates curl wget tar gzip python3 procps libgcc_s1-32bit glibc-32bit libstdc++6-32bit || true
-  elif command -v apk >/dev/null 2>&1; then
-    die "Alpine (musl) is not supported natively: SteamCMD and the server need glibc. Use --docker instead."
-  else
-    warn "Unknown package manager. Make sure these are installed: curl tar python3 and 32-bit glibc + libgcc + libstdc++."
-  fi
-  command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || die "curl or wget is required"
-  command -v tar  >/dev/null 2>&1 || die "tar is required"
-}
-
-if (( DO_DEPS )); then install_deps; fi
 
 # ------------------------------------------------------------------ user ----
 step "Preparing service user '$SVC_USER'"
@@ -712,17 +829,12 @@ else
   ok "Created user $SVC_USER ($SVC_HOME)"
 fi
 mkdir -p "$SVC_HOME"; chown "$SVC_USER:" "$SVC_HOME"
-if [[ -n "$IMPORT_FILE" && -f "$IMPORT_FILE" ]]; then
-  mkdir -p "$SVC_HOME/theisle-backups"
-  mv "$IMPORT_FILE" "$SVC_HOME/theisle-backups/"
-  IMPORT_FILE="$SVC_HOME/theisle-backups/$(basename "$IMPORT_FILE")"
-  chown -R "$SVC_USER:" "$SVC_HOME/theisle-backups"
-fi
 
 # -------------------------------------------------------- copy scripts ------
 step "Installing management scripts to $NATIVE_SCRIPTS_DIR"
 copy_scripts "$NATIVE_SCRIPTS_DIR"
-seed_conf "$NATIVE_SCRIPTS_DIR"
+if [[ "$DATA" == fresh ]] || { (( CARRY_SET )) && ! has_part "$CARRY" settings; }; then seed_conf "$NATIVE_SCRIPTS_DIR" --fresh
+else seed_conf "$NATIVE_SCRIPTS_DIR"; fi
 finish_conf native
 # Pin the paths to the service user's home so every caller (root, sudo -u,
 # systemd) resolves the same directories.
@@ -745,16 +857,15 @@ elif ISLE_NO_SYSTEMD=1 native_run status >/dev/null 2>&1; then
 fi
 native_run install
 if (( WAS_RUNNING )); then DO_START=1; fi
-if [[ -n "$IMPORT_FILE" ]]; then
-  step "Importing the Docker world"
-  if native_has_world; then
-    MIGRATE_HINT="A native world already exists; the Docker world is in $IMPORT_FILE (restore it with: sudo -u $SVC_USER isle-server restore $IMPORT_FILE)"
-  elif native_run restore "$IMPORT_FILE"; then
-    ok "Imported (archive kept at $IMPORT_FILE)"
-  else
-    MIGRATE_HINT="Importing failed - try: sudo -u $SVC_USER isle-server restore $IMPORT_FILE"
-  fi
+if [[ -n "$SNAP_FILE" ]]; then
+  restore_snapshot native "$NATIVE_SCRIPTS_DIR" "$NATIVE_SCRIPTS_DIR/linux/isle-server.sh" "$SNAP_FILE" "$SNAP_PARTS"
+  finish_carry docker "$NATIVE_SCRIPTS_DIR"
 fi
+if [[ -n "$FROM_SNAPSHOT" ]]; then
+  fs_parts="worlds,settings,overrides,plugins"; if (( CARRY_SET )); then fs_parts="$CARRY"; fi
+  restore_snapshot native "$NATIVE_SCRIPTS_DIR" "$NATIVE_SCRIPTS_DIR/linux/isle-server.sh" "$FROM_SNAPSHOT" "$fs_parts"
+fi
+chown -R "$SVC_USER:" "$NATIVE_SCRIPTS_DIR"
 
 # -------------------------------------------------------------- firewall ----
 if (( DO_FIREWALL )); then step "Configuring firewall"; firewall_rules add; fi

@@ -262,6 +262,10 @@ Turn the import off with `--no-import` / `-NoImport`. The archives it creates st
 folder, so you can restore them again later. A "world" is anything in `TheIsle/Saved` besides `Config`, `Logs`
 and `Crashes`.
 
+**Switching with data choices, and moving to another machine:** the installers take `--data copy|move|fresh`,
+`--carry LIST`, `--overwrite`, `--from-snapshot FILE` and `--image REF` (Windows: `-Data`, `-Carry`, `-Overwrite`,
+`-FromSnapshot`, `-Image`). See [MIGRATION.md](MIGRATION.md).
+
 **Moving a world between modes.** Backups are portable. `restore` accepts `.tar.gz` (Linux/Docker) and `.zip`
 (native Windows) in either mode, and in docker mode a file on the host is copied into the container for you:
 

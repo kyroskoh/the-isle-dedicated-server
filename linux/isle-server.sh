@@ -31,6 +31,9 @@
 #    preset       list|show <name>|apply <name...>       (stackable tweaks)
 #    plugins      list|search|info|install|remove|enable|disable|update|
 #                 preset|run|config|sources ...          (see PLUGINS.md)
+#    snapshot     create [--include LIST] [--output F] | restore F [--include LIST]
+#                 [--overwrite] [--all-settings] [--stop] | info F | list
+#                 portable snapshot to move/clone a server (any OS, any runtime)
 #    info         Print resolved paths and settings
 #    version      Print the script version
 #    help         This text
@@ -225,13 +228,13 @@ install_steamcmd() {
   mkdir -p "$STEAMCMD_DIR"
   local tmp; tmp="$(mktemp)"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$STEAMCMD_URL" -o "$tmp"
+    curl -fsSL "$STEAMCMD_URL" -o "$tmp" || { rm -f "$tmp"; die "Could not download SteamCMD from $STEAMCMD_URL"; }
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$tmp" "$STEAMCMD_URL"
+    wget -qO "$tmp" "$STEAMCMD_URL" || { rm -f "$tmp"; die "Could not download SteamCMD from $STEAMCMD_URL"; }
   else
     die "Neither curl nor wget is installed (run linux/install.sh as root first)"
   fi
-  tar -xzf "$tmp" -C "$STEAMCMD_DIR"
+  tar -xzf "$tmp" -C "$STEAMCMD_DIR" || { rm -f "$tmp"; die "The SteamCMD download is not a valid archive"; }
   rm -f "$tmp"
   ok "SteamCMD installed"
 }
@@ -414,7 +417,9 @@ server_args() {
 
 prepare_launch() {
   if is_true "$(cfg UPDATE_ON_START)" || ! server_binary >/dev/null; then
-    update_server || { server_binary >/dev/null || die "No server installed"; warn "Update failed - starting existing build"; }
+    # Subshell: a failing update calls die/exit; that must not take the launcher
+    # down when a working build is already installed (e.g. Steam is unreachable).
+    ( update_server ) || { server_binary >/dev/null || die "No server installed"; warn "Update failed - starting existing build"; }
   fi
   configure
   link_steamclient >/dev/null 2>&1 || true
@@ -449,10 +454,12 @@ cmd_run() {  # foreground; systemd ExecStart
 }
 
 cmd_watchdog() {  # background supervisor used by "start" without systemd
+  # PID file first: the update in prepare_launch can take minutes, and "start"
+  # / "status" must see the server as starting meanwhile.
+  mkdir -p "$STATE_DIR"; echo $$ > "$STATE_DIR/watchdog.pid"
   prepare_launch
   local bin; bin="$(server_binary)"
   local -a args; mapfile -t args < <(server_args)
-  echo $$ > "$STATE_DIR/watchdog.pid"
   rm -f "$STATE_DIR/stop.flag"
   trap 'touch "$STATE_DIR/stop.flag"; pid_alive "$(read_pid "$STATE_DIR/server.pid")" && kill -TERM "$(read_pid "$STATE_DIR/server.pid")"' INT TERM
   cd "$SERVER_DIR"
@@ -859,6 +866,19 @@ cmd_plugins() {
   python3 "$REPO_DIR/tools/isle_plugins.py" --conf "$ISLE_CONF" --launcher "$SCRIPT_DIR/isle-server.sh" \
     --runtime "${RUNTIME:-native}" "$@"
 }
+cmd_snapshot() {
+  command -v python3 >/dev/null 2>&1 || die "python3 is required for snapshots"
+  local -a owner=()
+  # root working on a service user's native install: keep restored files owned by that user
+  if [[ $EUID -eq 0 && "${RUNTIME:-native}" == native ]]; then
+    local u; u="$(stat -c %U "$ISLE_CONF" 2>/dev/null || true)"
+    [[ -n "$u" && "$u" != root ]] && owner=(--owner "$u")
+  fi
+  python3 "$REPO_DIR/tools/isle_snapshot.py" --conf "$ISLE_CONF" --runtime "${RUNTIME:-native}" \
+    --launcher "$SCRIPT_DIR/isle-server.sh" --server-dir "$SERVER_DIR" --backup-dir "$BACKUP_DIR" \
+    --overrides-dir "$(overrides_dir)" "${owner[@]}" "$@"
+}
+
 run_hooks() {  # EVENT - run enabled plugins' hooks; never fails
   local enabled; enabled="$(dirname "$ISLE_CONF")/plugins/enabled.txt"
   [[ -s "$enabled" ]] || return 0
@@ -876,6 +896,7 @@ config_tool() {  # dispatch shared by both runtimes; returns 1 if CMD is not a c
     profile)    cmd_overlay profile "$@" ;;
     preset)     cmd_overlay preset "$@" ;;
     plugins)    cmd_plugins "$@" ;;
+    snapshot)   cmd_snapshot "$@" ;;
     *) return 1 ;;
   esac
 }

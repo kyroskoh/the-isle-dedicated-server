@@ -39,6 +39,8 @@
     Profile        list|show <name>|apply <name>              (whole play styles)
     Preset         list|show <name>|apply <name...>           (stackable tweaks)
     Plugins        list|search|info|install|remove|enable|disable|update|preset|run|config|sources
+    Snapshot       create [--include LIST] [--output F] | restore F [--include LIST] [--overwrite]
+                   [--all-settings] [--stop] | info F | list   (move/clone to any OS or runtime)
     Info           Print resolved paths and settings
     Version        Print the script version
 
@@ -65,7 +67,7 @@ param(
     [ValidateSet('Install', 'Update', 'Validate', 'Check', 'Configure', 'Start', 'Stop', 'Restart', 'Status', 'Run',
                  'Logs', 'Backup', 'Restore', 'Rcon', 'Save', 'Firewall', 'RemoveFirewall',
                  'InstallService', 'RemoveService', 'Info', 'Version', 'Help',
-                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins')]
+                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot')]
     [string]$Command = 'Help',
 
     [string]$ConfigPath,
@@ -544,7 +546,7 @@ function Invoke-PyRcon([string[]]$rconArgs) {
     $pyArgs += @((Join-Path $RepoDir 'tools\isle_rcon.py'), '-p', (C 'RCON_PORT'))
     $pyArgs += $rconArgs
     $env:ISLE_RCON_PASSWORD = C 'RCON_PASSWORD'
-    try { & $py[0] @pyArgs | Out-Host } finally { Remove-Item Env:\ISLE_RCON_PASSWORD -ErrorAction SilentlyContinue }
+    try { & $py[0] @pyArgs | ForEach-Object { Write-Host $_ } } finally { Remove-Item Env:\ISLE_RCON_PASSWORD -ErrorAction SilentlyContinue }
     return $LASTEXITCODE
 }
 
@@ -758,7 +760,7 @@ function Invoke-Dc([string[]]$DcArgs) {
     $env:ISLE_OVERRIDES_DIR = Get-OverridesDir
     New-Item -ItemType Directory -Force -Path $env:ISLE_OVERRIDES_DIR | Out-Null
     $base = @('compose', '--project-directory', $RepoDir, '-f', (Join-Path $RepoDir 'docker-compose.yml'), '--env-file', $envFile)
-    & docker @base @DcArgs | Out-Host
+    & docker @base @DcArgs | ForEach-Object { Write-Host $_ }
     return $LASTEXITCODE
 }
 function Invoke-DcChecked([string[]]$DcArgs) {
@@ -1160,7 +1162,7 @@ function Invoke-Python([string[]]$pyArgs) {
     $py = Get-Python
     if (-not $py) { throw 'Python 3 is required for plugins (winget install Python.Python.3.12)' }
     $a = @(); if ($py[1]) { $a += $py[1] }
-    & $py[0] @($a + $pyArgs) | Out-Host
+    & $py[0] @($a + $pyArgs) | ForEach-Object { Write-Host $_ }
     return $LASTEXITCODE
 }
 function Invoke-Plugins([string[]]$pluginArgs) {
@@ -1182,6 +1184,14 @@ function Invoke-ConfigTool([string]$cmd) {
         'Plugins' {
             $a = @('list'); if ($Items -and $Items.Count) { $a = $Items }
             $rc = Invoke-Plugins $a
+            exit $rc
+        }
+        'Snapshot' {
+            $a = @('list'); if ($Items -and $Items.Count) { $a = $Items }
+            $base = @((Join-Path $RepoDir 'tools\isle_snapshot.py'), '--conf', $ConfigPath, '--runtime', (Get-Runtime),
+                      '--launcher', (Join-Path $ScriptDir 'IsleServer.ps1'), '--server-dir', $ServerDir,
+                      '--backup-dir', $BackupDir, '--overrides-dir', (Get-OverridesDir))
+            $rc = Invoke-Python ($base + $a)
             exit $rc
         }
     }

@@ -33,6 +33,25 @@
     Remove what is installed (both modes unless -Native or -Docker is given). Keeps world
     data, settings and backups so the installer can simply be run again later.
 
+.PARAMETER Data
+    What happens to the other mode's data when switching (or when it is found):
+    Copy (default) carries it and keeps the source, Move carries it and then clears the source
+    worlds/backups, Fresh carries nothing. On Windows both modes share one config folder, so
+    settings, overrides and plugins are always shared; worlds and backups are carried.
+
+.PARAMETER Carry
+    Parts to carry: worlds,backups (settings,overrides,plugins are shared on Windows).
+    Default on a mode switch: worlds. Otherwise only a retained world is picked up.
+
+.PARAMETER Overwrite
+    Replace a world that already exists in the target.
+
+.PARAMETER FromSnapshot
+    Restore a snapshot (from any OS/runtime) after installing - e.g. moving to a new machine.
+
+.PARAMETER Image
+    Docker: use this prebuilt/registry image instead of building one from the repo.
+
 .PARAMETER NoImport
     Do not import a world retained from the other mode (by default a reinstall imports it
     when the target has no world yet; an existing world is never overwritten).
@@ -81,6 +100,12 @@ param(
     [switch]$Purge,
     [switch]$Yes,
     [switch]$NoImport,
+    [ValidateSet('Copy', 'Move', 'Fresh')]
+    [string]$Data = 'Copy',
+    [string]$Carry,
+    [switch]$Overwrite,
+    [string]$FromSnapshot,
+    [string]$Image,
     [switch]$KeepData,
     [switch]$RemoveGameFiles,
     [switch]$RemoveWorlds,
@@ -98,6 +123,19 @@ function Write-Warn([string]$m) { Write-Host "[WARN] $m" -ForegroundColor Yellow
 function Fail([string]$m)       { Write-Host "[FAIL] $m" -ForegroundColor Red; exit 1 }
 
 if ($Native -and $Docker) { Fail 'Choose either -Native or -Docker, not both.' }
+if ($NoImport) { $Data = 'Fresh' }
+$CarryParts = @()
+if ($Carry) {
+    foreach ($p in ($Carry -split ',')) {
+        $t = $p.Trim().ToLowerInvariant()
+        if (@('worlds', 'backups', 'settings', 'overrides', 'plugins', 'all') -notcontains $t) { Fail "-Carry: unknown part '$t' (worlds,backups,settings,overrides,plugins)" }
+        if ($t -eq 'all') { $CarryParts = @('worlds', 'backups') } elseif (@('worlds', 'backups') -contains $t) { $CarryParts += $t }
+    }
+}
+if ($FromSnapshot) {
+    if (-not (Test-Path $FromSnapshot)) { Fail "-FromSnapshot: no such file $FromSnapshot" }
+    $FromSnapshot = (Resolve-Path $FromSnapshot).Path
+}
 $dataSwitch = $Purge -or $KeepData -or $RemoveGameFiles -or $RemoveWorlds -or $RemoveBackups -or $RemoveSettings
 if ($dataSwitch -and -not $Uninstall) { Fail '-Purge/-KeepData/-Remove* are only valid together with -Uninstall.' }
 if ($KeepData -and ($Purge -or $RemoveGameFiles -or $RemoveWorlds -or $RemoveBackups -or $RemoveSettings)) {
@@ -155,6 +193,7 @@ function Write-InstallState([string]$mode, [string]$status = 'installed') {
     [IO.File]::WriteAllLines($StateFile, $lines)
 }
 $State = Read-InstallState
+$script:NoFinalBackup = $false   # set during a "move" switch (the carry snapshot is the safety copy)
 
 function Test-DockerUsable {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
@@ -239,23 +278,6 @@ function Test-VolumeWorld {
     & docker run --rm -v "${Volume}:/data:ro" --entrypoint sh $img -c $check *> $null
     return ($LASTEXITCODE -eq 0)
 }
-function Export-VolumeWorld([string]$dest) {
-    $img = Get-HelperImage
-    if (-not $img) { return $null }
-    New-Item -ItemType Directory -Force -Path $dest | Out-Null
-    $name = 'theisle-docker-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz'
-    & docker run --rm -v "${Volume}:/data:ro" -v "${dest}:/out" --entrypoint sh $img -c "tar -czf /out/$name -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved" *> $null
-    if ($LASTEXITCODE -ne 0) { return $null }
-    return (Join-Path $dest $name)
-}
-function Export-NativeWorld([string]$dest) {
-    $saved = Get-NativeSavedDir
-    New-Item -ItemType Directory -Force -Path $dest | Out-Null
-    $file = Join-Path $dest ('theisle-native-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz')
-    & tar -czf $file -C (Split-Path -Parent $saved) --exclude=Saved/Logs --exclude=Saved/Crashes Saved
-    if ($LASTEXITCODE -ne 0) { return $null }
-    return $file
-}
 
 # ------------------------------------------------------- uninstall choices --
 # Data categories (PRD INS-20): game files (server, SteamCMD, image - re-downloadable),
@@ -322,7 +344,7 @@ function Remove-NativeData([hashtable]$rm) {
     $scdir = Get-Conf 'STEAMCMD_DIR' (Join-Path $InstallRoot 'steamcmd')
     $bdir = Get-Conf 'BACKUP_DIR' (Join-Path $InstallRoot 'backups')
     $isle = Join-Path $sdir 'TheIsle'
-    if ($rm.Worlds -and -not $rm.Backups -and (Test-NativeWorld)) {
+    if ($rm.Worlds -and -not $rm.Backups -and -not $script:NoFinalBackup -and (Test-NativeWorld)) {
         New-Item -ItemType Directory -Force -Path $bdir | Out-Null
         $f = Join-Path $bdir ('theisle-final-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz')
         & tar -czf $f -C $isle --exclude=Saved/Logs --exclude=Saved/Crashes Saved
@@ -358,7 +380,7 @@ function Remove-DockerData([hashtable]$rm) {
             $img = Get-HelperImage
             if (-not $img) { Fail "No image available to edit volume $Volume - nothing was deleted" }
             $cmd = 'set -e'
-            if ($rm.Worlds -and -not $rm.Backups -and (Test-VolumeWorld)) {
+            if ($rm.Worlds -and -not $rm.Backups -and -not $script:NoFinalBackup -and (Test-VolumeWorld)) {
                 $cmd += '; mkdir -p /data/backups; tar -czf /data/backups/theisle-final-$(date +%Y%m%d-%H%M%S).tar.gz -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved'
                 Write-Ok 'Taking a final backup of the world into /data/backups'
             }
@@ -490,6 +512,7 @@ function Set-Conf([string]$key, [string]$value, [switch]$OnlyIfEmpty) {
     [IO.File]::WriteAllLines($Conf, $lines)
 }
 Set-Conf 'RUNTIME' $Mode
+if ($Image) { Set-Conf 'DOCKER_BUILD' 'false'; Set-Conf 'DOCKER_IMAGE' $Image; Write-Ok "Using prebuilt image $Image" }
 Set-Conf 'STEAMCMD_DIR' (Join-Path $InstallRoot 'steamcmd') -OnlyIfEmpty
 Set-Conf 'SERVER_DIR' (Join-Path $InstallRoot 'server') -OnlyIfEmpty
 Set-Conf 'BACKUP_DIR' (Join-Path $InstallRoot 'backups') -OnlyIfEmpty
@@ -498,42 +521,8 @@ $script:cfgText = [IO.File]::ReadAllText($Conf)
 $BackupDir = Get-Conf 'BACKUP_DIR' (Join-Path $InstallRoot 'backups')
 $MigrateHint = ''
 
-# ------------------------------------------------------------ mode switch --
-$ImportFile = $null
-$VolumeWorld = $false
-if ($Mode -eq 'docker') {
-    if (Test-NativeActive) { Write-Step 'Switching from native to docker'; Stop-NativeInstall }
-    $VolumeWorld = Test-VolumeWorld
-    if (Test-NativeWorld) {
-        if ($VolumeWorld) {
-            $MigrateHint = "A native world is also kept in $(Get-NativeSavedDir); the Docker world was left as is."
-        } elseif (-not $NoImport) {
-            Write-Step 'Exporting the retained native world for import'
-            $ImportFile = Export-NativeWorld $BackupDir
-            if ($ImportFile) { Write-Ok "Native world archived to $ImportFile" }
-        }
-    }
-}
-if ($Mode -eq 'native') {
-    $hadContainer = Test-DockerContainer
-    if ($hadContainer) {
-        Write-Step 'Switching from docker to native'
-        & docker stop -t 90 $Container *> $null
-    }
-    if (-not $NoImport -and (Test-VolumeWorld)) {
-        if (Test-NativeWorld) {
-            $MigrateHint = "A Docker world is also kept in volume $Volume; the native world was left as is."
-        } else {
-            Write-Step "Exporting the world kept in Docker volume $Volume for import"
-            $ImportFile = Export-VolumeWorld $BackupDir
-            if ($ImportFile) { Write-Ok "Docker world archived to $ImportFile" }
-        }
-    }
-    if ($hadContainer) { Remove-DockerContainer }
-}
-
 # ------------------------------------------------------------------ python --
-if ($Mode -eq 'native' -and -not $NoPython) {
+if (-not $NoPython) {   # used for RCON, plugins and snapshots (both modes)
     $hasPy = $false
     foreach ($c in 'py', 'python') {
         $cmd = Get-Command $c -ErrorAction SilentlyContinue
@@ -550,6 +539,67 @@ if ($Mode -eq 'native' -and -not $NoPython) {
     }
 }
 
+# ------------------------------------------------- carry data (snapshots) --
+# Worlds/backups move between the native folders and the Docker volume with
+# tools\isle_snapshot.py, the same engine as "IsleServer.ps1 Snapshot" (MIG-05/06).
+function Find-Python {
+    foreach ($c in @(@('py', '-3'), @('python', ''), @('python3', ''))) {
+        $cmd = Get-Command $c[0] -ErrorAction SilentlyContinue
+        if ($cmd -and $cmd.Source -notmatch 'WindowsApps\\python') { return @($cmd.Source, $c[1]) }
+    }
+    return $null
+}
+function Invoke-SnapshotTool([string]$runtime, [string[]]$toolArgs) {
+    $py = Find-Python
+    if (-not $py) { Write-Warn 'Python 3 is not available - data was not carried (it is kept; use IsleServer.ps1 Snapshot later)'; return @{ Code = 1; Out = '' } }
+    $a = @(); if ($py[1]) { $a += $py[1] }
+    $a += @((Join-Path $ScriptsDir 'tools\isle_snapshot.py'), '--conf', $Conf, '--runtime', $runtime, '--launcher', $Manager,
+            '--server-dir', (Get-Conf 'SERVER_DIR' (Join-Path $InstallRoot 'server')), '--backup-dir', $BackupDir,
+            '--overrides-dir', (Join-Path $ScriptsDir 'config\overrides'), '--plugins-dir', (Join-Path $ScriptsDir 'plugins\installed'))
+    # Windows PowerShell 5.1 turns native stderr into terminating errors under 'Stop'
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $out = (& $py[0] @($a + $toolArgs) 2>&1 | ForEach-Object { "$_" }) -join "`n"; $code = $LASTEXITCODE }
+    finally { $ErrorActionPreference = $prev }
+    ($out.TrimEnd() -split "`r?`n") | ForEach-Object { Write-Host "  $_" }
+    return @{ Code = $code; Out = $out }
+}
+$SnapFile = $null; $SnapParts = @(); $SnapSource = ''; $Reused = $false
+$sourceRuntime = 'native'; if ($Mode -eq 'native') { $sourceRuntime = 'docker' }
+$switching = $false
+if ($Mode -eq 'docker' -and (Test-NativeActive)) { $switching = $true; Write-Step 'Switching from native to docker'; Stop-NativeInstall }
+$hadContainer = $false
+if ($Mode -eq 'native' -and (Test-DockerContainer)) {
+    $switching = $true; $hadContainer = $true
+    Write-Step 'Switching from docker to native'
+    & docker stop -t 90 $Container *> $null
+}
+$sourceWorld = $false; $targetWorld = $false
+if ($Mode -eq 'docker') { $sourceWorld = Test-NativeWorld; $targetWorld = Test-VolumeWorld }
+else { $sourceWorld = Test-VolumeWorld; $targetWorld = Test-NativeWorld }
+$parts = @()
+if ($Data -ne 'Fresh') {
+    if ($CarryParts.Count) { $parts = $CarryParts }
+    elseif ($switching -or $sourceWorld) { $parts = @('worlds') }
+}
+if ($parts -contains 'worlds') {
+    if (-not $sourceWorld) { $parts = @($parts | Where-Object { $_ -ne 'worlds' }) }
+    elseif ($targetWorld -and -not $Overwrite) {
+        if ($Mode -eq 'docker') { Write-Ok "Reusing the world kept in Docker volume $Volume (the native world is kept too; -Overwrite replaces it)" }
+        else { Write-Ok "Keeping the native world (the Docker world stays in volume $Volume; -Overwrite replaces it)" }
+        $Reused = $true
+        $parts = @($parts | Where-Object { $_ -ne 'worlds' })
+    }
+}
+if ($parts.Count) {
+    $out = Join-Path ([IO.Path]::GetTempPath()) ("theisle-carry-$sourceRuntime-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz')
+    Write-Step ("Taking a snapshot of the $sourceRuntime data to carry over (" + ($parts -join ',') + ')')
+    $r = Invoke-SnapshotTool $sourceRuntime @('create', '--include', ($parts -join ','), '--output', $out, '--no-save')
+    if ($r.Code -eq 0) { $SnapFile = $out; $SnapParts = $parts; $SnapSource = $sourceRuntime }
+    elseif ($r.Out -match 'nothing to snapshot') { Write-Ok "Nothing to carry over from $sourceRuntime" }
+    else { Write-Warn "The snapshot failed - the $sourceRuntime data was not carried over (it is kept)" }
+}
+if ($hadContainer) { Remove-DockerContainer }
+
 # ------------------------------------------------------------------ server --
 if ($Mode -eq 'docker') { Write-Step 'Building the image and creating the container' }
 else { Write-Step 'Installing prerequisites, SteamCMD and The Isle server (this can take a while)' }
@@ -560,17 +610,35 @@ if ((Invoke-Manager Status) -eq 0) {
 }
 if ((Invoke-Manager Install) -ne 0) { Fail 'Installation failed - see the messages above.' }
 
-if ($Mode -eq 'docker' -and -not $ImportFile -and ($VolumeWorld -or (Test-VolumeWorld))) {
-    Write-Ok "Reusing the world kept in Docker volume $Volume"
-} elseif ($ImportFile) {
-    Write-Step 'Importing the retained world'
-    if ($Mode -eq 'native' -and (Test-NativeWorld)) {
-        $MigrateHint = "A native world already exists; the Docker world is in $ImportFile (Restore.bat -Path `"$ImportFile`")."
-    } elseif ((Invoke-Manager Restore -Path $ImportFile) -eq 0) {
-        Write-Ok "Imported (archive kept at $ImportFile)"
-    } else {
-        $MigrateHint = "Importing failed - try: Restore.bat -Path `"$ImportFile`""
+function Restore-Snapshot([string]$file, [string[]]$restoreParts) {
+    $extra = @(); if ($Overwrite) { $extra = @('--overwrite') }
+    Write-Step ("Restoring " + (Split-Path -Leaf $file) + " into $Mode (" + ($restoreParts -join ',') + ')')
+    $r = Invoke-SnapshotTool $Mode (@('restore', $file, '--include', ($restoreParts -join ',')) + $extra)
+    if ($r.Code -ne 0) { $script:MigrateHint = "Restoring $file failed - retry with: Manage.bat Snapshot restore `"$file`"" }
+    return $r.Out
+}
+if ($SnapFile) {
+    $restoreOut = Restore-Snapshot $SnapFile $SnapParts
+    if ($Data -eq 'Move') {
+        $rm = @{ Game = $false; Settings = $false; Worlds = ($restoreOut -match 'World restored');
+                 Backups = (($SnapParts -contains 'backups') -and ($restoreOut -match 'Backups restored')) }
+        if ($rm.Worlds -or $rm.Backups) {
+            $script:NoFinalBackup = $true
+            Write-Step "Moving: clearing the $SnapSource copy"
+            if ($SnapSource -eq 'native') { Remove-NativeData $rm } else { Remove-DockerData $rm }
+        } else { Write-Warn "Nothing was restored, so nothing was removed from $SnapSource" }
     }
+    $keep = Join-Path $ScriptsDir 'snapshots'
+    New-Item -ItemType Directory -Force -Path $keep | Out-Null
+    Move-Item $SnapFile $keep -Force
+    Write-Ok ("The carry snapshot is kept at " + (Join-Path $keep (Split-Path -Leaf $SnapFile)))
+} elseif ($Mode -eq 'docker' -and -not $FromSnapshot -and -not $Reused -and (Test-VolumeWorld)) {
+    Write-Ok "Reusing the world kept in Docker volume $Volume"
+}
+if ($FromSnapshot) {
+    $fsParts = @('worlds', 'settings', 'overrides', 'plugins')
+    if ($Carry) { $fsParts = @($Carry -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ }) }
+    [void](Restore-Snapshot $FromSnapshot $fsParts)
 }
 
 if (-not $NoFirewall) {

@@ -19,6 +19,7 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 
 - **One config for both OSes.** `config/server.conf` produces `Game.ini` and `Engine.ini` for you.
 - **Native or Docker, same launcher.** Set `RUNTIME=docker` (or pass `--docker` / `-Runtime Docker`) and the same commands and `.bat` files manage a container instead.
+- **Switch, clone and migrate.** Switch native <-> Docker by reinstalling with `--data copy|move|fresh` and `--carry worlds,backups,settings,overrides,plugins`. **Portable snapshots** move or clone a server to another machine or OS, in either runtime, with `snapshot create` and then `--from-snapshot`. See [MIGRATION.md](MIGRATION.md).
 - **Every Game.ini / Engine.ini key** through override files, an annotated key reference, **7 profiles** (realism, casual, hardcore-pvp, ...), **22 stackable presets**, and **roster presets**.
 - **Admin, whitelist and roster commands** (`admins`, `whitelist`, `classes`, `ai-classes`) with SteamID and class validation. Whitelist and roster changes apply live over RCON.
 - **Plugin manager** with search, install, update and presets (base, recommended, full). First-party plugins: scheduled restart countdown, Discord notifications, off-site backups, welcome announcement. Third-party catalogs must be SHA-256-pinned. See [PLUGINS.md](PLUGINS.md).
@@ -90,6 +91,9 @@ Then forward these ports on your router or cloud firewall:
 | Admins / whitelist | `isle-server admins add <id>`, `isle-server whitelist add <id>` | `Manage.bat Admins add <id>`, `Manage.bat Whitelist add <id>` |
 | Playable roster | `isle-server classes preset carnivores`, `isle-server classes add Triceratops` | `Manage.bat Classes preset carnivores` |
 | Plugins | `isle-server plugins preset recommended` | `Manage.bat Plugins preset recommended` |
+| Snapshot (move/clone) | `isle-server snapshot create`, `isle-server snapshot restore <file>` | `Manage.bat Snapshot create` |
+| Switch mode, keep/move data | `sudo ./linux/install.sh --docker --data move` | `Install.bat -Docker -Data Move` |
+| New machine from a snapshot | `sudo ./linux/install.sh --native --from-snapshot <file>` | `Install.bat -Native -FromSnapshot <file>` |
 | Re-generate ini | `isle-server configure` | `IsleServer.ps1 Configure` |
 | Paths & settings | `isle-server info` | `IsleServer.ps1 Info` |
 | Script version | `isle-server version` | `IsleServer.ps1 Version` |
@@ -122,6 +126,7 @@ docker-compose.yml           Compose service (ports, volume, env settings)
 
 - [INSTALL.md](INSTALL.md): step-by-step installation, manual installs, and uninstalling
 - [DOCKER.md](DOCKER.md): running in Docker / Docker Compose
+- [MIGRATION.md](MIGRATION.md): switching native <-> Docker with data choices, and snapshots to move or clone a server across machines and OSes
 - [PLUGINS.md](PLUGINS.md): the plugin manager, first-party plugins, writing plugins, third-party catalogs
 - [CONFIGURATION.md](CONFIGURATION.md): every `server.conf` key and the `Game.ini` key it maps to
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): common problems and fixes

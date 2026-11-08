@@ -55,6 +55,8 @@ EOF
   chmod 755 /home/theisle/steamcmd/steamcmd.sh
   touch /home/theisle/steamcmd/linux64/steamclient.so
 }
+IMG=()   # --image <tag> for docker installs when testing with a prebuilt image
+if [[ -n "${TEST_PREBUILT_IMAGE:-}" ]]; then IMG=(--image "$TEST_PREBUILT_IMAGE"); fi
 use_prebuilt() {
   if [[ -n "${TEST_PREBUILT_IMAGE:-}" ]]; then docker tag "$TEST_PREBUILT_IMAGE" theisle-server:latest; fi
 }
@@ -85,7 +87,6 @@ ck "server running"            "waitfor nstat"
 ck "root status agrees"        "isle-server status >/dev/null 2>&1"
 PW="$(grep '^RCON_PASSWORD=' "$NC" | cut -d= -f2)"
 sed -i 's/^UPDATE_ON_START=true/UPDATE_ON_START=false/' "$NC"
-if [[ -n "${TEST_PREBUILT_IMAGE:-}" ]]; then sed -i 's/^DOCKER_BUILD=true/DOCKER_BUILD=false/' "$NC"; fi
 
 echo "## 2 uninstall"; run 2 --uninstall
 ck "stopped"                   "! nstat"
@@ -98,14 +99,15 @@ ck "settings kept"             "[ \"\$(grep '^RCON_PASSWORD=' $NC | cut -d= -f2)
 ck "running"                   "waitfor nstat"
 
 echo "## 4 switch to docker: retained native world is imported"; nat_put native-world.txt
-use_prebuilt; run 4 --docker
+use_prebuilt; run 4 --docker "${IMG[@]}"
 seed_volume; isle-server start >/dev/null 2>&1
 ck "switched"                  "grep -q 'Switching from native to docker' $LOGS/4.log"
 ck "native stopped"            "! pgrep -u theisle -f TheIsleServer-Linux-Shipping >/dev/null"
 ck "settings carried over"     "[ \"\$(grep '^RCON_PASSWORD=' $DC | cut -d= -f2)\" = \"$PW\" ]"
 ck "RUNTIME=docker"            "grep -q '^RUNTIME=docker' $DC"
 ck "state docker"              "[ \"\$(state MODE)\" = docker ]"
-ck "native world imported"     "grep -q 'Imported' $LOGS/4.log && vol_has native-world.txt"
+ck "native world imported"     "grep -q 'World restored' $LOGS/4.log && vol_has native-world.txt"
+ck "carry snapshot kept"       "ls /opt/theisle-scripts/snapshots/theisle-carry-native-*.tar.gz >/dev/null 2>&1"
 ck "container running"         "waitfor dstat"
 
 echo "## 5 uninstall docker, reinstall (no flag): retained volume reused"; run 5 --uninstall
@@ -123,19 +125,19 @@ rm -rf -- "${NSAVED:?}"
 run 6 --native --no-deps --start
 ck "switched"                  "grep -q 'Switching from docker to native' $LOGS/6.log"
 ck "container removed"         "[ -z \"\$(docker ps -aq --filter name=^theisle\$)\" ]"
-ck "docker world imported"     "grep -q 'Imported' $LOGS/6.log && [ -f $NSAVED/SaveGames/docker-world.txt ]"
+ck "docker world imported"     "grep -q 'World restored' $LOGS/6.log && [ -f $NSAVED/SaveGames/docker-world.txt ]"
 ck "native running"            "waitfor nstat"
 ck "RUNTIME=native"            "grep -q '^RUNTIME=native' $NC"
 
 echo "## 7 uninstall native, reinstall native from the retained volume (no container)"; run 7 --uninstall
 rm -rf -- "${NSAVED:?}"
 run 7b --no-deps --start
-ck "imported from retained volume" "grep -q 'Exporting the world kept in Docker volume' $LOGS/7b.log && [ -f $NSAVED/SaveGames/docker-world.txt ]"
+ck "imported from retained volume" "grep -q 'Taking a snapshot of the docker data' $LOGS/7b.log && [ -f $NSAVED/SaveGames/docker-world.txt ]"
 ck "running"                   "waitfor nstat"
 run 7c --no-deps
-ck "existing world not overwritten" "grep -q 'native world was left as is' $LOGS/7c.log"
+ck "existing world not overwritten" "grep -q 'Keeping the native world' $LOGS/7c.log"
 run 7d --no-deps --no-import
-ck "--no-import respected"     "! grep -q 'Exporting the world' $LOGS/7d.log"
+ck "--no-import respected"     "! grep -q 'Taking a snapshot' $LOGS/7d.log"
 
 NBIN=/home/theisle/theisle-server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping
 vol_bin() { docker run --rm -v theisle-data:/data:ro --entrypoint sh theisle-server:latest -c "[ -x /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping ]"; }
@@ -195,13 +197,62 @@ ck "user removed"              "! id theisle >/dev/null 2>&1"
 ck "state removed"             "[ ! -e /etc/theisle-server/install.state ]"
 ck "volume removed"            "! docker volume inspect theisle-data >/dev/null 2>&1"
 prep_native; run 8b --native --no-deps --start
+sed -i 's/^UPDATE_ON_START=true/UPDATE_ON_START=false/' "$NC"   # migrated docker/native servers must not download the game in CI
 ck "fresh install"             "grep -q 'installed (native)' $LOGS/8b.log"
-ck "nothing imported"          "! grep -q 'Import' $LOGS/8b.log && [ ! -e $NSAVED/SaveGames ]"
+ck "nothing imported"          "! grep -q 'Taking a snapshot' $LOGS/8b.log && [ ! -e $NSAVED/SaveGames ]"
 ck "new RCON password"         "[ \"\$(grep '^RCON_PASSWORD=' $NC | cut -d= -f2)\" != \"$PW\" ]"
 ck "running"                   "waitfor nstat"
 
 echo "## 9 purge without --yes is refused when non-interactive"; run 9 --uninstall --purge
 ck "refused, nothing removed"  "grep -q 'without confirmation' $LOGS/9.log && id theisle >/dev/null 2>&1"
+
+echo "## M1 switch native -> docker with --data move (worlds, backups, overrides, settings)"
+nat_put move-world.txt
+sudo -u theisle isle-server backup >/dev/null 2>&1
+mkdir -p /home/theisle/theisle-scripts/config/overrides
+printf '[/Script/TheIsle.TIGameSession]\nbMoved=true\n' > /home/theisle/theisle-scripts/config/overrides/Game.ini
+chown -R theisle: /home/theisle/theisle-scripts/config/overrides
+use_prebuilt; run M1 --docker "${IMG[@]}" --data move --carry worlds,backups,overrides,settings
+ck "world moved into the volume"  "grep -q 'World restored' $LOGS/M1.log && vol_has move-world.txt"
+ck "native world cleared (move)"  "[ ! -e $NSAVED/SaveGames/move-world.txt ]"
+ck "backups moved"                "docker run --rm -v theisle-data:/data:ro --entrypoint sh theisle-server:latest -c 'ls /data/backups/theisle-*.tar.gz' >/dev/null 2>&1 && [ ! -e /home/theisle/theisle-backups ]"
+ck "overrides carried"            "grep -q '^bMoved=true' /opt/theisle-scripts/config/overrides/Game.ini"
+ck "move keeps a safety snapshot" "ls /opt/theisle-scripts/snapshots/theisle-carry-native-*.tar.gz >/dev/null 2>&1"
+seed_volume; isle-server start >/dev/null 2>&1
+ck "docker runs the moved world"  "waitfor dstat"
+
+echo "## M2 switch docker -> native with --data fresh (nothing carried)"
+run M2 --native --no-deps --data fresh --start
+ck "nothing carried"              "! grep -q 'Taking a snapshot' $LOGS/M2.log && [ ! -e $NSAVED/SaveGames ]"
+ck "Docker world left in place"   "vol_has move-world.txt"
+ck "native running (fresh world)" "waitfor nstat"
+
+echo "## M3 --overwrite replaces an existing world (old one kept aside)"
+nat_put native-only.txt
+run M3 --native --no-deps --carry worlds --overwrite
+ck "world replaced"               "[ -f $NSAVED/SaveGames/move-world.txt ] && [ ! -f $NSAVED/SaveGames/native-only.txt ]"
+ck "old world kept aside"         "ls -d /home/theisle/theisle-server/TheIsle/Saved.pre-snapshot-*/SaveGames/native-only.txt >/dev/null 2>&1"
+
+echo "## M4 migrate to a new machine: native snapshot -> purge -> docker --from-snapshot"
+sed -i 's/^SERVER_NAME=.*/SERVER_NAME="Migrated Server"/' "$NC"
+ck "snapshot via the launcher"    "sudo -u theisle isle-server snapshot create --include all --output /home/theisle/m4.tar.gz >/dev/null 2>&1 && cp /home/theisle/m4.tar.gz /var/tmp/m4.tar.gz"
+ck "snapshot info"                "sudo -u theisle isle-server snapshot info /home/theisle/m4.tar.gz | grep -q 'Migrated Server'"
+run M4p --uninstall --purge --yes
+use_prebuilt; run M4 --docker "${IMG[@]}" --from-snapshot /var/tmp/m4.tar.gz
+ck "world restored on the new machine" "vol_has move-world.txt"
+ck "settings restored"            "grep -q '^SERVER_NAME=\"Migrated Server\"' $DC && grep -q '^RUNTIME=docker' $DC"
+seed_volume; isle-server start >/dev/null 2>&1
+ck "migrated server running"      "waitfor dstat"
+
+echo "## M5 and back: docker snapshot -> purge -> native --from-snapshot"
+ck "docker snapshot"              "isle-server snapshot create --output /var/tmp/m5.tar.gz >/dev/null 2>&1"
+run M5p --uninstall --purge --yes
+prep_native; run M5 --native --no-deps --from-snapshot /var/tmp/m5.tar.gz --start
+ck "world restored natively"      "[ -f $NSAVED/SaveGames/move-world.txt ]"
+ck "settings restored, paths local" "grep -q '^SERVER_NAME=\"Migrated Server\"' $NC && grep -q '^RUNTIME=native' $NC && grep -q '^SERVER_DIR=/home/theisle/theisle-server' $NC"
+ck "files owned by the service user" "[ \"\$(stat -c %U $NSAVED/SaveGames/move-world.txt)\" = theisle ]"
+ck "native running"               "waitfor nstat"
+rm -f /var/tmp/m4.tar.gz /var/tmp/m5.tar.gz
 
 echo "## cleanup"; run 10 --uninstall --purge --yes >/dev/null 2>&1
 echo "logs: $LOGS"

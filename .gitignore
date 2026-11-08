@@ -26,3 +26,4 @@ plugins/installed/
 
 # generated compose env file (docker mode)
 config/.compose.env
+snapshots/

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.4 |
-| **Product version** | 1.8.0 (planned), 1.7.1 (released) |
+| **Product version** | 1.8.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -381,7 +381,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M10 Reinstall with retained data (v1.5.0) | INS-19: import retained worlds across modes on reinstall, both installers, CI | ✅ Done (v1.5.0). Linux verified by the cycle test. Windows import paths parse-checked only (they need Docker Desktop with Linux containers) |
 | M11 Uninstall data choices (v1.6.0) | INS-20: keep/remove per data category, menu, safety backup, both installers, CI | ✅ Done (v1.6.0). Linux verified by the cycle test (70 checks). Windows native paths covered by Windows CI; Windows Docker-volume paths parse-checked only |
 | M12 Config tools & plugins (v1.7.0) | CFX-01 – CFX-09, PLG-01 – PLG-07 | ✅ Done (v1.7.0). Linux + PowerShell 7 verified locally, Windows PowerShell 5.1 by CI. Live RCON pushes and real Discord/NAS targets need a live server (M6) |
-| **M13 Snapshots & mode-switch data choices (v1.8.0)** | **MIG-01 – MIG-08** | 🔜 In progress |
+| M13 Snapshots & mode-switch data choices (v1.8.0) | MIG-01 – MIG-08 | ✅ Done (v1.8.0). Linux cycle (92 checks), snapshot tests, PowerShell 7 suites locally; Windows PowerShell 5.1 and Windows Docker Desktop paths via CI/field test (M6) |
 
 ## 12. Traceability matrix
 
@@ -405,8 +405,8 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | CFX-01 – CFX-03 | `merge_ini` (Linux), `Merge-IniOverrides` (Windows), compose overrides mount, `config/reference/` | `tests/test_config_tools.sh`, Windows CI | Done (v1.7) |
 | CFX-04 – CFX-09 | `cmd_profile`/`cmd_preset`/`cmd_list_edit` (Linux), `Invoke-ProfileCommand`/`Invoke-ListCommand` (Windows), `config/profiles|presets|rosters|classes.txt` | `tests/test_config_tools.sh`, Windows CI | Done (v1.7) |
 | PLG-01 – PLG-07 | `tools/isle_plugins.py`, `plugins/`, launcher hook calls | `tests/test_plugins.py` | Done (v1.7) |
-| MIG-01 – MIG-04, MIG-07 | `tools/isle_snapshot.py`, `snapshot` in both launchers | `tests/test_snapshot.py`, Windows CI | **Planned v1.8** |
-| MIG-05 – MIG-06 | `install.sh` / `Install.ps1` (`--data`, `--carry`, `--overwrite`, `--from-snapshot`) | `tests/installer-cycle.sh` | **Planned v1.8** |
+| MIG-01 – MIG-04, MIG-07 | `tools/isle_snapshot.py`, `snapshot` in both launchers | `tests/test_snapshot.py`, Windows CI | Done (v1.8) |
+| MIG-05 – MIG-06 | `install.sh` / `Install.ps1` (`--data`, `--carry`, `--overwrite`, `--from-snapshot`) | `tests/installer-cycle.sh` | Done (v1.8) |
 | CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |
 | CFG-03/04 | `render_*_ini`/`configure`, `Get-*Ini`/`Set-ServerConfig` | CI smoke (grep sections) | Done |
 | CFG-05 | `check_config` / `Test-ServerConfig`, called by configure/run/start/install | CI smoke (positive + negative) | Done (v1.1) |
