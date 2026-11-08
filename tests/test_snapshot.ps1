@@ -34,7 +34,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $a.Root 'config/overrides')
 Set-Content (Join-Path $a.Root 'config/overrides/Game.ini') @('[/Script/TheIsle.TIGameSession]', 'GrowthMultiplier=3')
 $snap = Join-Path $W 'a.tar.gz'
 
-ck 'Snapshot create'           { $o = run Snapshot create --output $snap -ConfigPath $a.Conf; ($LASTEXITCODE -eq 0) -and (Test-Path $snap) }
+ck 'Snapshot create'           { $o = run Snapshot create --output $snap -ConfigPath $a.Conf; $ok = ($LASTEXITCODE -eq 0) -and (Test-Path $snap); if (-not $ok) { Write-Host "    exit $LASTEXITCODE output:`n$o" }; $ok }
 ck 'Snapshot info'             { (run Snapshot info $snap -ConfigPath $a.Conf) -match '"server_name": "Server A"' }
 ck 'Snapshot restore to B'     { run Snapshot restore $snap -ConfigPath $b.Conf | Out-Null; $LASTEXITCODE -eq 0 }
 ck 'world on B'                { (Get-Content (Join-Path $b.Saved 'SaveGames/world.sav')) -eq 'world-a' }
