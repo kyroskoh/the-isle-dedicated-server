@@ -1172,8 +1172,12 @@ function Invoke-Python([string[]]$pyArgs) {
     $py = Get-Python
     if (-not $py) { throw 'Python 3 is required for plugins (winget install Python.Python.3.12)' }
     $a = @(); if ($py[1]) { $a += $py[1] }
-    & $py[0] @($a + $pyArgs) | ForEach-Object { Write-Host $_ }
-    return $LASTEXITCODE
+    # Windows PowerShell 5.1 turns native stderr (e.g. a Python warning) into a terminating error under 'Stop'
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        & $py[0] @($a + $pyArgs) 2>&1 | ForEach-Object { Write-Host "$_" }
+        return $LASTEXITCODE
+    } finally { $ErrorActionPreference = $prev }
 }
 function Invoke-Plugins([string[]]$pluginArgs) {
     $base = @((Join-Path $RepoDir 'tools\isle_plugins.py'), '--conf', $ConfigPath,

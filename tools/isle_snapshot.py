@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(TOOLS)
@@ -267,7 +268,7 @@ def cmd_create(env, o):
             raise SnapError("nothing to snapshot (asked for: %s)" % ", ".join(parts))
         manifest = {
             "format": FORMAT,
-            "created": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "tool_version": version(),
             "source": {"os": platform.system(), "runtime": env.runtime, "host": socket.gethostname()},
             "server_name": env.values.get("SERVER_NAME", ""),
