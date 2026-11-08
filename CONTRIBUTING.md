@@ -19,7 +19,8 @@ Bug reports, distro fixes and new config keys are welcome.
 6. Add an entry under **[Unreleased]** in `CHANGELOG.md`.
 7. If you touch an installer, run the end-to-end cycle on a **disposable** VM (it purges the local install):
    `sudo ISLE_TEST_I_UNDERSTAND=1 bash tests/installer-cycle.sh`. CI runs it on every push.
-8. Run the fast tests: `bash tests/test_config_tools.sh` and `python3 -m unittest tests/test_plugins.py`.
+8. Docker changes: run `ISLE_TEST_I_UNDERSTAND=1 IMAGE=<image> bash tests/test_container_e2e.sh` (it replaces
+   the local `theisle` container and volume). Then run the fast tests: `bash tests/test_config_tools.sh` and `python3 -m unittest tests/test_plugins.py`.
    On Windows run `tests\test_config_tools.ps1`. New plugins go in `plugins/available/<name>/` plus an entry in
    `plugins/catalog.json` (see PLUGINS.md).
 9. Open a pull request. CI runs ShellCheck, the PowerShell parser, PSScriptAnalyzer and smoke tests.

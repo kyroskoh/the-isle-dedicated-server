@@ -27,6 +27,12 @@ services:
     restart: unless-stopped
     # Must be longer than STOP_TIMEOUT (default 60s) so the server can save and exit.
     stop_grace_period: 90s
+    # Cap container logs (Docker keeps them forever by default).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     # The launcher points this at config/server.conf (ISLE_CONF_FILE).
     env_file:
       - path: "${ISLE_CONF_FILE:-./config/server.conf}"

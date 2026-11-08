@@ -6,6 +6,27 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-11-08
+
+Found by new end-to-end container testing (an RCON-speaking fake server, real `tini`, the real package list).
+
+### Fixed
+- **Docker mode changed some `server.conf` values.** Compose expanded `$VARS` (leaking host variables such as
+  `$HOME`), collapsed `$$`, and cut off ` #...` as a comment. A server password like `pa$$w0rd #x` silently
+  became `pa$w0rd`. Both launchers now give Compose a generated, escaped `config/.compose.env`, so the container
+  sees exactly what native mode sees.
+- **Restore moved the current world aside before checking the archive.** A wrong file left the server without a
+  world. Restore now checks for `Saved/` first and changes nothing if it's missing.
+- **The Linux launcher couldn't restore `.zip` backups** (made by native Windows), natively or into Docker. It now
+  repacks them.
+- **Container logs grew without limit.** They are now capped at 5 × 10 MB.
+
+### Added
+- `tests/test_container_e2e.sh` with `tests/fixtures/fake-isle-server.py`, a fake game server that speaks the RCON
+  protocol. Runs in CI against the real image. Covers health, the non-root uid, overrides, live whitelist and roster
+  pushes, RCON, all plugins against the container, restart-countdown, crash recovery, `.zip` restore, special
+  characters in settings, and save-before-SIGTERM.
+
 ## [1.7.0] - 2026-11-07
 
 Planned in [PRD.md](PRD.md) as milestone M12 (requirements CFX-01 to CFX-09, PLG-01 to PLG-07).
@@ -188,7 +209,8 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.4.0...v1.5.0

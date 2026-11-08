@@ -562,10 +562,44 @@ cmd_backup() {
   fi
 }
 
+# Windows native backups are .zip; repack them as .tar.gz (python3, stdlib only).
+ensure_targz() {  # FILE -> prints a .tar.gz path (the file itself, or a repacked temp copy)
+  local file="$1" out
+  case "${file,,}" in
+    *.zip)
+      command -v python3 >/dev/null 2>&1 || die "python3 is required to restore a .zip backup"
+      out="$(mktemp -d)/$(basename "${file%.*}").tar.gz"
+      python3 - "$file" "$out" <<'PY' || die "Could not repack $file"
+import sys, tarfile, zipfile
+src, dst = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(src) as z, tarfile.open(dst, "w:gz") as t:
+    for info in z.infolist():
+        name = info.filename.replace("\\", "/")
+        if name.startswith("/") or ".." in name.split("/"):
+            raise SystemExit("unsafe path in zip: " + name)
+        ti = tarfile.TarInfo(name.rstrip("/"))
+        if info.is_dir():
+            ti.type, ti.mode = tarfile.DIRTYPE, 0o755
+            t.addfile(ti)
+        else:
+            data = z.read(info)
+            ti.size, ti.mode = len(data), 0o644
+            import io
+            t.addfile(ti, io.BytesIO(data))
+PY
+      log "Repacked $file as $out" >&2
+      printf '%s' "$out" ;;
+    *) printf '%s' "$file" ;;
+  esac
+}
+backup_has_saved() { tar -tzf "$1" 2>/dev/null | grep -qE '^(\./)?Saved/'; }
+
 cmd_restore() {
   local file="${1:-}"
-  [[ -f "$file" ]] || die "Usage: isle-server.sh restore <backup.tar.gz>"
+  [[ -f "$file" ]] || die "Usage: isle-server.sh restore <backup.tar.gz|backup.zip>"
   is_running && die "Stop the server before restoring"
+  file="$(ensure_targz "$file")"
+  backup_has_saved "$file" || die "$file does not contain a Saved/ folder - not a server backup? Nothing was changed."
   local saved="$SERVER_DIR/TheIsle/Saved"
   if [[ -d "$saved" ]]; then mv "$saved" "$saved.pre-restore-$(date +%Y%m%d-%H%M%S)"; fi
   mkdir -p "$SERVER_DIR/TheIsle"
@@ -866,10 +900,26 @@ docker_require() {
   [[ -f "$REPO_DIR/docker-compose.yml" ]] || die "docker-compose.yml not found in $REPO_DIR"
 }
 
+# Docker Compose would interpolate $VARS, collapse $$ and cut " #..." off
+# values if it read server.conf directly. Write a compose-safe copy that holds
+# exactly what the native parser sees: every value double-quoted with \ \" $$
+# escaped, so Compose passes it through literally.
+compose_env_file() {
+  local f k v; f="$(dirname "$ISLE_CONF")/.compose.env"
+  ( umask 077
+    { printf '# Generated from %s by isle-server.sh - do not edit (it is rewritten on every docker command)\n' "$ISLE_CONF"
+      for k in $(printf '%s\n' "${!CFG[@]}" | sort); do
+        v="${CFG[$k]}"; v="${v//\\/\\\\}"; v="${v//\"/\\\"}"; v="${v//\$/\$\$}"
+        printf '%s="%s"\n' "$k" "$v"
+      done; } > "$f" )
+  printf '%s' "$f"
+}
+
 dc() {  # docker compose bound to this repo and the host server.conf
-  local ovr; ovr="$(overrides_dir)"; mkdir -p "$ovr" 2>/dev/null || true
-  ISLE_CONF_FILE="$ISLE_CONF" ISLE_OVERRIDES_DIR="$ovr" docker compose --project-directory "$REPO_DIR" \
-    -f "$REPO_DIR/docker-compose.yml" --env-file "$ISLE_CONF" "$@"
+  local ovr envf; ovr="$(overrides_dir)"; mkdir -p "$ovr" 2>/dev/null || true
+  envf="$(compose_env_file)"
+  ISLE_CONF_FILE="$envf" ISLE_OVERRIDES_DIR="$ovr" docker compose --project-directory "$REPO_DIR" \
+    -f "$REPO_DIR/docker-compose.yml" --env-file "$envf" "$@"
 }
 
 docker_running() { [[ -n "$(dc ps --status running -q theisle 2>/dev/null)" ]]; }
@@ -951,6 +1001,8 @@ docker_main() {
         dc up --no-start "${nb[@]}"
         # A one-off run lets the entrypoint create the /data layout (fresh volume).
         dc run --rm theisle check >/dev/null
+        file="$(ensure_targz "$file")"
+        backup_has_saved "$file" || die "$file does not contain a Saved/ folder - not a server backup? Nothing was changed."
         dc cp "$file" "theisle:/data/backups/$(basename "$file")"
         target="/data/backups/$(basename "$file")"
       elif [[ "$file" == /data/* ]]; then

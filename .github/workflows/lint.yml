@@ -108,6 +108,8 @@ jobs:
           if docker run --rm -v isle-ci:/data -e UPDATE_ON_START=false -e GAME_PORT=99999 theisle-server:ci; then
             echo "container accepted GAME_PORT=99999"; exit 1
           fi
+      - name: End-to-end through the launcher with an RCON-speaking fake server
+        run: ISLE_TEST_I_UNDERSTAND=1 IMAGE=theisle-server:ci bash tests/test_container_e2e.sh
       - name: Launcher in docker mode (LCH-01..08)
         run: |
           set -eux

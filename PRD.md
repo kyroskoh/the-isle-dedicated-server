@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.4 |
-| **Product version** | 1.7.0 (released) |
+| **Product version** | 1.7.1 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -221,6 +221,8 @@ Priority: **M** = must, **S** = should, **C** = could.
 | DKR-08 | M | `docker-compose.yml` | Publishes game UDP+TCP and the queue port. RCON is bound to `127.0.0.1` only. `restart: unless-stopped` |
 | DKR-09 | S | Backups | `isle-server backup` writes to `/data/backups`. The compose docs show a host cron example |
 | DKR-10 | M | Game updates without rebuilding the image | A container restart updates the game (`UPDATE_ON_START`) |
+| DKR-11 | M | **Same settings in both runtimes** | Every `server.conf` value reaches the container exactly as the native parser reads it, including `$`, `$$`, ` #`, quotes and backslashes (escaped `config/.compose.env`) |
+| DKR-12 | M | **Bounded logs** | Container logs are capped (json-file, 5 × 10 MB) |
 
 ### 6.11 Launcher runtime modes (LCH)
 
@@ -330,6 +332,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 |---|---|
 | linux (ubuntu-latest) | ShellCheck. Python compile. Fake-server smoke test: `version`, `check`, `configure`, `start`, `status`, `stop`, `backup`. `check` must fail on a bad port. `update` must fail while running |
 | launcher-docker (ubuntu-latest) | Build the image. Seed a fake server. With `RUNTIME=docker` via the Linux launcher: `install`, `start`, `status` = 0, the host `server.conf` setting reaches `Game.ini`, `backup`, `update` refused while running, `stop`, `status` = 3, `restore`, `start` again |
+| docker e2e (ubuntu-latest) | `tests/test_container_e2e.sh` on the real image with an RCON-speaking fake server: health, uid, overrides, live whitelist/roster RCON pushes, plugins from the host, restart-countdown, crash recovery, `.zip` restore, special characters in settings, save before SIGTERM |
 | docker (ubuntu-latest) | hadolint. `docker build`. Run the container with a fake server binary in `/data` and `UPDATE_ON_START=false`. Assert: env override reaches `Game.ini`, health turns `healthy`, `exec isle-server status` returns 0, `docker stop` exits cleanly within the grace period, data survives a new container. A bad env value (`GAME_PORT=99999`) makes the container exit non-zero |
 | windows (windows-latest) | PS 5.1 `Parser::ParseFile` on every `.ps1`. PSScriptAnalyzer (Error). Smoke test: `Version`, `Check`, `Configure`, `Info`, `Backup`. `Check` must fail on a bad port |
 
@@ -407,6 +410,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | DKR-06 | Dockerfile `HEALTHCHECK` | CI (healthy) | Done (v1.2) |
 | DKR-07 | `docker/isle-server` wrapper | CI (`exec isle-server status`) | Done (v1.2) |
 | DKR-08/09/10 | `docker-compose.yml`, DOCKER.md | Review, manual §10.2-8 | Done (v1.2) |
+| DKR-11/12 | `compose_env_file` / `Get-ComposeEnvFile`, compose `logging:` | `tests/test_container_e2e.sh` (tricky password), compose config | Done (v1.7.1) |
 | LCH-01/02 | `resolve_runtime` (Linux), `Get-Runtime` (Windows), `check_config`/`Test-ServerConfig` | CI (bad value rejected) | Done (v1.3) |
 | LCH-03 | `docker_*` dispatch in `isle-server.sh`, `Invoke-Docker*` in `IsleServer.ps1` | CI launcher-docker job (Linux), parser (Windows) | Done (v1.3) |
 | LCH-04 | `docker-compose.yml` `env_file`, entrypoint path/runtime forcing | CI launcher-docker (setting reaches Game.ini) | Done (v1.3) |

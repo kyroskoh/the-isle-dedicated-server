@@ -23,3 +23,6 @@ __pycache__/
 config/overrides/*.ini
 config/plugins/
 plugins/installed/
+
+# generated compose env file (docker mode)
+config/.compose.env

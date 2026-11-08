@@ -737,11 +737,27 @@ function Assert-Docker {
 
 # Always pass docker arguments as one array: a bare "--rm" would be parsed as a
 # PowerShell parameter name. Docker output goes to the host, not the pipeline.
+# Docker Compose would interpolate $VARS, collapse $$ and cut " #..." off values
+# if it read server.conf directly. Write a compose-safe copy that holds exactly
+# what the native parser sees (double-quoted, with \ \" $$ escaped).
+function Get-ComposeEnvFile {
+    $f = Join-Path (Split-Path -Parent $ConfigPath) '.compose.env'
+    $lines = New-Object 'Collections.Generic.List[string]'
+    $lines.Add("# Generated from $ConfigPath by IsleServer.ps1 - do not edit (rewritten on every docker command)")
+    foreach ($k in ($script:Cfg.Keys | Sort-Object)) {
+        $v = ([string]$script:Cfg[$k]).Replace('\', '\\').Replace('"', '\"').Replace('$', '$$')
+        $lines.Add("$k=""$v""")
+    }
+    [IO.File]::WriteAllLines($f, $lines)
+    return $f
+}
+
 function Invoke-Dc([string[]]$DcArgs) {
-    $env:ISLE_CONF_FILE = $ConfigPath
+    $envFile = Get-ComposeEnvFile
+    $env:ISLE_CONF_FILE = $envFile
     $env:ISLE_OVERRIDES_DIR = Get-OverridesDir
     New-Item -ItemType Directory -Force -Path $env:ISLE_OVERRIDES_DIR | Out-Null
-    $base = @('compose', '--project-directory', $RepoDir, '-f', (Join-Path $RepoDir 'docker-compose.yml'), '--env-file', $ConfigPath)
+    $base = @('compose', '--project-directory', $RepoDir, '-f', (Join-Path $RepoDir 'docker-compose.yml'), '--env-file', $envFile)
     & docker @base @DcArgs | Out-Host
     return $LASTEXITCODE
 }
@@ -751,8 +767,9 @@ function Invoke-DcChecked([string[]]$DcArgs) {
 }
 
 function Test-DockerRunning {
-    $env:ISLE_CONF_FILE = $ConfigPath
-    $id = & docker compose --project-directory $RepoDir -f (Join-Path $RepoDir 'docker-compose.yml') --env-file $ConfigPath ps --status running -q theisle 2> $null
+    $envFile = Get-ComposeEnvFile
+    $env:ISLE_CONF_FILE = $envFile
+    $id = & docker compose --project-directory $RepoDir -f (Join-Path $RepoDir 'docker-compose.yml') --env-file $envFile ps --status running -q theisle 2> $null
     return [bool]("$id".Trim())
 }
 function Assert-DockerStopped([string]$what) {
@@ -782,8 +799,9 @@ function Show-DockerInfo {
     if (Get-Command docker -ErrorAction SilentlyContinue) {
         & docker info *> $null
         if ($LASTEXITCODE -eq 0) {
-            $env:ISLE_CONF_FILE = $ConfigPath
-            $s = & docker compose --project-directory $RepoDir -f (Join-Path $RepoDir 'docker-compose.yml') --env-file $ConfigPath ps -a --format '{{.State}} ({{.Status}})' theisle 2> $null | Select-Object -First 1
+            $envFile = Get-ComposeEnvFile
+            $env:ISLE_CONF_FILE = $envFile
+            $s = & docker compose --project-directory $RepoDir -f (Join-Path $RepoDir 'docker-compose.yml') --env-file $envFile ps -a --format '{{.State}} ({{.Status}})' theisle 2> $null | Select-Object -First 1
             if ("$s".Trim()) { $state = "$s".Trim() } else { $state = 'not created' }
         }
     }

@@ -56,8 +56,9 @@ How the config gets in: the launcher passes your **host** `server.conf` to compo
 `--env-file` (port mappings), so one file controls both runtimes. Paths are always `/data/...` inside the
 container. The RCON password is generated into the host file, so it stays the same across restarts.
 
-> Values in `server.conf` that contain `$` are interpolated by Docker Compose. Avoid `$` in passwords,
-> or write it as `$$`, when you use docker mode.
+The launcher hands Compose a generated, escaped copy of your settings (`config/.compose.env`). Values
+containing `$`, ` #`, quotes or backslashes reach the container exactly as written, the same as natively.
+(If you run plain `docker compose` with a `.env` file instead, Compose's own rules apply: write `$` as `$$`.)
 
 ## Quick start (plain Docker Compose)
 
@@ -168,6 +169,7 @@ To use a host folder instead of a named volume, set `- ./data:/data` in the comp
 - `docker compose stop` sends SIGTERM. The entrypoint saves the world over RCON, stops the server cleanly, and waits up
   to `STOP_TIMEOUT` before it force-kills.
 - If the server crashes, the container exits and `restart: unless-stopped` brings it back.
+- Container logs are capped at 5 × 10 MB (`logging:` in `docker-compose.yml`).
 - The health check (`isle-server status`) shows `healthy` while the server process is alive. It allows 30 minutes for
   the first download.
 
