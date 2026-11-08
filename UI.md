@@ -5,6 +5,8 @@ does: start/stop, settings, admins, whitelist, roster, profiles, presets, plugin
 console. Every action goes through the same launcher (`isle-server.sh` / `IsleServer.ps1`), so it works natively
 and in Docker, on Linux and Windows.
 
+![Dashboard (light theme)](docs/images/ui/dashboard-light.png)
+
 - **UI:** `http://127.0.0.1:8090/` (light, dark or system theme)
 - **API docs:** `http://127.0.0.1:8090/docs`, an interactive OpenAPI viewer with "Try it"
 - **OpenAPI document:** `http://127.0.0.1:8090/openapi.json` (OpenAPI 3.1)
@@ -36,6 +38,8 @@ readable only by its owner. Paste it once per browser tab. It is kept in that ta
 
 `ISLE_UI_TOKEN=...` in the environment overrides the file.
 
+<p align="center"><img src="docs/images/ui/login.png" alt="Sign-in page asking for the access token" width="640"></p>
+
 ## Reaching it from another computer
 
 The UI listens on **127.0.0.1 only** by default. Choose one of these:
@@ -62,12 +66,65 @@ plain text.
 | Logs | Last 100–2000 lines, with auto-refresh |
 | RCON console | Send RCON commands to the running server |
 
+### Screenshots
+
+**Dashboard.** Server state, quick actions, server details and recent jobs. Disruptive actions ask first.
+
+| Light | Dark |
+|---|---|
+| ![Dashboard, light theme](docs/images/ui/dashboard-light.png) | ![Dashboard, dark theme](docs/images/ui/dashboard-dark.png) |
+
+![Confirmation before a restart](docs/images/ui/confirm-restart.png)
+
+**Settings.** Every `server.conf` key, grouped and searchable, with toggles for true/false and masked secrets.
+Changed fields are highlighted until you save. Machine-specific keys sit read-only in a collapsed section at the end.
+
+| Light | Dark |
+|---|---|
+| ![Settings with an unsaved change](docs/images/ui/settings.png) | ![Settings, dark theme](docs/images/ui/settings-dark.png) |
+
+**Players.** Admins and the whitelist, with SteamID64 validation in the browser and links to Steam profiles.
+
+![Players page](docs/images/ui/players.png)
+
+**Roster.** Playable classes and disabled AI as tick boxes, with diets and roster presets.
+
+![Roster page](docs/images/ui/roster.png)
+
+**Profiles & presets.** Profile cards show what they change. Presets can be applied together, in order.
+
+![Profiles and presets](docs/images/ui/profiles.png)
+
+**Plugins.** Search, install, enable, configure, update, remove, and plugin presets.
+
+![Plugins page](docs/images/ui/plugins.png)
+
+**Snapshots & backups.** Create snapshots with chosen parts, then restore (choosing parts, overwrite and stop first) or delete them.
+
+| Snapshots | Restore |
+|---|---|
+| ![Snapshots page](docs/images/ui/snapshots.png) | ![Restore dialog](docs/images/ui/snapshot-restore.png) |
+
+**Logs and RCON console.**
+
+| Logs | RCON console |
+|---|---|
+| ![Logs page](docs/images/ui/logs.png) | ![RCON console](docs/images/ui/console.png) |
+
+**On a phone.** The layout adapts and the menu slides in.
+
+<p><img src="docs/images/ui/phone-dashboard-dark.png" alt="Dashboard on a phone, dark theme" width="280"> <img src="docs/images/ui/phone-menu-dark.png" alt="Menu on a phone, dark theme" width="280"></p>
+
 Long actions (start, stop, update, backup, snapshots) run as **jobs**. The UI shows their output live. Only one
 lifecycle action runs at a time, and a second one gets `409 Conflict`.
 
 ## The API
 
 All routes are under `/api/v1`, documented at `/docs`, and need the Bearer token, except `GET /api/v1/health`.
+
+| `/docs` | "Try it" (dark theme) |
+|---|---|
+| ![Interactive API documentation](docs/images/ui/api-docs.png) | ![Trying GET /api/v1/status from the docs](docs/images/ui/api-docs-try-it-dark.png) |
 
 ```bash
 TOKEN=$(sudo -u theisle isle-server ui-token)

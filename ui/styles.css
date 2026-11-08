@@ -129,9 +129,12 @@ code, pre, kbd { font-family: var(--mono); font-size: .875em; }
 .topbar .title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar .spacer { flex: 1; }
 .btn.menu-btn { display: none; }
+#content:focus { outline: none; }  /* focus moves here on navigation for screen readers; no ring */
 .content { padding: 1.5rem; max-width: 1200px; width: 100%; }
 .page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: .75rem; margin-bottom: 1rem; }
 .page-head p { margin: 0; color: var(--muted); }
+.page-head select { width: auto; }
+.page-head input[type="search"] { width: min(280px, 100%); }
 
 .grid { display: grid; gap: 1rem; }
 .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
@@ -224,7 +227,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); widt
 
 dl.kv { display: grid; grid-template-columns: minmax(120px, max-content) minmax(0, 1fr); gap: .35rem 1rem; margin: 0; }
 dl.kv dt { color: var(--muted); font-size: .875rem; }
-dl.kv dd { margin: 0; overflow-wrap: anywhere; font-family: var(--mono); font-size: .85rem; }
+dl.kv dd { margin: 0; overflow-wrap: anywhere; font-size: .875rem; }
 
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .55rem .6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
@@ -239,8 +242,11 @@ td.actions { text-align: right; white-space: nowrap; }
 .list code { overflow-wrap: anywhere; }
 .empty { color: var(--muted); padding: .75rem 0; text-align: center; font-size: .9rem; }
 
-.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: .4rem; }
-.chip { display: flex; align-items: center; gap: .5rem; padding: .45rem .6rem; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; background: var(--surface); }
+.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .4rem; }
+.chip { display: flex; align-items: center; gap: .5rem; padding: .45rem .6rem; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; background: var(--surface); min-width: 0; }
+.chip > input { flex: none; }
+.chip > span:not(.badge) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip .badge { flex: none; }
 .chip:hover { border-color: var(--muted); }
 .chip:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
 .chip .diet { margin-left: auto; }

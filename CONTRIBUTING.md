@@ -24,7 +24,11 @@ Bug reports, distro fixes and new config keys are welcome.
    the local `theisle` container and volume). Then run the fast tests: `bash tests/test_config_tools.sh` and `python3 -m unittest tests/test_plugins.py`.
    On Windows run `tests\test_config_tools.ps1`. New plugins go in `plugins/available/<name>/` plus an entry in
    `plugins/catalog.json` (see PLUGINS.md).
-9. Open a pull request. CI runs ShellCheck, the PowerShell parser, PSScriptAnalyzer and smoke tests.
+9. API or web UI changes: `python3 -m unittest tests/test_api.py` and `node tests/test_ui.mjs` (Playwright +
+   Chromium: `npm i playwright@1.48.2 && npx playwright install chromium`). If the UI looks different, regenerate
+   the documentation screenshots with `node tests/ui_screenshots.mjs` (writes `docs/images/ui/*.png`; needs Pillow
+   to shrink them).
+10. Open a pull request. CI runs ShellCheck, the PowerShell parser, PSScriptAnalyzer and smoke tests.
 
 When you report a bug, include your OS and version, the command you ran, and the last 50 lines of
 the server log or console output. Remove any passwords first.

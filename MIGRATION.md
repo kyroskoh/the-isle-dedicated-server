@@ -99,6 +99,12 @@ machine, use `--data copy` (above), or restore a snapshot after reinstalling in 
 | `isle-server snapshot restore FILE [--include LIST] [--overwrite] [--all-settings] [--stop]` | `IsleServer.ps1 Snapshot restore FILE ...` |
 | `isle-server snapshot info FILE` / `list` | `IsleServer.ps1 Snapshot info FILE` / `list` |
 
+The optional [web UI](UI.md) can create, restore and delete snapshots on its **Snapshots & backups** page:
+
+| Snapshots | Restore |
+|---|---|
+| ![Snapshots page](docs/images/ui/snapshots.png) | ![Restore dialog with parts, overwrite and stop options](docs/images/ui/snapshot-restore.png) |
+
 Installer options: `--data copy|move|fresh`, `--carry LIST`, `--overwrite`, `--from-snapshot FILE`,
 `--image REF` (use a prebuilt Docker image). Windows: `-Data`, `-Carry`, `-Overwrite`, `-FromSnapshot`, `-Image`.
 

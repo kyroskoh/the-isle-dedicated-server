@@ -17,7 +17,14 @@ every start and keep the previous copy as `*.bak`:
 If you prefer to edit the `.ini` files by hand, set `MANAGE_INI_FILES=false`. The scripts
 then generate them only if they don't exist yet.
 
+You can also change settings in the optional [web UI](UI.md). Every key is shown with its description, and
+changes are checked before they are saved:
+
+![Settings page of the web UI](docs/images/ui/settings.png)
+
 ## Profiles and presets
+
+![Profiles and presets in the web UI](docs/images/ui/profiles.png)
 
 **Profiles** are complete play styles. **Presets** are small changes you can stack. Applying either writes
 its keys into `server.conf`, keeps a timestamped backup, validates, and rolls back if the result is invalid.
@@ -52,6 +59,12 @@ Profiles never touch names, passwords or ports. Your own profiles and presets ar
 `config/profiles/` and `config/presets/`. The first comment line is the description.
 
 ## Admins, whitelist and playable roster
+
+In the [web UI](UI.md) these are the **Players** and **Roster** pages:
+
+| Players | Roster |
+|---|---|
+| ![Admins and whitelist](docs/images/ui/players.png) | ![Playable roster and disabled AI](docs/images/ui/roster.png) |
 
 | Linux | Windows | Effect |
 |---|---|---|

@@ -11,6 +11,10 @@ off-site backup copies, and more. They work on Linux and Windows, natively and i
 Requirements: Python 3.6+ on the machine that runs the launcher (Linux: installed by `install.sh`;
 Windows: `Install.ps1` installs it with winget when it can).
 
+The optional [web UI](UI.md) has a **Plugins** page for the same tasks:
+
+![Plugins page of the web UI](docs/images/ui/plugins.png)
+
 ## Commands
 
 Linux: `isle-server plugins <command>`. Windows: `IsleServer.ps1 Plugins <command>` or `Manage.bat Plugins <command>`.

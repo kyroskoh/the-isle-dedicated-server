@@ -57,8 +57,15 @@ if cmd == "check":
         print("[FAIL] config: MAX_PLAYERS='%s' must be a positive integer" % get("MAX_PLAYERS")); sys.exit(1)
     print("[ OK ] Configuration OK"); sys.exit(0)
 if cmd == "info":
-    print("Runtime          : native\nServer name      : %s\nGame port        : 7777" % get("SERVER_NAME")); sys.exit(0)
+    print("Runtime          : native\nServer name      : %s\nGame port        : 7777" % get("SERVER_NAME"))
+    if os.environ.get("FAKE_LOG_FILE"):  # fuller output for the documentation screenshots
+        print("Server dir       : /home/theisle/theisle-server\nBackup dir       : /home/theisle/theisle-backups\n"
+              "App / branch     : 412680 / evrima\nPorts            : 7777/udp+tcp, queue 10000/tcp, rcon 127.0.0.1:8888/tcp\n"
+              "Max players      : %s" % get("MAX_PLAYERS"))
+    sys.exit(0)
 if cmd == "logs":
+    if os.environ.get("FAKE_LOG_FILE"):
+        sys.stdout.write(open(os.environ["FAKE_LOG_FILE"]).read()); sys.exit(0)
     for i in range(300):
         print("log line %d" % i)
     sys.exit(0)

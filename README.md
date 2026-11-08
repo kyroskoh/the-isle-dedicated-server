@@ -15,6 +15,12 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 | Docker / Docker Desktop (x86_64 host) | ✅ | `docker compose up -d` |
 | Alpine / musl, ARM | ❌ Not supported (the server is x86_64 glibc only) | — |
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/ui/dashboard-dark.png">
+  <img src="docs/images/ui/dashboard-light.png" alt="The optional web UI: dashboard with server state, quick actions, server details and recent activity">
+</picture>
+<p align="center"><sub>The optional web UI (<code>isle-server ui</code> / <code>UI.bat</code>) follows your light or dark theme. More screenshots in <a href="UI.md">UI.md</a>.</sub></p>
+
 ## Features
 
 - **One config for both OSes.** `config/server.conf` produces `Game.ini` and `Engine.ini` for you.

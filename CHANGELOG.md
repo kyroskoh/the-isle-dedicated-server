@@ -45,6 +45,8 @@ Planned in [PRD.md](PRD.md) as milestone M14 (requirements API-01 to API-05, UI-
     jobs/409, spec covers every route, headers and path traversal.
   - `tests/test_ui.mjs`: Playwright test with 40+ checks, covering sign-in, every page, themes, actions, settings,
     phone layout, `/docs` "Try it", CSP and console errors.
+- **Screenshots** of every UI page (light and dark, phone, API docs) in `docs/images/ui/`, shown in README,
+  UI.md, CONFIGURATION.md, PLUGINS.md, MIGRATION.md and INSTALL.md. `tests/ui_screenshots.mjs` regenerates them.
 - **Debian verification (DEB-01):** every Linux suite also runs on Debian bookworm.
   - New CI job `debian-native` runs a real native install with apt dependencies in `debian:bookworm`
     (`tests/test_native_debian.sh`, including the web UI as the service user).

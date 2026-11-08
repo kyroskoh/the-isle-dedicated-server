@@ -140,6 +140,11 @@ sudo ./linux/install.sh --uninstall --purge  # ALSO delete the user, server file
 
 Re-running the installer is safe. It keeps your `server.conf` and updates the scripts.
 
+With `--ui` (Windows: `-UI`) the [web UI](UI.md) starts at boot on `http://127.0.0.1:8090/`. Sign in with the token
+from `sudo -u theisle isle-server ui-token`:
+
+<p align="center"><img src="docs/images/ui/login.png" alt="Web UI sign-in page" width="560"></p>
+
 ### Manual install (Linux, any glibc distro)
 
 ```bash
