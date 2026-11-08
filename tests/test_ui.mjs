@@ -72,7 +72,10 @@ writeFileSync(conf, readFileSync(join(REPO, "config", "server.conf.example"), "u
 const port = await freePort();
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
   "--port", String(port), "--snapshot-dir", join(dir, "snapshots")],
-  { env: { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.5" }, stdio: "ignore" });
+  { env: { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.5" }, stdio: ["ignore", "pipe", "pipe"] });
+const apiLog = [];
+for (const stream of [api.stdout, api.stderr]) stream.on("data", (b) => { apiLog.push(String(b)); if (apiLog.length > 400) apiLog.shift(); });
+process.on("uncaughtException", (e) => { console.log("API log (last lines):\n" + apiLog.join("").split("\n").slice(-30).join("\n")); throw e; });
 const BASE = `http://127.0.0.1:${port}`;
 for (let i = 0; i < 100; i++) { try { if ((await fetch(BASE + "/api/v1/health")).ok) break; } catch { /* starting */ } await sleep(100); }
 
@@ -85,7 +88,7 @@ async function newPage(opts = {}) {
   page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
   return { ctx, page };
 }
-const shot = async (page, name) => { if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, name + ".png"), fullPage: false }); } };
+const shot = async (page, name) => { if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, name + ".png"), fullPage: false, caret: "initial", animations: "allow" }); } };
 const bg = (page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 const conf_ = (k) => (readFileSync(conf, "utf8").match(new RegExp("^" + k + "=(.*)$", "m")) || [])[1];
 
@@ -229,7 +232,7 @@ try {
   await mobile.ctx.close();
 
   const docs = await newPage({ colorScheme: "dark" });
-  await docs.page.goto(BASE + "/docs");
+  await docs.page.goto(BASE + "/docs", { waitUntil: "domcontentloaded" });
   await ck("docs list every operation", async () => {
     await docs.page.waitForSelector(".op");
     const spec = await (await fetch(BASE + "/openapi.json")).json();

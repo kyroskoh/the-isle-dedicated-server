@@ -50,6 +50,14 @@ for (let i = 0; i < 120; i++) {
   logLines.push(`[${ts}:${String(i * 7 % 1000).padStart(3, "0")}][${i % 300}]${events[i % events.length]}`);
 }
 writeFileSync(join(dir, "server.log"), logLines.join("\n") + "\n");
+// rotated logs as the launcher writes them (KIND_yyyymmdd_hhmmss.log)
+mkdirSync(join(dir, "logs"));
+writeFileSync(join(dir, "logs", "server_20261108_180000.log"), logLines.join("\n") + "\n");
+writeFileSync(join(dir, "logs", "server_20261107_180000.log"), logLines.slice(0, 40).join("\n") + "\n");
+writeFileSync(join(dir, "logs", "launcher_20261108_175958.log"), [
+  "[2026-11-08 17:59:58 UTC+08:00] CMD  start", "[2026-11-08 17:59:58 UTC+08:00] INFO Starting server in the background (logs: /home/theisle/theisle-scripts/logs)",
+  "[2026-11-08 17:59:59 UTC+08:00] OK   Wrote Game.ini", "[2026-11-08 18:00:00 UTC+08:00] INFO Launching: TheIsleServer-Linux-Shipping TheIsle -Port=7777 -log",
+  "[2026-11-08 18:30:00 UTC+08:00] CMD  backup", "[2026-11-08 18:30:02 UTC+08:00] OK   Backup written (182M)"].join("\n") + "\n");
 
 // fake game server answering RCON
 const srv = join(dir, "srv");
@@ -81,8 +89,8 @@ await waitJob(await call("POST", "/server/save"));
 mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch();
 const made = [];
-async function session(scheme, viewport = { width: 1280, height: 800 }) {
-  const ctx = await browser.newContext({ viewport, deviceScaleFactor: 2, colorScheme: scheme, reducedMotion: "reduce" });
+async function session(scheme, viewport = { width: 1280, height: 800 }, touch = false) {
+  const ctx = await browser.newContext({ viewport, deviceScaleFactor: 2, colorScheme: scheme, reducedMotion: "reduce", hasTouch: touch, isMobile: touch });
   const page = await ctx.newPage();
   await page.goto(BASE + "/");
   await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
@@ -98,7 +106,7 @@ async function settle(page) {
 async function snap(page, name, opts = {}) {
   await settle(page);
   const file = join(OUT, name + ".png");
-  await page.screenshot({ path: file, fullPage: !!opts.full });
+  await page.screenshot({ path: file, fullPage: !!opts.full, caret: "initial", animations: "allow" });  // no injected <style> (CSP)
   made.push(file);
 }
 async function go(page, route) { await page.click(`#nav a[href="#/${route}"]`); await page.waitForSelector("#content h1"); await settle(page); }
@@ -132,7 +140,15 @@ try {
     await page.waitForSelector("#confirm[open]");
     await snap(page, "snapshot-restore");
     await page.click("#confirm button[value='cancel']");
-    await go(page, "logs"); await snap(page, "logs");
+    await go(page, "logs");
+    await page.waitForSelector("#log-source option[value='server_20261108_180000.log']", { state: "attached" });
+    await page.selectOption("#log-source", "server_20261108_180000.log");
+    await sleep(400);
+    await snap(page, "logs");
+    await page.click("#datetime");
+    await page.waitForSelector("#modal[open] #date-format");
+    await snap(page, "date-time");
+    await page.click("#modal button:has-text('Cancel')");
     await go(page, "console");
     for (const [cmd, arg] of [["announce", "Restart in 30 minutes - find a safe spot!"], ["playerlist", ""], ["save", ""]]) {
       await page.selectOption("#rcon-cmd", cmd);
@@ -151,12 +167,30 @@ try {
   }
 
   // phone
-  const phone = await session("dark", { width: 390, height: 844 });
+  const phone = await session("dark", { width: 390, height: 844 }, true);
   await settle(phone.page);
   await snap(phone.page, "phone-dashboard-dark");
   await phone.page.click("#menu"); await sleep(400);
   await snap(phone.page, "phone-menu-dark");
+  await phone.page.keyboard.press("Escape");
+  await phone.page.click("#content", { position: { x: 5, y: 5 } }).catch(() => {});
+  await sleep(300);
+  // instant peek: tap the cut-off server name
+  await phone.page.tap("#server-name");
+  await phone.page.waitForSelector("#peek:not([hidden])");
+  await sleep(100);
+  const shotPeek = join(OUT, "phone-peek-dark.png");
+  await phone.page.screenshot({ path: shotPeek }); made.push(shotPeek);
   await phone.ctx.close();
+
+  // landscape phone and portrait tablet
+  for (const [name, vp] of [["phone-landscape", { width: 844, height: 390 }], ["tablet-portrait", { width: 820, height: 1180 }]]) {
+    const s2 = await session("light", vp);
+    await settle(s2.page);
+    await s2.page.waitForSelector(".list strong");
+    await snap(s2.page, name);
+    await s2.ctx.close();
+  }
 
   // API docs
   for (const scheme of ["light", "dark"]) {

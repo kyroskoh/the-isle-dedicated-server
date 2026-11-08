@@ -12,7 +12,7 @@ same on Linux and Windows, natively and in Docker:
 
 | Part | Contents | Notes |
 |---|---|---|
-| `worlds` | `TheIsle/Saved` (without Logs/Crashes) | Never overwrites an existing world unless you pass `--overwrite`. The old world is then kept as `Saved.pre-snapshot-<time>` |
+| `worlds` | `TheIsle/Saved` (without Logs/Crashes) | Never overwrites an existing world unless you pass `--overwrite`. The old world is then kept as `Saved.pre-snapshot_<yyyymmdd_hhmmss>` |
 | `backups` | Backup archives | Existing files with the same name are kept |
 | `settings` | `server.conf` | **Merged**, without machine-specific keys: paths, `RUNTIME`, `DOCKER_IMAGE`/`DOCKER_BUILD`, `PUID`/`PGID`, `MULTIHOME_IP`, `UI_HOST`/`UI_PORT`. Add `--all-settings` to take everything. The current file is backed up first |
 | `overrides` | `config/overrides/*.ini` | Replaced files are kept as `.bak` |
@@ -70,19 +70,19 @@ Snapshots go to the `snapshots/` folder next to the scripts by default (or `--ou
 **3. On the new machine**, install straight from the snapshot, in either mode:
 
 ```bash
-sudo ./linux/install.sh --docker --from-snapshot theisle-snapshot-20261108-120000.tar.gz
-sudo ./linux/install.sh --native --from-snapshot theisle-snapshot-20261108-120000.tar.gz --start
+sudo ./linux/install.sh --docker --from-snapshot theisle-snapshot_20261108_120000.tar.gz
+sudo ./linux/install.sh --native --from-snapshot theisle-snapshot_20261108_120000.tar.gz --start
 ```
 ```powershell
-.\windows\Install.ps1 -Native -FromSnapshot C:\Users\me\Downloads\theisle-snapshot-20261108-120000.tar.gz
+.\windows\Install.ps1 -Native -FromSnapshot C:\Users\me\Downloads\theisle-snapshot_20261108_120000.tar.gz
 ```
 
 Or restore into an existing install:
 
 ```bash
-isle-server snapshot info  theisle-snapshot-...tar.gz          # what's inside, where it came from
-isle-server snapshot restore theisle-snapshot-...tar.gz --stop # --stop stops the server first
-isle-server snapshot restore theisle-snapshot-...tar.gz --include worlds --overwrite
+isle-server snapshot info  theisle-snapshot_...tar.gz          # what's inside, where it came from
+isle-server snapshot restore theisle-snapshot_...tar.gz --stop # --stop stops the server first
+isle-server snapshot restore theisle-snapshot_...tar.gz --include worlds --overwrite
 ```
 
 The game files are never part of a snapshot. The new machine downloads them with SteamCMD (or the Docker
@@ -110,7 +110,7 @@ Installer options: `--data copy|move|fresh`, `--carry LIST`, `--overwrite`, `--f
 
 ## Safety
 
-- A world is never overwritten unless you ask, and a replaced world is kept as `Saved.pre-snapshot-<time>`.
+- A world is never overwritten unless you ask, and a replaced world is kept as `Saved.pre-snapshot_<yyyymmdd_hhmmss>`.
 - `move` only clears what was actually restored, and keeps the snapshot as a safety copy.
 - Restore refuses to run while the server is running (or stops it with `--stop`). It also refuses archives
   with absolute paths, `..`, links or an unknown format version.

@@ -58,6 +58,15 @@
     do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
     return n.toFixed(n < 10 ? 1 : 0) + " " + u[i];
   }
+  /* text with break opportunities after "/" and "\\" so paths wrap at folder boundaries, not inside names */
+  function breakable(text) {
+    var out = [], s = String(text), start = 0;   // no regex lookbehind: older Safari cannot parse it
+    for (var i = 0; i < s.length; i++) {
+      if (s[i] === "/" || s[i] === "\\") { out.push(s.slice(start, i + 1), document.createElement("wbr")); start = i + 1; }
+    }
+    out.push(s.slice(start));
+    return out;
+  }
   function fmtTime(iso) { return window.IsleTime.format(iso); }
   /* <time> in the chosen zone and format; the full timestamp with zone shows instantly on hover/focus/tap */
   function timeEl(iso, cls) {
@@ -256,7 +265,7 @@
     grid.style.marginTop = "1rem";
     section(infoCard, function () { return api("GET", "/info"); }, function (el, info) {
       var dl = h("dl", { class: "kv" });
-      Object.keys(info).forEach(function (k) { add(dl, [h("dt", { text: k }), h("dd", { text: info[k] })]); });
+      Object.keys(info).forEach(function (k) { add(dl, [h("dt", { text: k }), h("dd", null, breakable(info[k]))]); });
       el.appendChild(Object.keys(info).length ? dl : h("p", { class: "empty", text: "No details" }));
     });
     var jobsHolder = h("div");

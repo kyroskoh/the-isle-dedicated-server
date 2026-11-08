@@ -273,6 +273,30 @@ Replace them only if the developers announce new values.
 | `BACKUP_RETENTION` | `10` | Number of backup archives to keep (0 = all) |
 | `SAVE_BEFORE_STOP` | `true` | Send RCON `save` before stopping or backing up |
 
+## Logs and time
+
+| Key | Default | Description |
+|---|---|---|
+| `TIMEZONE` | `local` | `local` or `utc`: the clock for log timestamps and for the `_yyyymmdd_hhmmss` suffix of dated files |
+| `LOG_DIR` | *(empty)* | Folder for log files. Empty = `<scripts>/logs` (Docker: `/data/logs`). Machine-specific |
+| `LOG_RETENTION` | `14` | Log files kept per kind (`launcher`, `server`, `ui`), and the game's own `TheIsle-backup-*.log`. `0` = keep all |
+| `LOG_MAX_SIZE_MB` | `20` | A new log file starts once the current one is bigger than this. `0` = no limit |
+
+Every log file is named `KIND_yyyymmdd_hhmmss.log`, for example `server_20261108_143000.log` (a second file in the
+same second gets `_1`, `_2` ...). Dated files use the same suffix:
+
+| File | Name |
+|---|---|
+| Backups | `theisle-backup_20261108_143000.tar.gz` (Windows `.zip`) |
+| Final backup on uninstall | `theisle-final_20261108_143000.tar.gz` |
+| Snapshots | `theisle-snapshot_20261108_143000.tar.gz` |
+| Replaced world | `Saved.pre-restore_20261108_143000`, `Saved.pre-snapshot_20261108_143000` |
+| Config backup | `server.conf.bak_20261108_143000` |
+
+Files with the older `-yyyymmdd-hhmmss` names are still found, restored and pruned. In Docker mode with `TIMEZONE=local`
+the container gets the host's UTC offset. The web UI has its own per-browser **Date & time** setting (server time,
+browser time or UTC, and the date format); see [UI.md](UI.md).
+
 ## Web UI
 
 Used by `isle-server ui` / `IsleServer.ps1 UI` and the `theisle-ui` service (see [UI.md](UI.md)). Both keys are

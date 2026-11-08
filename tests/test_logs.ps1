@@ -31,7 +31,7 @@ ck 'Check passes with the log keys'      { run Check -ConfigPath $conf | Out-Nul
 ck 'read-only commands write no log'      { run Info -ConfigPath $conf | Out-Null; @(Get-ChildItem $logs).Count -eq 0 }
 ck 'a change writes launcher_<stamp>.log' { run Admins add 76561198000000001 -ConfigPath $conf | Out-Null; $f = @(Get-ChildItem $logs); ($f.Count -eq 1) -and ($f[0].Name -match $name) }
 ck 'stamp is UTC (TIMEZONE=utc)'          { (Get-ChildItem $logs)[0].Name.Substring(9, 8) -eq (Get-Date).ToUniversalTime().ToString('yyyyMMdd') }
-ck 'lines carry time, zone and level'     { (Get-Content (Get-ChildItem $logs)[0].FullName) -match '^\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC\] CMD  Admins add' }
+ck 'lines carry time, zone and level'     { $l = @(Get-Content (Get-ChildItem $logs)[0].FullName); $ok = [bool]($l | Where-Object { $_ -match '^\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC\] CMD  Admins add' }); if (-not $ok) { Write-Host "    got: $($l -join ' | ')" }; $ok }
 ck 'no secret values in the log'          { run Plugins config x SECRET_TOKEN=abc123 -ConfigPath $conf | Out-Null; -not ((Get-Content (Get-ChildItem $logs)[0].FullName) -match 'abc123') }
 ck 'the same file is reused under the limit' { run Admins remove 76561198000000001 -ConfigPath $conf | Out-Null; @(Get-ChildItem $logs).Count -eq 1 }
 

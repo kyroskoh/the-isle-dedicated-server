@@ -63,8 +63,29 @@ plain text.
 | Profiles & presets | Apply a profile, or several presets in order |
 | Plugins | Search, install, enable/disable, update, remove, configure, plugin presets |
 | Snapshots & backups | Create, restore (choose parts, overwrite, stop first) and delete snapshots; back up now |
-| Logs | Last 100–2000 lines, with auto-refresh |
+| Logs | The game's log or any rotated `launcher_` / `server_` / `ui_` log file, last 100–2000 lines, with auto-refresh |
 | RCON console | Send RCON commands to the running server |
+
+### Date & time, cut-off text and screen sizes
+
+- **Date & time** (sidebar): show times in **server time**, **this browser's** time zone or **UTC**, with a date format
+  of your choice. The presets all show the month as three letters (`08 Nov 2026, 14:30:05` by default), and custom
+  patterns use `yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h mm ss a ZZ 'text'`. The choice is saved in this browser.
+  Hovering or focusing any date shows the full timestamp with its zone.
+- **Peek:** text that is cut off with "…" (long dinosaur names, the server name ...) shows in full **immediately** on
+  hover, keyboard focus or a tap, with no tooltip delay.
+- **Any screen:** phones and tablets in portrait and landscape, and desktops up to wide screens. Tables turn into
+  labelled cards when their space gets narrow, buttons grow to 44 px on touch screens, and nothing scrolls sideways.
+  Long names, IDs and paths wrap instead of overflowing. This is checked on every change in Chromium (Chrome, Edge),
+  Firefox and WebKit (Safari) at 320–1920 px (`tests/test_ui_overflow.mjs`).
+
+| Date & time | Logs (rotated files) |
+|---|---|
+| ![Date & time preferences](docs/images/ui/date-time.png) | ![Logs page with a server_yyyymmdd_hhmmss.log file](docs/images/ui/logs.png) |
+
+| Tap to peek (phone) | Phone, landscape | Tablet, portrait |
+|---|---|---|
+| ![Tapping the cut-off server name shows it in full](docs/images/ui/phone-peek-dark.png) | ![Phone in landscape](docs/images/ui/phone-landscape.png) | ![Tablet in portrait](docs/images/ui/tablet-portrait.png) |
 
 ### Screenshots
 
@@ -107,9 +128,9 @@ Changed fields are highlighted until you save. Machine-specific keys sit read-on
 
 **Logs and RCON console.**
 
-| Logs | RCON console |
-|---|---|
-| ![Logs page](docs/images/ui/logs.png) | ![RCON console](docs/images/ui/console.png) |
+| RCON console |
+|---|
+| ![RCON console](docs/images/ui/console.png) |
 
 **On a phone.** The layout adapts and the menu slides in.
 

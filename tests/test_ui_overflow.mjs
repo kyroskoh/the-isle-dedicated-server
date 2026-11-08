@@ -191,7 +191,7 @@ try {
         }
         if (process.env.OVERFLOW_SHOTS && scheme === "light" && (width === 1280 || width === 320)) {
           mkdirSync(process.env.OVERFLOW_SHOTS, { recursive: true });
-          await page.screenshot({ path: join(process.env.OVERFLOW_SHOTS, `${route || "dashboard"}-${width}.png`), fullPage: true });
+          await page.screenshot({ path: join(process.env.OVERFLOW_SHOTS, `${route || "dashboard"}-${width}.png`), fullPage: true, caret: "initial", animations: "allow" });
         }
       }
       if (width === 1280 || width === 390) {
@@ -255,7 +255,7 @@ try {
   for (const width of [1280, 390]) {
     const ctx = await browser.newContext({ viewport: { width, height: 900 } });
     const page = await ctx.newPage();
-    await page.goto(BASE + "/docs");
+    await page.goto(BASE + "/docs", { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".op");
     await page.click("#patchConfig > summary");
     report(`docs @${width}`, await page.evaluate(audit));

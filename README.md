@@ -34,6 +34,9 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 - **Optional web UI and REST API** (`isle-server ui`, `UI.bat`, or at boot with `install.sh --ui` / `Install.bat -UI`).
   Dashboard, settings, players, roster, profiles, plugins, snapshots, logs and an RCON console, with light/dark/system
   themes. The OpenAPI 3.1 docs at `/docs` have a "Try it" form. It listens on localhost only and needs a token. See [UI.md](UI.md).
+- **Logs with rotation and a choice of clock.** Every log file is `KIND_yyyymmdd_hhmmss.log` (launcher, game console, web UI),
+  rotated by size and pruned to a set count. `TIMEZONE=local|utc` sets the clock, and backups and snapshots carry the
+  same `_yyyymmdd_hhmmss` suffix.
 - **Launchers** for start, stop, restart, status, logs and a console mode.
 - **Watchdog** that restarts the server if it crashes. On Linux this is systemd `Restart=on-failure` or the built-in watchdog. On Windows it's a scheduled task plus a watchdog loop.
 - **Auto-update** through SteamCMD before each start (optional).
@@ -88,7 +91,7 @@ Then forward these ports on your router or cloud firewall:
 | Stop (saves first) | `sudo systemctl stop theisle-server` or `isle-server stop` | `Stop.bat` |
 | Restart | `isle-server restart` | `Restart.bat` |
 | Status | `isle-server status` | `Status.bat` |
-| Follow the log | `isle-server logs -f` | `IsleServer.ps1 Logs -Follow` |
+| Follow the log | `isle-server logs -f` (`logs server\|launcher\|ui\|list`) | `IsleServer.ps1 Logs -Follow` (`Logs launcher\|ui\|list`) |
 | Update the game | `isle-server stop && isle-server update && isle-server start` | `Stop.bat`, then `Update.bat`, then `Start.bat` |
 | Backup | `isle-server backup` | `Backup.bat` |
 | Restore | `isle-server restore <file.tar.gz>` | `Restore.bat -Path <file.zip or .tar.gz>` |

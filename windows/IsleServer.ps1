@@ -111,7 +111,7 @@ $SteamCmdUrl = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 $VcRedistUrl = 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
 
 # ------------------------------------------------------------------ output --
-function Write-Step([string]$m) { Write-Host ("[{0}] {1}" -f (Get-Now).ToString('yyyy-MM-dd HH:mm:ss'), $m) -ForegroundColor Cyan; Write-FileLog INFO $m }
+function Write-Step([string]$m) { Write-Host ("[{0}] {1}" -f (Get-Now).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture), $m) -ForegroundColor Cyan; Write-FileLog INFO $m }
 function Write-Ok([string]$m)   { Write-Host "[ OK ] $m" -ForegroundColor Green; Write-FileLog OK $m }
 function Write-Warn([string]$m){ Write-Host "[WARN] $m" -ForegroundColor Yellow; Write-FileLog WARN $m }
 function Fail([string]$m)       { Write-Host "[FAIL] $m" -ForegroundColor Red; Write-FileLog FAIL $m; exit 1 }
@@ -123,8 +123,9 @@ $script:LauncherLog = $null
 $script:LogDir = $null
 $LogNameRe = '^(?<kind>[a-z][a-z0-9-]*)_(?<stamp>\d{8}_\d{6})(_(?<n>\d+))?\.log$'
 function Test-UtcClock { return @('utc', 'gmt', 'z') -contains ([string]$script:Cfg['TIMEZONE']).Trim().ToLowerInvariant() }
+$Invariant = [Globalization.CultureInfo]::InvariantCulture   # ':' and '/' in .NET formats are culture-specific otherwise
 function Get-Now { if ($script:Cfg -and (Test-UtcClock)) { return (Get-Date).ToUniversalTime() } return (Get-Date) }
-function Get-Stamp { return (Get-Now).ToString('yyyyMMdd_HHmmss') }
+function Get-Stamp { return (Get-Now).ToString('yyyyMMdd_HHmmss', $Invariant) }
 function Get-ZoneLabel {
     if (Test-UtcClock) { return 'UTC' }
     $o = [TimeZoneInfo]::Local.GetUtcOffset((Get-Date))
@@ -178,7 +179,7 @@ function Write-FileLog([string]$level, [string]$m) {
     try {
         $max = 20; [void][int]::TryParse((C 'LOG_MAX_SIZE_MB' '20'), [ref]$max)
         if (-not $script:LauncherLog -or ($max -gt 0 -and (Get-Item $script:LauncherLog).Length -ge ($max * 1MB))) { $script:LauncherLog = Get-LogFile 'launcher' }
-        [IO.File]::AppendAllText($script:LauncherLog, ('[{0} {1}] {2,-4} {3}' -f (Get-Now).ToString('yyyy-MM-dd HH:mm:ss'), (Get-ZoneLabel), $level, $m) + [Environment]::NewLine)
+        [IO.File]::AppendAllText($script:LauncherLog, ('[{0} {1}] {2,-4} {3}' -f (Get-Now).ToString('yyyy-MM-dd HH:mm:ss', $Invariant), (Get-ZoneLabel), $level, $m) + [Environment]::NewLine)
     } catch { $script:LogToFile = $false }
 }
 

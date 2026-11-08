@@ -144,6 +144,7 @@ the world from it when the native server has no world yet. See
 /data/server/              game files + TheIsle/Saved (world, logs, ini files)
 /data/steamcmd/            SteamCMD
 /data/backups/             backup archives
+/data/logs/                server_*.log (game console) and launcher_*.log, KIND_yyyymmdd_hhmmss.log, rotated
 /data/home/                HOME of the server user (steamclient.so)
 ```
 

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document version** | 1.4 |
-| **Product version** | 1.9.0 (released) |
+| **Product version** | 1.10.0 (released) |
 | **Status** | Approved. This is the source of truth for scope and acceptance |
 | **Owner** | kyroskoh |
 | **Last updated** | 2026-11-07 |
@@ -293,8 +293,21 @@ Priority: **M** = must, **S** = should, **C** = could.
 | UI-02 | M | **UX best practices** | Clear status and next action. Confirmation for destructive actions. Progress for jobs with live output. Toasts for results. Disabled buttons while busy. Form validation with inline errors. Keyboard navigation, visible focus, ARIA labels and live regions, skip link. Responsive down to phones. `prefers-reduced-motion` |
 | UI-03 | M | **Themes** | Light, dark and **system** (follows `prefers-color-scheme` live), saved per browser. Palette: jungle green primary + amber accent with WCAG AA contrast in both themes |
 | UI-04 | M | **Run optionally** | `isle-server ui [--host H] [--port P] [--open]` / `IsleServer.ps1 UI` (+ `UI.bat`), `ui-token [--rotate]`. Installer `--ui` / `-UI` adds a boot service (systemd `theisle-ui` / scheduled task `TheIsleServer-UI`). `UI_HOST`, `UI_PORT` in `server.conf`. The scripts keep working without the UI |
+| UI-06 | M | **Date & time display** | Per-browser time zone (server / browser / UTC) and date format (presets with MMM month, custom patterns, live preview); every date shows its full timestamp with zone on hover/focus |
+| UI-07 | M | **Instant peek** | Any clipped or ellipsis text (or `data-peek`) shows in full immediately on hover, keyboard focus or touch tap; inside the viewport; `role=tooltip` + `aria-describedby` |
+| UI-08 | M | **Responsive everywhere** | No overflow, clipped text without peek, mid-word breaks, sideways page or table scrolling on Chromium, Firefox and WebKit at 320–1920 px, phones and tablets in both orientations, with touch; long data seeded (`tests/test_ui_overflow.mjs`) |
 | UI-05 | M | Tests | `tests/test_api.py` (offline, fake launcher: auth, lockout, validation, problem+json, jobs, config rollback, spec covers every route, headers, static path traversal). `tests/test_ui.mjs` (Playwright: login, navigation, theme light/dark/system, server actions, phone layout, /docs, CSP, screenshots) |
 | DEB-01 | M | **Debian verification** | Every Linux test suite also runs on Debian: the real `debian:bookworm-slim` image in CI (container smoke, e2e, launcher, installer cycle, unit suites inside the image), and a native install with real apt dependencies on `debian:bookworm` |
+
+### 6.16 Logs, rotation and time zone (LOG)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| LOG-01 | M | **`TIMEZONE=local\|utc`** | One clock for log timestamps and dated names, in both launchers, the installers, the API and the snapshot tool. Docker gets the host's UTC offset for `local`. `check` refuses other values |
+| LOG-02 | M | **Log file names** | Every log file is `KIND_yyyymmdd_hhmmss.log` in `LOG_DIR` (default `<scripts>/logs`, Docker `/data/logs`): `launcher` (commands that change something; only the first argument, never values), `server` (game console: watchdog, systemd with the journal, Docker), `ui` (API access log). Same-second files get `_N` past the highest N |
+| LOG-03 | M | **Rotation** | A new file once the current one passes `LOG_MAX_SIZE_MB`; the newest `LOG_RETENTION` files per kind are kept; the game's `TheIsle-backup-*.log` follow the same retention |
+| LOG-04 | M | **Dated names** | Backups, final backups, snapshots, replaced worlds and config backups end with `_yyyymmdd_hhmmss`; older `-yyyymmdd-hhmmss` names are still recognised |
+| LOG-05 | M | **Access** | `isle-server logs [-f] [game\|server\|launcher\|ui\|list]`, `IsleServer.ps1 Logs launcher\|ui\|list`, `GET /api/v1/log-files[/{name}]`, the UI Logs page |
 
 ## 7. CLI contract
 
@@ -326,7 +339,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | NFR-02 | Encoding | `.ps1` files are ASCII-only. Line endings enforced by `.gitattributes` (LF for sh/py/conf, CRLF for ps1/bat) |
 | NFR-03 | Security | Least privilege (G5). Secrets never passed as process arguments by the managers. `server.conf` git-ignored |
 | NFR-04 | Reliability | SteamCMD retried 3 times. Watchdog restart. systemd `Restart=on-failure`. Task `RestartCount` |
-| NFR-05 | Observability | All actions logged with timestamps. Console output kept in `.isle-scripts/console.log` (Linux background mode) |
+| NFR-05 | Observability | All actions logged with timestamps in `TIMEZONE`. Rotated `KIND_yyyymmdd_hhmmss.log` files in `LOG_DIR` (§6.16) |
 | NFR-06 | Maintainability | Any new config key goes into both renderers + the example + CONFIGURATION.md (CONTRIBUTING.md) |
 | NFR-07 | Quality gates | ShellCheck clean, PS 5.1 parser clean, PSScriptAnalyzer (Error) clean, CI smoke tests pass |
 | NFR-08 | Transparency | The only downloads are SteamCMD, the VC++ runtime, Python (optional) and the game via SteamCMD |
@@ -400,6 +413,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M11 Uninstall data choices (v1.6.0) | INS-20: keep/remove per data category, menu, safety backup, both installers, CI | ✅ Done (v1.6.0). Linux verified by the cycle test (70 checks). Windows native paths covered by Windows CI; Windows Docker-volume paths parse-checked only |
 | M12 Config tools & plugins (v1.7.0) | CFX-01 – CFX-09, PLG-01 – PLG-07 | ✅ Done (v1.7.0). Linux + PowerShell 7 verified locally, Windows PowerShell 5.1 by CI. Live RCON pushes and real Discord/NAS targets need a live server (M6) |
 | M13 Snapshots & mode-switch data choices (v1.8.0) | MIG-01 – MIG-08 | ✅ Done (v1.8.0). Linux cycle (92 checks), snapshot tests, PowerShell 7 suites locally; Windows PowerShell 5.1 and Windows Docker Desktop paths via CI/field test (M6) |
+| M15 Logs, time zone, date display, peek & responsive (v1.10.0) | LOG-01 – LOG-05, UI-06 – UI-08 | ✅ Done (v1.10.0). `tests/test_logs.py`, `tests/test_logs.ps1`, UI suites on Chromium/Firefox/WebKit in CI |
 | M14 API, web UI & Debian verification (v1.9.0) | API-01 – API-05, UI-01 – UI-05, DEB-01 | ✅ Done (v1.9.0). API and UI suites on Linux and in the Debian image, Playwright UI test in CI, native Debian install job. Systemd `theisle-ui` unit and the Windows `TheIsleServer-UI` task need a field test (M6) |
 
 ## 12. Traceability matrix
@@ -429,6 +443,8 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | API-01 – API-05 | `tools/isle_api.py` (spec generated at `/openapi.json`) | `tests/test_api.py` | ✅ v1.9 |
 | UI-01 – UI-05 | `ui/`, `ui` command in both launchers, installer `--ui` / `-UI` | `tests/test_ui.mjs` (Playwright), `tests/test_native_debian.sh`, CI | ✅ v1.9 |
 | DEB-01 | CI `docker` (real Debian image), `debian-native` job | `tests/test_native_debian.sh`, CI | ✅ v1.9 |
+| LOG-01 – LOG-05 | `tools/isle_logs.py`, `file_log`/`log_writer` (Linux), `Write-FileLog` (Windows), installers, API | `tests/test_logs.py`, `tests/test_logs.ps1`, `tests/test_api.py` | ✅ v1.10 |
+| UI-06 – UI-08 | `ui/datetime.js`, `ui/peek.js`, `ui/styles.css` | `tests/test_ui.mjs`, `tests/test_ui_overflow.mjs` (3 engines in CI) | ✅ v1.10 |
 | CFG-01/02/07 | `load_config`, `Import-ServerConfig` | CI smoke | Done |
 | CFG-03/04 | `render_*_ini`/`configure`, `Get-*Ini`/`Set-ServerConfig` | CI smoke (grep sections) | Done |
 | CFG-05 | `check_config` / `Test-ServerConfig`, called by configure/run/start/install | CI smoke (positive + negative) | Done (v1.1) |

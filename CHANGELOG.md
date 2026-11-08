@@ -6,6 +6,48 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-08
+
+Planned in [PRD.md](PRD.md) as milestone M15 (LOG-01 to LOG-05, UI-06 to UI-08).
+
+### Added
+- **`TIMEZONE=local|utc`** in `server.conf`: one clock for log timestamps and dated file names, in both launchers,
+  the installers, the API and the snapshot tool. Docker gets the host's UTC offset for `local`.
+- **Log files `KIND_yyyymmdd_hhmmss.log` with rotation** in `LOG_DIR` (default `<scripts>/logs`, Docker `/data/logs`):
+  - `launcher_*`: every command that changes something, on Linux and Windows;
+  - `server_*`: the game console in watchdog, systemd and Docker mode, still also in the journal and docker logs;
+  - `ui_*`: the web UI access log.
+  - **Rotation:** a new file starts past `LOG_MAX_SIZE_MB`, and the newest `LOG_RETENTION` files per kind are kept.
+    The game's `TheIsle-backup-*.log` follow the same retention.
+  - **Commands:** `isle-server logs [-f] [game|server|launcher|ui|list]`, `IsleServer.ps1 Logs launcher|ui|list`.
+  - **API:** `GET /api/v1/log-files` and `/log-files/{name}`, and a log picker on the Logs page.
+- **Dated names end with `_yyyymmdd_hhmmss`:** `theisle-backup_…`, `theisle-final_…`, `theisle-snapshot_…`,
+  `Saved.pre-restore_…`, `Saved.pre-snapshot_…`, `server.conf.bak_…`. Older names are still recognised.
+- **Web UI Date & time:** time zone (server, this browser or UTC) and date format, with presets showing the month as
+  three letters (`08 Nov 2026, 14:30:05`) and custom patterns with a live preview, saved per browser. Hovering any
+  date shows the full timestamp with its zone.
+- **Instant peek:** cut-off text (dinosaur names, the server name, ...) shows in full immediately on hover, keyboard
+  focus or a tap.
+- **Layout audit** `tests/test_ui_overflow.mjs`: long data on every page, dialog and toast at 320–1920 px, on phones
+  and tablets in both orientations, in light and dark. CI runs it and `tests/test_ui.mjs` on Chromium, Firefox and
+  WebKit.
+- `/api/v1/status` reports `timezone`, `utc_offset_minutes` and `zone`.
+- **Tests:** `tests/test_logs.py`, `tests/test_logs.ps1`, plus API, date-format and peek tests.
+
+### Changed
+- **Responsive layout:**
+  - Tables turn into labelled cards based on their own width (container queries, with a fallback).
+  - Buttons wrap at word boundaries, long values wrap inside their box, and badges stay whole.
+  - Touch screens get 44 px targets, mobile browsers use `dvh` and safe areas, and short landscape screens drop
+    the sticky bars.
+- **Documentation:** screenshots regenerated with MMM dates, including the Date & time dialog, rotated logs, peek,
+  a phone in landscape and a tablet in portrait.
+
+### Fixed
+- Text overflowing chips, cards and buttons, mid-word breaks, and sideways page scrolling caused by screen-reader
+  cells in tables.
+- Two log files rotated within the same second could prune the newest one.
+
 ## [1.9.0] - 2026-11-08
 
 Planned in [PRD.md](PRD.md) as milestone M14 (requirements API-01 to API-05, UI-01 to UI-05, DEB-01). Guide: [UI.md](UI.md).

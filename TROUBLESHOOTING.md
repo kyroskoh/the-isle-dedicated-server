@@ -2,9 +2,13 @@
 
 Start with the logs:
 
-- Server log: `<SERVER_DIR>/TheIsle/Saved/Logs/TheIsle.log` (`isle-server logs -f`, or `IsleServer.ps1 Logs -Follow`)
-- Linux service: `journalctl -u theisle-server -f`
-- Linux background mode: `<SERVER_DIR>/.isle-scripts/console.log`
+- Game log: `<SERVER_DIR>/TheIsle/Saved/Logs/TheIsle.log` (`isle-server logs -f`, or `IsleServer.ps1 Logs -Follow`)
+- This project's logs, in `LOG_DIR` (default `<scripts>/logs`, Docker `/data/logs`), named `KIND_yyyymmdd_hhmmss.log`:
+  `server_*` (game console, Linux), `launcher_*` (every start/stop/update/backup/config change), `ui_*` (web UI access log).
+  `isle-server logs list`, `isle-server logs server -f`, `isle-server logs launcher` (Windows: `IsleServer.ps1 Logs launcher|ui|list`),
+  or the **Logs** page of the web UI
+- Linux service: `journalctl -u theisle-server -f` (the console also goes to `server_*.log`)
+- Timestamps use `TIMEZONE` (local or utc) from `server.conf`
 
 ## Server doesn't appear in the in-game server list
 

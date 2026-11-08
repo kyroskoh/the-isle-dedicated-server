@@ -110,7 +110,7 @@ ck "settings carried over"     "[ \"\$(grep '^RCON_PASSWORD=' $DC | cut -d= -f2)
 ck "RUNTIME=docker"            "grep -q '^RUNTIME=docker' $DC"
 ck "state docker"              "[ \"\$(state MODE)\" = docker ]"
 ck "native world imported"     "grep -q 'World restored' $LOGS/4.log && vol_has native-world.txt"
-ck "carry snapshot kept"       "ls /opt/theisle-scripts/snapshots/theisle-carry-native-*.tar.gz >/dev/null 2>&1"
+ck "carry snapshot kept"       "ls /opt/theisle-scripts/snapshots/theisle-carry-native_*.tar.gz >/dev/null 2>&1"
 ck "container running"         "waitfor dstat"
 
 echo "## 5 uninstall docker, reinstall (no flag): retained volume reused"; run 5 --uninstall
@@ -220,7 +220,7 @@ ck "world moved into the volume"  "grep -q 'World restored' $LOGS/M1.log && vol_
 ck "native world cleared (move)"  "[ ! -e $NSAVED/SaveGames/move-world.txt ]"
 ck "backups moved"                "docker run --rm -v theisle-data:/data:ro --entrypoint sh $HELPER_IMG -c 'ls /data/backups/theisle-*.tar.gz' >/dev/null 2>&1 && [ ! -e /home/theisle/theisle-backups ]"
 ck "overrides carried"            "grep -q '^bMoved=true' /opt/theisle-scripts/config/overrides/Game.ini"
-ck "move keeps a safety snapshot" "ls /opt/theisle-scripts/snapshots/theisle-carry-native-*.tar.gz >/dev/null 2>&1"
+ck "move keeps a safety snapshot" "ls /opt/theisle-scripts/snapshots/theisle-carry-native_*.tar.gz >/dev/null 2>&1"
 seed_volume; isle-server start >/dev/null 2>&1
 ck "docker runs the moved world"  "waitfor dstat"
 

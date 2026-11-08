@@ -996,6 +996,7 @@ def make_handler(api, token, cors, tls, spec):
 class Server(ThreadingMixIn, HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    request_queue_size = 64   # browsers open several connections at once
 
 
 def load_token(path):

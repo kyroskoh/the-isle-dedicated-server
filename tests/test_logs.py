@@ -52,9 +52,12 @@ class StampTest(unittest.TestCase):
 class RotationTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="isle-logs-")
+        self.saved_env = os.environ.pop("ISLE_LOG_DIR", None)   # set in the Docker image
 
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
+        if self.saved_env is not None:
+            os.environ["ISLE_LOG_DIR"] = self.saved_env
 
     def names(self, kind=None):
         return [n for n, _ in isle_logs.files_of(self.dir, kind)]
@@ -127,8 +130,9 @@ class RotationTest(unittest.TestCase):
         conf = os.path.join(self.dir, "server.conf")
         with open(conf, "w") as handle:
             handle.write("LOG_DIR=%s\nTIMEZONE=utc\n" % self.dir)
+        env = dict(os.environ); env.pop("ISLE_LOG_DIR", None)
         out = subprocess.run([sys.executable, os.path.join(REPO, "tools", "isle_logs.py"), "--conf", conf, "write", "server", "--tee"],
-                             input=b"hello\nworld\n", stdout=subprocess.PIPE, check=True).stdout
+                             input=b"hello\nworld\n", stdout=subprocess.PIPE, check=True, env=env).stdout
         self.assertEqual(out.replace(b"\r", b""), b"hello\nworld\n")
         (name,) = self.names("server")
         with open(os.path.join(self.dir, name)) as handle:

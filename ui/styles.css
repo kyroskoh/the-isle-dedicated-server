@@ -234,7 +234,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); widt
 
 dl.kv { display: grid; grid-template-columns: fit-content(45%) minmax(0, 1fr); gap: .35rem 1rem; margin: 0; }
 dl.kv dt { color: var(--muted); font-size: .875rem; }
-dl.kv dd { margin: 0; overflow-wrap: anywhere; font-size: .875rem; min-width: 0; }
+dl.kv dd { margin: 0; overflow-wrap: break-word; font-size: .875rem; min-width: 0; }
+@container (max-width: 320px) { dl.kv { grid-template-columns: minmax(0, 1fr); gap: 0 1rem; } dl.kv dd { margin-bottom: .4rem; } }
 
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .55rem .6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
