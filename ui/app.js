@@ -470,22 +470,30 @@
   function pageRoster(c) {
     c.appendChild(pageHead("Roster", "Which dinosaurs players can pick, and which AI creatures are switched off."));
     var presetRow = function (reload) {
+      var wrap = h("div", { class: "stack" });
       var row = h("form", { class: "row" });
-      var sel = h("select", { "aria-label": "Roster preset", id: "roster-preset" }, h("option", { value: "", text: "Loading presets…" }));
+      // options show only the preset name - Safari sizes a select to its longest option and will not shrink it
+      var sel = h("select", { "aria-label": "Roster preset", id: "roster-preset", class: "grow", "aria-describedby": "roster-preset-hint" },
+        h("option", { value: "", text: "Loading presets…" }));
+      var hint = h("span", { class: "hint", id: "roster-preset-hint" });
       var apply = btn("Apply preset", { type: "submit" });
-      sel.className = "grow";   // the select itself is the flex item: Safari will not shrink one inside a wrapper
       add(row, [h("label", { text: "Preset", class: "small", for: "roster-preset" }), sel, apply]);
-      row.style.marginBottom = ".75rem";
+      add(wrap, [row, hint]);
+      wrap.style.marginBottom = ".75rem";
+      var described = {};
+      var showHint = function () { hint.textContent = described[sel.value] || ""; };
       api("GET", "/rosters").then(function (rs) {
         clear(sel);
-        rs.forEach(function (r) { sel.appendChild(h("option", { value: r.name, text: r.name + (r.description ? " - " + r.description : "") })); });
+        rs.forEach(function (r) { described[r.name] = r.description; sel.appendChild(h("option", { value: r.name, text: r.name })); });
+        showHint();
       }, fail);
+      sel.addEventListener("change", showHint);
       row.addEventListener("submit", function (ev) {
         ev.preventDefault();
         if (!sel.value) return;
         busy(apply, api("POST", "/classes/preset", { name: sel.value }).then(function () { toast("Roster preset " + sel.value + " applied"); reload(); }, fail));
       });
-      return row;
+      return wrap;
     };
     add(c, h("div", { class: "grid" },
       classPicker("Playable roster", "Ticked classes can be chosen. All ticked = every class.", "/classes", true, presetRow),
