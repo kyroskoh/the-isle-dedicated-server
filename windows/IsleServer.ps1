@@ -806,6 +806,8 @@ function Invoke-DockerImage {
 
 function Show-DockerInfo {
     $state = 'unknown (docker not available)'
+    # Windows PowerShell 5.1 turns native stderr into terminating errors under 'Stop'
+    $ErrorActionPreference = 'Continue'
     if (Get-Command docker -ErrorAction SilentlyContinue) {
         & docker info *> $null
         if ($LASTEXITCODE -eq 0) {

@@ -29,6 +29,12 @@ async function ck(label, fn) {
 }
 const freePort = () => new Promise((res) => { const s = net.createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); }); });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// page.waitForFunction evaluates a string in the page, which the UI's CSP (no 'unsafe-eval') blocks; poll instead
+async function waitUntil(page, fn, timeout = 10000) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) { if (await page.evaluate(fn)) return true; await sleep(100); }
+  throw new Error("timed out waiting for " + fn.toString().slice(0, 80));
+}
 
 // ------------------------------------------------------------- API server
 const dir = mkdtempSync(join(tmpdir(), "isle-ui-"));
@@ -68,7 +74,7 @@ try {
   await page.fill("#token", TOKEN);
   await page.click('#login-form button[type="submit"]');
   await ck("dashboard after sign-in", async () => { await page.waitForSelector("h1:text('Dashboard')"); return true; });
-  await ck("server name in the top bar", async () => { await page.waitForFunction(() => document.querySelector("#server-name").textContent === "Jungle Test"); return true; });
+  await ck("server name in the top bar", async () => { await waitUntil(page, () => document.querySelector("#server-name").textContent === "Jungle Test"); return true; });
   await ck("token kept in sessionStorage only", () => page.evaluate((t) => sessionStorage.getItem("isle-token") === t && !JSON.stringify(localStorage).includes(t), TOKEN));
 
   console.log("## themes (light / dark / system)");
@@ -91,7 +97,7 @@ try {
   console.log("## server actions");
   await page.click("button:has-text('Start')");
   await ck("job panel shows progress", async () => { await page.waitForSelector("#jobs-panel:not([hidden]) .progress", { timeout: 3000 }); return true; });
-  await ck("start finishes, status Running", async () => { await page.waitForFunction(() => document.querySelector("#status-pill").textContent === "Running", null, { timeout: 15000 }); return true; });
+  await ck("start finishes, status Running", async () => { await waitUntil(page, () => document.querySelector("#status-pill").textContent === "Running", 15000); return true; });
   await ck("start listed in recent activity", async () => { await page.click("button:has-text('Refresh')"); await page.waitForSelector(".list strong:text('start')"); return true; });
   await page.click(".hero button:has-text('Stop')");
   await ck("stop asks for confirmation", async () => { await page.waitForSelector("#confirm[open]"); return /disconnected/.test(await page.textContent("#confirm-text")); });
@@ -106,7 +112,7 @@ try {
     await page.click(`#nav a[href="#/${route}"]`);
     await ck(`${title} page`, async () => {
       await page.waitForSelector(`h1:text("${title}")`);
-      await page.waitForFunction(() => !document.querySelector("#content [role=status]"), null, { timeout: 8000 });
+      await waitUntil(page, () => !document.querySelector("#content [role=status]"), 8000);
       return (await page.getAttribute(`#nav a[href="#/${route}"]`, "aria-current")) === "page";
     });
     await shot(page, `10-${route}`);
