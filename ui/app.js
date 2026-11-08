@@ -473,7 +473,8 @@
       var row = h("form", { class: "row" });
       var sel = h("select", { "aria-label": "Roster preset", id: "roster-preset" }, h("option", { value: "", text: "Loading presets…" }));
       var apply = btn("Apply preset", { type: "submit" });
-      add(row, [h("label", { text: "Preset", class: "small", for: "roster-preset" }), h("div", { class: "grow" }, sel), apply]);
+      sel.className = "grow";   // the select itself is the flex item: Safari will not shrink one inside a wrapper
+      add(row, [h("label", { text: "Preset", class: "small", for: "roster-preset" }), sel, apply]);
       row.style.marginBottom = ".75rem";
       api("GET", "/rosters").then(function (rs) {
         clear(sel);

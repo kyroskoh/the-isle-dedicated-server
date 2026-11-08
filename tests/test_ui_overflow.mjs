@@ -68,7 +68,9 @@ const port = await freePort();
 const env = { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.1",
   FAKE_LOG_FILE: logFile };
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
-  "--port", String(port), "--snapshot-dir", join(dir, "snapshots")], { env, stdio: "ignore" });
+  "--port", String(port), "--snapshot-dir", join(dir, "snapshots")], { env, stdio: ["ignore", "pipe", "pipe"] });
+const apiLog = [];
+for (const stream of [api.stdout, api.stderr]) stream.on("data", (b) => { apiLog.push(String(b)); if (apiLog.length > 200) apiLog.shift(); });
 const BASE = `http://127.0.0.1:${port}`;
 for (let i = 0; i < 100; i++) { try { if ((await fetch(BASE + "/api/v1/health")).ok) break; } catch { /* starting */ } await sleep(100); }
 const call = async (method, path, body) => (await fetch(BASE + "/api/v1" + path, { method,
@@ -141,11 +143,17 @@ async function open(ctx, page, url) {
   try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }); return page; } catch (e) {
     let alive = "no";
     try { const r = await fetch(BASE + "/api/v1/health", { signal: AbortSignal.timeout(5000) }); alive = "HTTP " + r.status; } catch (x) { alive = String(x); }
-    console.log(`  note: ${url} did not load (${e.message.split("\n")[0]}); API health from Node: ${alive}; retrying on a new page`);
+    console.log(`  note: ${url} did not load (${e.message.split("\n")[0]}); API health from Node: ${alive}`);
+    console.log("  note: last API requests:\n    " + apiLog.join("").trim().split("\n").slice(-8).join("\n    "));
     try { await page.close(); } catch { /* already gone */ }
     const fresh = await ctx.newPage();
-    await fresh.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    return fresh;
+    try { await fresh.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }); return fresh; } catch (e2) {
+      console.log("  note: a new page did not load either - trying a new browser context");
+      const ctx2 = await browser.newContext({ viewport: page.viewportSize ? page.viewportSize() : undefined });
+      const p2 = await ctx2.newPage();
+      await p2.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      return p2;
+    }
   }
 }
 const settle = async (page) => {

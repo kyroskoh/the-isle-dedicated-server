@@ -163,8 +163,7 @@ select:not([multiple]) {   /* more specific than the generic input/select rule, 
   background-repeat: no-repeat; background-position: right .65rem center; background-size: 12px 8px;
 }
 select::-ms-expand { display: none; }
-.row > .grow { flex: 1 1 12rem; min-width: 0; }
-.row > .grow > select { width: 100%; }
+.row > .grow { flex: 1 1 12rem; min-width: 0; width: auto; }
 .card-head h2, .card-head h3 { margin: 0; }
 .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .stack { display: flex; flex-direction: column; gap: .75rem; }
