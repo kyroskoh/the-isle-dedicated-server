@@ -23,7 +23,7 @@
     Restart        Stop + Start
     Status         Show whether the server is running
     Run            Run the server in this window with an auto-restart watchdog
-    Logs           Show the server log (add -Follow to tail it)
+    Logs           Show a log: the game's own log (default) or Logs launcher|ui|list (add -Follow to tail it)
     Backup         Zip save data and config into BACKUP_DIR
     Restore        Restore a backup (-Path <.zip or .tar.gz>; both work in both runtimes)
     Rcon           Send an RCON command (-RconArgs 'announce','Hello')
@@ -111,10 +111,76 @@ $SteamCmdUrl = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 $VcRedistUrl = 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
 
 # ------------------------------------------------------------------ output --
-function Write-Step([string]$m) { Write-Host ("[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) -ForegroundColor Cyan }
-function Write-Ok([string]$m)   { Write-Host "[ OK ] $m" -ForegroundColor Green }
-function Write-Warn([string]$m){ Write-Host "[WARN] $m" -ForegroundColor Yellow }
-function Fail([string]$m)       { Write-Host "[FAIL] $m" -ForegroundColor Red; exit 1 }
+function Write-Step([string]$m) { Write-Host ("[{0}] {1}" -f (Get-Now).ToString('yyyy-MM-dd HH:mm:ss'), $m) -ForegroundColor Cyan; Write-FileLog INFO $m }
+function Write-Ok([string]$m)   { Write-Host "[ OK ] $m" -ForegroundColor Green; Write-FileLog OK $m }
+function Write-Warn([string]$m){ Write-Host "[WARN] $m" -ForegroundColor Yellow; Write-FileLog WARN $m }
+function Fail([string]$m)       { Write-Host "[FAIL] $m" -ForegroundColor Red; Write-FileLog FAIL $m; exit 1 }
+
+# ------------------------------------------------------------------- logs ---
+# TIMEZONE=local|utc; every log file is KIND_yyyyMMdd_HHmmss.log in LOG_DIR (PRD LOG-01..05).
+$script:LogToFile = $false
+$script:LauncherLog = $null
+$script:LogDir = $null
+$LogNameRe = '^(?<kind>[a-z][a-z0-9-]*)_(?<stamp>\d{8}_\d{6})(_(?<n>\d+))?\.log$'
+function Test-UtcClock { return @('utc', 'gmt', 'z') -contains ([string]$script:Cfg['TIMEZONE']).Trim().ToLowerInvariant() }
+function Get-Now { if ($script:Cfg -and (Test-UtcClock)) { return (Get-Date).ToUniversalTime() } return (Get-Date) }
+function Get-Stamp { return (Get-Now).ToString('yyyyMMdd_HHmmss') }
+function Get-ZoneLabel {
+    if (Test-UtcClock) { return 'UTC' }
+    $o = [TimeZoneInfo]::Local.GetUtcOffset((Get-Date))
+    $sign = '+'; if ($o.Ticks -lt 0) { $sign = '-' }
+    return ('UTC{0}{1:00}:{2:00}' -f $sign, [Math]::Abs($o.Hours), [Math]::Abs($o.Minutes))
+}
+function Get-LogFiles([string]$kind) {
+    if (-not $script:LogDir -or -not (Test-Path $script:LogDir)) { return @() }
+    $items = foreach ($f in Get-ChildItem -Path $script:LogDir -Filter "$kind`_*.log" -File) {
+        if ($f.Name -match $LogNameRe -and $Matches.kind -eq $kind) {
+            $n = 0; if ($Matches.ContainsKey('n')) { $n = [int]$Matches['n'] }   # StrictMode: absent group = absent key
+            [pscustomobject]@{ Name = $f.Name; Key = ('{0}_{1:D6}' -f $Matches.stamp, $n); Stamp = $Matches.stamp; N = $n }
+        }
+    }
+    return @($items | Sort-Object Key)
+}
+function Remove-OldLogs([string]$kind) {
+    $keep = 0; [void][int]::TryParse((C 'LOG_RETENTION' '14'), [ref]$keep)
+    if ($keep -le 0) { return }
+    $all = Get-LogFiles $kind
+    if ($all.Count -gt $keep) { $all | Select-Object -First ($all.Count - $keep) | ForEach-Object { Remove-Item (Join-Path $script:LogDir $_.Name) -Force -ErrorAction SilentlyContinue } }
+}
+function Remove-OldGameLogs {
+    $keep = 0; [void][int]::TryParse((C 'LOG_RETENTION' '14'), [ref]$keep)
+    $dir = Join-Path $ServerDir 'TheIsle\Saved\Logs'
+    if ($keep -le 0 -or -not (Test-Path $dir)) { return }
+    Get-ChildItem -Path $dir -Filter 'TheIsle-backup-*.log' -File | Sort-Object LastWriteTime -Descending |
+        Select-Object -Skip $keep | ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+}
+function New-LogName([string]$kind) {
+    $st = Get-Stamp
+    $same = @(Get-LogFiles $kind | Where-Object { $_.Stamp -eq $st })
+    if (-not $same.Count) { return (Join-Path $script:LogDir "$kind`_$st.log") }
+    return (Join-Path $script:LogDir ('{0}_{1}_{2}.log' -f $kind, $st, (($same | Measure-Object -Property N -Maximum).Maximum + 1)))
+}
+function Get-LogFile([string]$kind) {
+    New-Item -ItemType Directory -Force -Path $script:LogDir | Out-Null
+    $max = 20; [void][int]::TryParse((C 'LOG_MAX_SIZE_MB' '20'), [ref]$max)
+    $last = Get-LogFiles $kind | Select-Object -Last 1
+    if ($last) {
+        $path = Join-Path $script:LogDir $last.Name
+        if ($max -le 0 -or (Get-Item $path).Length -lt ($max * 1MB)) { return $path }
+    }
+    $f = New-LogName $kind
+    [IO.File]::WriteAllText($f, '')
+    Remove-OldLogs $kind
+    return $f
+}
+function Write-FileLog([string]$level, [string]$m) {
+    if (-not $script:LogToFile) { return }
+    try {
+        $max = 20; [void][int]::TryParse((C 'LOG_MAX_SIZE_MB' '20'), [ref]$max)
+        if (-not $script:LauncherLog -or ($max -gt 0 -and (Get-Item $script:LauncherLog).Length -ge ($max * 1MB))) { $script:LauncherLog = Get-LogFile 'launcher' }
+        [IO.File]::AppendAllText($script:LauncherLog, ('[{0} {1}] {2,-4} {3}' -f (Get-Now).ToString('yyyy-MM-dd HH:mm:ss'), (Get-ZoneLabel), $level, $m) + [Environment]::NewLine)
+    } catch { $script:LogToFile = $false }
+}
 
 function Test-Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -152,6 +218,7 @@ function Import-ServerConfig {
         BACKUP_RETENTION = '10'; UPDATE_ON_START = 'true'; VALIDATE_ON_UPDATE = 'false'; AUTO_RESTART = 'true'
         MANAGE_INI_FILES = 'true'; SAVE_BEFORE_STOP = 'true'; RCON_ENABLED = 'true'; QUEUE_ENABLED = 'true'
         EXTRA_ARGS = '-log'; RUNTIME = 'native'; DOCKER_BUILD = 'true'; DOCKER_IMAGE = 'theisle-server:latest'
+        TIMEZONE = 'local'; LOG_RETENTION = '14'; LOG_MAX_SIZE_MB = '20'
     }
     $script:RawServerName = C 'SERVER_NAME'
     foreach ($k in $defaults.Keys) {
@@ -163,6 +230,8 @@ function Import-ServerConfig {
     $script:IniDir = Join-Path $script:ServerDir 'TheIsle\Saved\Config\WindowsServer'
     $script:StateDir = Join-Path $script:ServerDir '.isle-scripts'
     $script:LogFile = Join-Path $script:ServerDir 'TheIsle\Saved\Logs\TheIsle.log'
+    $script:LogDir = $env:ISLE_LOG_DIR
+    if (-not $script:LogDir) { $script:LogDir = C 'LOG_DIR' (Join-Path $RepoDir 'logs') }
 }
 function C([string]$key, [string]$default = '') {
     if ($script:Cfg.ContainsKey($key) -and $script:Cfg[$key] -ne '') { return [string]$script:Cfg[$key] }
@@ -182,6 +251,10 @@ function Test-ServerConfig {
         if (-not ($v -match '^\d+$' -and [int]::TryParse($v, [ref]$n) -and $n -ge 1 -and $n -le 65535)) {
             $errors.Add("$k='$v' is not a port number (1-65535)"); $portsOk = $false
         }
+    }
+    if (@('local', 'utc') -notcontains (C 'TIMEZONE' 'local').ToLowerInvariant()) { $errors.Add("TIMEZONE='$(C 'TIMEZONE')' must be local or utc") }
+    foreach ($k in 'LOG_RETENTION', 'LOG_MAX_SIZE_MB') {
+        if ((C $k '0') -notmatch '^\d+$') { $errors.Add("$k='$(C $k)' must be a whole number (0 = no limit)") }
     }
     $v = C 'UI_PORT'
     $n = 0
@@ -461,7 +534,9 @@ function Invoke-Run {
         try { Update-Server } catch { if (-not (Get-ServerExe)) { throw } ; Write-Warn "Update failed - starting existing build: $_" }
     }
     Set-ServerConfig
-    New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $StateDir, $script:LogDir | Out-Null
+    foreach ($k in 'launcher', 'ui', 'server') { Remove-OldLogs $k }
+    Remove-OldGameLogs
     $stopFlag = Join-Path $StateDir 'stop.flag'
     Remove-Item $stopFlag -Force -ErrorAction SilentlyContinue
     Set-Content -Path (Join-Path $StateDir 'watchdog.pid') -Value $PID
@@ -549,8 +624,20 @@ function Show-Status {
 }
 
 function Show-Logs {
-    if (-not (Test-Path $LogFile)) { Fail "No log file yet at $LogFile" }
-    if ($Follow) { Get-Content -Path $LogFile -Tail 100 -Wait } else { Get-Content -Path $LogFile -Tail 200 }
+    $which = 'game'; if ($Items -and $Items.Count) { $which = $Items[0].ToLowerInvariant() }
+    if ($which -eq 'list') {
+        $(foreach ($k in 'launcher', 'server', 'ui') { Get-LogFiles $k }) | Sort-Object Key -Descending | ForEach-Object {
+            Write-Host ('{0}  {1} bytes' -f $_.Name, (Get-Item (Join-Path $script:LogDir $_.Name)).Length) }
+        return
+    }
+    if (@('game', 'launcher', 'server', 'ui') -notcontains $which) { Fail 'Usage: IsleServer.ps1 Logs [game|launcher|server|ui|list] [-Follow]' }
+    $file = $LogFile
+    if ($which -ne 'game') {
+        $last = Get-LogFiles $which | Select-Object -Last 1
+        $file = $null; if ($last) { $file = Join-Path $script:LogDir $last.Name }
+    }
+    if (-not $file -or -not (Test-Path $file)) { Fail "No $which log yet (looked in $LogFile and $script:LogDir)" }
+    if ($Follow) { Get-Content -Path $file -Tail 100 -Wait } else { Get-Content -Path $file -Tail 200 }
 }
 
 # ------------------------------------------------------------------ RCON ---
@@ -586,15 +673,15 @@ function Invoke-Backup {
     if (-not (Test-Path $saved)) { Fail "Nothing to back up ($saved does not exist)" }
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
     if ((Get-ServerProcess) -and (Test-True (C 'SAVE_BEFORE_STOP'))) { Invoke-Save }
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $stage = Join-Path ([IO.Path]::GetTempPath()) "theisle-backup-$stamp"
+    $stamp = Get-Stamp
+    $stage = Join-Path ([IO.Path]::GetTempPath()) "theisle-backup-stage-$stamp"
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     try {
         # robocopy copies files that the running server holds open (read-shared)
         & robocopy $saved (Join-Path $stage 'Saved') /E /R:1 /W:1 /XD Logs Crashes /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -ge 8) { Fail "robocopy failed with code $LASTEXITCODE" }
         Copy-Item $ConfigPath (Join-Path $stage 'server.conf') -ErrorAction SilentlyContinue
-        $zip = Join-Path $BackupDir "theisle-$stamp.zip"
+        $zip = Join-Path $BackupDir "theisle-backup_$stamp.zip"
         Write-Step "Creating backup $zip"
         Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
         Write-Ok ("Backup written ({0:N1} MB)" -f ((Get-Item $zip).Length / 1MB))
@@ -629,10 +716,10 @@ function Invoke-Restore {
     Expand-Backup (Resolve-Path $Path).Path $stage
     $saved = Join-Path $ServerDir 'TheIsle\Saved'
     New-Item -ItemType Directory -Force -Path (Join-Path $ServerDir 'TheIsle') | Out-Null
-    if (Test-Path $saved) { Rename-Item $saved ("Saved.pre-restore-" + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
+    if (Test-Path $saved) { Rename-Item $saved ("Saved.pre-restore_" + (Get-Stamp)) }
     Move-Item (Join-Path $stage 'Saved') $saved
     Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Ok "Restored $Path (previous data kept as Saved.pre-restore-*)"
+    Write-Ok "Restored $Path (previous data kept as Saved.pre-restore_*)"
 }
 
 # -------------------------------------------------------------- firewall ---
@@ -765,6 +852,11 @@ function Get-ComposeEnvFile {
     foreach ($k in ($script:Cfg.Keys | Sort-Object)) {
         $v = ([string]$script:Cfg[$k]).Replace('\', '\\').Replace('"', '\"').Replace('$', '$$')
         $lines.Add("$k=""$v""")
+    }
+    if (-not (Test-UtcClock)) {  # TIMEZONE=local: the container gets this PC's UTC offset as a POSIX TZ (no tzdata needed)
+        $o = [TimeZoneInfo]::Local.GetUtcOffset((Get-Date))
+        $sign = '+'; $posix = '-'; if ($o.Ticks -lt 0) { $sign = '-'; $posix = '+' }
+        $lines.Add(('TZ="<{0}{1:00}{2:00}>{3}{1:00}:{2:00}"' -f $sign, [Math]::Abs($o.Hours), [Math]::Abs($o.Minutes), $posix))
     }
     [IO.File]::WriteAllLines($f, $lines)
     return $f
@@ -1155,7 +1247,7 @@ function Invoke-OverlayCommand([string]$kind) {
                 if (-not (Test-Path $f)) { throw "Unknown $($kind.ToLowerInvariant()) '$n' (see: IsleServer.ps1 $kind list)" }
                 $f
             }
-            $backup = "$ConfigPath.bak-" + (Get-Date -Format 'yyyyMMdd-HHmmss')
+            $backup = "$ConfigPath.bak_" + (Get-Stamp)
             Copy-Item $ConfigPath $backup
             foreach ($f in $files) {
                 foreach ($line in [IO.File]::ReadAllLines($f)) {
@@ -1235,6 +1327,11 @@ function Invoke-ConfigTool([string]$cmd) {
 if ($Command -eq 'Help') { Get-Help $MyInvocation.MyCommand.Path -Detailed; exit 0 }
 if ($Command -eq 'Version') { Write-Host "IsleServer.ps1 $ScriptVersion"; exit 0 }
 Import-ServerConfig
+if (@('Status', 'Info', 'Logs', 'Check', 'Version', 'Help', 'UI', 'UiToken') -notcontains $Command) {
+    $script:LogToFile = $true
+    $first = ''; if ($Items -and $Items.Count) { $first = $Items[0] }   # only the first argument: values may be secrets
+    Write-FileLog CMD "$Command $first"
+}
 
 try {
     $rt = Get-Runtime

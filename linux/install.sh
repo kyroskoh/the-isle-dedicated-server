@@ -188,7 +188,11 @@ docker_installed() {
 
 # ------------------------------------------------------------ helpers -------
 CONF=""   # path of the server.conf being edited
-conf_get() { grep -E "^$1=" "$CONF" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"\r' || true; }
+conf_get() { grep -E "^$1=" "${CONF:-}" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"\r' || true; }
+stamp() {  # [CONF] - yyyymmdd_hhmmss in that install's TIMEZONE (local|utc), the suffix of dated files
+  local tz; tz="$(grep -E '^TIMEZONE=' "${1:-${CONF:-}}" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"\r ' | tr '[:upper:]' '[:lower:]')"
+  if [[ "$tz" == utc ]]; then date -u +%Y%m%d_%H%M%S; else date +%Y%m%d_%H%M%S; fi
+}
 conf_set() {
   local key="$1" val="$2" esc
   if grep -qE "^$key=" "$CONF"; then
@@ -517,7 +521,7 @@ make_carry_snapshot() {  # SOURCE(native|docker) PARTS - sets SNAP_FILE/SNAP_PAR
     warn "python3 is not available - the $src data was not carried over (it is kept; carry it later with: isle-server snapshot)"
     return 0
   fi
-  out="/var/tmp/theisle-carry-$src-$(date +%Y%m%d-%H%M%S).tar.gz"; log="$(mktemp)"
+  out="/var/tmp/theisle-carry-${src}_$(stamp).tar.gz"; log="$(mktemp)"
   step "Taking a snapshot of the $src data to carry over ($parts)"
   if [[ "$src" == native ]]; then
     snap_tool "$SRC_DIR" --conf "$NATIVE_SCRIPTS_DIR/config/server.conf" --runtime native \
@@ -651,7 +655,7 @@ remove_native_data() {
   step "Removing native data: $(removal_list)"
   if (( RM_WORLDS && ! RM_BACKUPS && ! NO_FINAL_BACKUP )) && native_has_world; then
     mkdir -p "$bdir"
-    local f; f="$bdir/theisle-final-$(date +%Y%m%d-%H%M%S).tar.gz"
+    local f; f="$bdir/theisle-final_$(stamp "$NATIVE_SCRIPTS_DIR/config/server.conf").tar.gz"
     if tar -czf "$f" -C "$sdir/TheIsle" --exclude=Saved/Logs --exclude=Saved/Crashes Saved; then
       chown -R "$SVC_USER:" "$bdir" 2>/dev/null || true
       ok "Final backup of the world: $f"
@@ -689,7 +693,7 @@ remove_docker_data() {
       [[ -n "$img" ]] || die "No image available to edit volume $VOLUME - nothing was deleted"
       local cmd="set -e"
       if (( RM_WORLDS && ! RM_BACKUPS && ! NO_FINAL_BACKUP )) && volume_has_world; then
-        cmd+="; mkdir -p /data/backups; tar -czf /data/backups/theisle-final-\$(date +%Y%m%d-%H%M%S).tar.gz -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved"
+        cmd+="; mkdir -p /data/backups; tar -czf /data/backups/theisle-final_$(stamp "$DOCKER_SCRIPTS_DIR/config/server.conf").tar.gz -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved"
         ok "Taking a final backup of the world into /data/backups"
       fi
       if (( RM_GAME )); then
@@ -697,7 +701,7 @@ remove_docker_data() {
         cmd+="; [ -d /data/server/TheIsle ] && find /data/server/TheIsle -mindepth 1 -maxdepth 1 ! -name 'Saved*' -exec rm -rf {} + || true"
         cmd+="; rm -rf /data/steamcmd /data/home"
       fi
-      if (( RM_WORLDS )); then cmd+="; rm -rf /data/server/TheIsle/Saved /data/server/TheIsle/Saved.pre-restore-*"; fi
+      if (( RM_WORLDS )); then cmd+="; rm -rf /data/server/TheIsle/Saved /data/server/TheIsle/Saved.pre-restore[-_]*"; fi
       if (( RM_BACKUPS )); then cmd+="; rm -rf /data/backups"; fi
       if (( RM_SETTINGS )); then cmd+="; rm -rf /data/config"; fi
       if docker run --rm -v "$VOLUME:/data" --entrypoint sh "$img" -c "$cmd"; then

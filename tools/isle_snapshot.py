@@ -38,13 +38,14 @@ TOOLS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(TOOLS)
 sys.path.insert(0, TOOLS)
 import isle_rcon  # noqa: E402
+import isle_logs  # noqa: E402
 
 FORMAT = 1
 PARTS = ("worlds", "backups", "settings", "overrides", "plugins")
 DEFAULT_PARTS = ("worlds", "settings", "overrides", "plugins")
 # server.conf keys that describe the machine, not the server; not carried over by default
 MACHINE_KEYS = {"RUNTIME", "DOCKER_BUILD", "DOCKER_IMAGE", "PUID", "PGID", "STEAMCMD_DIR", "SERVER_DIR",
-                "BACKUP_DIR", "INI_OVERRIDES_DIR", "MULTIHOME_IP", "UI_HOST", "UI_PORT"}
+                "BACKUP_DIR", "INI_OVERRIDES_DIR", "MULTIHOME_IP", "UI_HOST", "UI_PORT", "LOG_DIR"}
 NOT_WORLD = {"Config", "Logs", "Crashes"}
 CONTAINER, VOLUME = "theisle", "theisle-data"
 PS_NAMES = {"status": "Status", "save": "Save", "stop": "Stop"}
@@ -66,8 +67,12 @@ def warn(msg):
     print("[WARN] " + msg, file=sys.stderr, flush=True)
 
 
+CONF_VALUES = {}
+
+
 def stamp():
-    return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    """yyyymmdd_hhmmss in TIMEZONE (local|utc) - the suffix of every dated file"""
+    return isle_logs.stamp(CONF_VALUES)
 
 
 def version():
@@ -94,6 +99,7 @@ class Env(object):
     def __init__(self, o):
         self.conf = os.path.abspath(o.conf) if o.conf else os.path.join(REPO, "config", "server.conf")
         self.values = isle_rcon.read_conf(self.conf) if os.path.isfile(self.conf) else {}
+        CONF_VALUES.clear(); CONF_VALUES.update(self.values)
         self.runtime = (o.runtime or self.values.get("RUNTIME") or "native").lower()
         self.launcher_path = o.launcher or ""
         home = os.path.expanduser("~")
@@ -257,9 +263,9 @@ def cmd_create(env, o):
         say("Server is running - asking it to save first")
         if env.launcher("save") not in (0, None):
             warn("save request failed - the snapshot may miss the last few minutes")
-    out = o.output or os.path.join(env.snap_dir, "theisle-snapshot-%s.tar.gz" % stamp())
+    out = o.output or os.path.join(env.snap_dir, "theisle-snapshot_%s.tar.gz" % stamp())
     if os.path.isdir(out):
-        out = os.path.join(out, "theisle-snapshot-%s.tar.gz" % stamp())
+        out = os.path.join(out, "theisle-snapshot_%s.tar.gz" % stamp())
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     stage = tempfile.mkdtemp(prefix="isle-snap-")
     try:
@@ -348,7 +354,7 @@ def merge_settings(env, src_conf, all_settings):
     incoming = read_raw_conf(src_conf)
     if not os.path.isfile(env.conf):
         raise SnapError("no server.conf at %s to merge into" % env.conf)
-    backup = "%s.bak-snapshot-%s" % (env.conf, stamp())
+    backup = "%s.bak-snapshot_%s" % (env.conf, stamp())
     shutil.copy2(env.conf, backup)
     with open(env.conf, "r", encoding="utf-8-sig") as handle:
         lines = handle.read().splitlines()
@@ -392,9 +398,9 @@ def restore_world(env, src, overwrite):
             warn("the Docker volume already has a world - kept it (use --overwrite to replace it)")
             return False
         env.in_volume("mkdir -p /data/server/TheIsle && cd /data/server/TheIsle && "
-                      "{ [ ! -d Saved ] || mv Saved Saved.pre-snapshot-%s; } && cp -a /in/Saved ." % ts,
+                      "{ [ ! -d Saved ] || mv Saved Saved.pre-snapshot_%s; } && cp -a /in/Saved ." % ts,
                       mounts=[(src, "/in", True)])
-        ok("World restored into Docker volume %s%s" % (VOLUME, " (previous world kept as Saved.pre-snapshot-%s)" % ts if has else ""))
+        ok("World restored into Docker volume %s%s" % (VOLUME, " (previous world kept as Saved.pre-snapshot_%s)" % ts if has else ""))
         return True
     isle = os.path.join(env.server_dir, "TheIsle")
     saved = os.path.join(isle, "Saved")
@@ -404,10 +410,10 @@ def restore_world(env, src, overwrite):
         return False
     os.makedirs(isle, exist_ok=True)
     if os.path.isdir(saved):
-        os.rename(saved, "%s.pre-snapshot-%s" % (saved, ts))
+        os.rename(saved, "%s.pre-snapshot_%s" % (saved, ts))
     shutil.copytree(os.path.join(src, "Saved"), saved)
     chown_tree(saved, env.owner)
-    ok("World restored into %s%s" % (saved, " (previous world kept as Saved.pre-snapshot-%s)" % ts if has else ""))
+    ok("World restored into %s%s" % (saved, " (previous world kept as Saved.pre-snapshot_%s)" % ts if has else ""))
     return True
 
 

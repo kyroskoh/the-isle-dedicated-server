@@ -32,7 +32,7 @@ echo "## profiles"
 ck "list shows all profiles"      "out profile list | grep -q realism && [ \$(out profile list | wc -l) -ge 7 ]"
 ck "show prints changes"          "out profile show realism | grep -q 'GROWTH_MULTIPLIER *1 -> 0.75'"
 ck "apply writes keys"            "out profile apply realism >/dev/null && [ \"\$(conf GROWTH_MULTIPLIER)\" = 0.75 ] && [ \"\$(conf GLOBAL_CHAT)\" = false ]"
-ck "apply keeps a backup"         "ls $ISLE_CONF.bak-* >/dev/null 2>&1"
+ck "apply keeps a backup"         "ls $ISLE_CONF.bak_* >/dev/null 2>&1"
 ck "unknown profile fails"        "! out profile apply nope >/dev/null"
 ck "one profile at a time"        "! out profile apply realism casual >/dev/null"
 

@@ -18,7 +18,9 @@
 #    restart      Stop + start
 #    status       Show whether the server is running
 #    run          Run in the foreground (used by systemd)
-#    logs [-f]    Show (or follow) the server log
+#    logs [-f] [game|server|launcher|ui|list]
+#                 Show (or follow) a log: the game's own log (default), the
+#                 rotated server console / launcher / web UI logs, or list them
 #    backup       Archive save data / config to BACKUP_DIR
 #    restore <f>  Restore a backup archive (server must be stopped)
 #    rcon <cmd>   Send an RCON command (see tools/isle_rcon.py)
@@ -46,6 +48,10 @@
 #    ISLE_NO_SYSTEMD=1  never delegate start/stop/status to systemd
 #    ISLE_SERVICE       systemd unit name (default: theisle-server)
 #    ISLE_RUNTIME       native | docker (overrides RUNTIME in server.conf)
+#    ISLE_LOG_DIR       log folder (overrides LOG_DIR in server.conf)
+#
+#  Logs: <LOG_DIR>/KIND_yyyymmdd_hhmmss.log (launcher, server, ui), rotated at
+#  LOG_MAX_SIZE_MB, LOG_RETENTION files kept per kind, in TIMEZONE (local|utc).
 # =============================================================================
 set -Eeuo pipefail
 
@@ -62,10 +68,62 @@ if [[ -t 1 ]]; then
 else
   C_RED=""; C_GRN=""; C_YLW=""; C_BLU=""; C_RST=""
 fi
-log()  { printf '%s[%s]%s %s\n' "$C_BLU" "$(date '+%F %T')" "$C_RST" "$*"; }
-ok()   { printf '%s[ OK ]%s %s\n' "$C_GRN" "$C_RST" "$*"; }
-warn() { printf '%s[WARN]%s %s\n' "$C_YLW" "$C_RST" "$*" >&2; }
-die()  { printf '%s[FAIL]%s %s\n' "$C_RED" "$C_RST" "$*" >&2; exit 1; }
+log()  { printf '%s[%s]%s %s\n' "$C_BLU" "$(date '+%F %T')" "$C_RST" "$*"; file_log INFO "$*"; }
+ok()   { printf '%s[ OK ]%s %s\n' "$C_GRN" "$C_RST" "$*"; file_log OK "$*"; }
+warn() { printf '%s[WARN]%s %s\n' "$C_YLW" "$C_RST" "$*" >&2; file_log WARN "$*"; }
+die()  { printf '%s[FAIL]%s %s\n' "$C_RED" "$C_RST" "$*" >&2; file_log FAIL "$*"; exit 1; }
+
+# ------------------------------------------------------------------- logs ---
+# Every log file is KIND_yyyymmdd_hhmmss.log in LOG_DIR (PRD LOG-01..04).
+LOG_TO_FILE=0; LAUNCHER_LOG=""; LOG_DIR=""
+LOG_NAME_RE='_[0-9]{8}_[0-9]{6}(_[0-9]+)?\.log$'
+stamp() { date +%Y%m%d_%H%M%S; }            # TZ=UTC0 is exported when TIMEZONE=utc
+file_log() {  # LEVEL MESSAGE... - append to the current launcher log (commands that change something)
+  (( LOG_TO_FILE )) || return 0
+  if [[ -z "$LAUNCHER_LOG" ]]; then LAUNCHER_LOG="$(log_file launcher)" || { LOG_TO_FILE=0; return 0; }; fi
+  printf '[%s] %-4s %s\n' "$(date '+%F %T %Z')" "$1" "${*:2}" >> "$LAUNCHER_LOG" 2>/dev/null || LOG_TO_FILE=0
+}
+log_files() {  # KIND - that kind's files, oldest first
+  [[ -d "$LOG_DIR" ]] || return 0
+  find "$LOG_DIR" -maxdepth 1 -type f -name "$1_*.log" -printf '%f\n' 2>/dev/null | grep -E "^$1$LOG_NAME_RE" | LC_ALL=C sort || true
+}
+prune_logs() {  # KIND - keep the newest LOG_RETENTION files (0 = keep all)
+  local keep f; keep="$(cfg LOG_RETENTION 14)"
+  [[ "$keep" =~ ^[0-9]+$ ]] && (( keep > 0 )) || return 0
+  log_files "$1" | head -n -"$keep" | while IFS= read -r f; do rm -f -- "$LOG_DIR/$f"; done
+}
+new_log_name() {  # KIND - a fresh KIND_<stamp>.log path; within one second, _N past the highest N
+  local st n=-1 f m; st="$(stamp)"
+  while IFS= read -r f; do
+    [[ "$f" == "$1_$st.log" ]] && (( n < 0 )) && n=0
+    if [[ "$f" =~ ^$1_${st}_([0-9]+)\.log$ ]]; then m="${BASH_REMATCH[1]}"; (( 10#$m > n )) && n=$((10#$m)); fi
+  done < <(log_files "$1")
+  if (( n < 0 )); then printf '%s' "$LOG_DIR/$1_$st.log"; else printf '%s' "$LOG_DIR/$1_${st}_$((n + 1)).log"; fi
+}
+log_file() {  # KIND - the file to append to: the newest one under LOG_MAX_SIZE_MB, else a new one
+  mkdir -p "$LOG_DIR" 2>/dev/null && [[ -w "$LOG_DIR" ]] || return 1
+  local max last f; max="$(cfg LOG_MAX_SIZE_MB 20)"; [[ "$max" =~ ^[0-9]+$ ]] || max=20
+  last="$(log_files "$1" | tail -n1)"
+  if [[ -n "$last" ]] && { (( max == 0 )) || (( $(wc -c < "$LOG_DIR/$last") < max * 1048576 )); }; then
+    printf '%s' "$LOG_DIR/$last"; return 0
+  fi
+  f="$(new_log_name "$1")"; : > "$f" || return 1
+  prune_logs "$1"
+  printf '%s' "$f"
+}
+log_writer() {  # KIND [--tee] - stdin -> rotating KIND logs (python3), else one plain file
+  if command -v python3 >/dev/null 2>&1; then
+    exec python3 "$REPO_DIR/tools/isle_logs.py" --conf "$ISLE_CONF" write "$@"
+  fi
+  local f; f="$(new_log_name "$1")"; prune_logs "$1"
+  if [[ "${2:-}" == --tee ]]; then exec tee -a "$f"; else exec cat >> "$f"; fi
+}
+prune_game_logs() {  # the game renames its log to TheIsle-backup-<date>.log on every start
+  local keep dir="$SERVER_DIR/TheIsle/Saved/Logs"; keep="$(cfg LOG_RETENTION 14)"
+  [[ -d "$dir" && "$keep" =~ ^[0-9]+$ ]] && (( keep > 0 )) || return 0
+  find "$dir" -maxdepth 1 -type f -name 'TheIsle-backup-*.log' -printf '%T@ %p\n' | sort -rn | tail -n +$((keep + 1)) \
+    | cut -d' ' -f2- | while IFS= read -r f; do rm -f -- "$f"; done
+}
 
 # ----------------------------------------------------------------- config ---
 # Parse KEY=VALUE without executing the file (no "source").
@@ -106,7 +164,7 @@ load_config() {
            "SERVER_NAME:The Isle Evrima Server" UPDATE_ON_START:true VALIDATE_ON_UPDATE:false \
            AUTO_RESTART:true MANAGE_INI_FILES:true SAVE_BEFORE_STOP:true RCON_ENABLED:true \
            QUEUE_ENABLED:true EXTRA_ARGS:-log RUNTIME:native DOCKER_BUILD:true \
-           DOCKER_IMAGE:theisle-server:latest; do
+           DOCKER_IMAGE:theisle-server:latest TIMEZONE:local LOG_RETENTION:14 LOG_MAX_SIZE_MB:20; do
     [[ -z "${CFG[${k%%:*}]:-}" ]] && CFG[${k%%:*}]="${k#*:}"
   done
   STEAMCMD_DIR="${CFG[STEAMCMD_DIR]}"
@@ -115,6 +173,9 @@ load_config() {
   INI_DIR="$SERVER_DIR/TheIsle/Saved/Config/LinuxServer"
   STATE_DIR="$SERVER_DIR/.isle-scripts"
   LOG_FILE="$SERVER_DIR/TheIsle/Saved/Logs/TheIsle.log"
+  LOG_DIR="${ISLE_LOG_DIR:-${CFG[LOG_DIR]:-$REPO_DIR/logs}}"
+  # TIMEZONE=utc: every timestamp and dated file name (and child tools) use UTC
+  case "${CFG[TIMEZONE],,}" in utc|gmt|z) export TZ=UTC0 ISLE_TIMEZONE=utc ;; *) export ISLE_TIMEZONE=local ;; esac
 }
 cfg()      { printf '%s' "${CFG[$1]:-${2:-}}"; }
 is_true()  { case "${1,,}" in true|yes|1|on) return 0 ;; *) return 1 ;; esac; }
@@ -156,6 +217,10 @@ check_config() {
     if ! [[ "$v" =~ ^[0-9]+$ ]] || (( 10#$v < 1 || 10#$v > 65535 )); then
       errors+=("$k='$v' is not a port number (1-65535)")
     fi
+  done
+  case "$(cfg TIMEZONE local)" in local|LOCAL|Local|utc|UTC|Utc) ;; *) errors+=("TIMEZONE='$(cfg TIMEZONE)' must be local or utc") ;; esac
+  for k in LOG_RETENTION LOG_MAX_SIZE_MB; do
+    v="$(cfg "$k")"; [[ "$v" =~ ^[0-9]+$ ]] || errors+=("$k='$v' must be a whole number (0 = no limit)")
   done
   v="$(cfg UI_PORT)"
   if [[ -n "$v" ]] && { ! [[ "$v" =~ ^[0-9]+$ ]] || (( 10#$v < 1 || 10#$v > 65535 )); }; then
@@ -431,6 +496,8 @@ prepare_launch() {
   configure
   link_steamclient >/dev/null 2>&1 || true
   mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
+  mkdir -p "$LOG_DIR" 2>/dev/null || warn "Cannot create the log folder $LOG_DIR"
+  prune_logs server; prune_logs launcher; prune_logs ui; prune_game_logs
   export LD_LIBRARY_PATH="$SERVER_DIR/TheIsle/Binaries/Linux:$SERVER_DIR/linux64:${LD_LIBRARY_PATH:-}"
   ulimit -n 100000 2>/dev/null || ulimit -n 65535 2>/dev/null || true
 }
@@ -457,6 +524,8 @@ cmd_run() {  # foreground; systemd ExecStart
   cd "$SERVER_DIR"
   # exec keeps this PID, so status/stop/healthchecks can find the server.
   echo $$ > "$STATE_DIR/server.pid"
+  # Console output goes to the journal / docker logs AND to rotating server_<stamp>.log files.
+  if mkdir -p "$LOG_DIR" 2>/dev/null && [[ -w "$LOG_DIR" ]]; then exec > >(log_writer server --tee) 2>&1; fi
   exec "$bin" "${args[@]}"
 }
 
@@ -471,8 +540,8 @@ cmd_watchdog() {  # background supervisor used by "start" without systemd
   trap 'touch "$STATE_DIR/stop.flag"; pid_alive "$(read_pid "$STATE_DIR/server.pid")" && kill -TERM "$(read_pid "$STATE_DIR/server.pid")"' INT TERM
   cd "$SERVER_DIR"
   while :; do
-    log "Launching: $bin ${args[*]}"
-    "$bin" "${args[@]}" &
+    log "Launching: $bin ${args[*]} (console: $LOG_DIR/server_*.log)"
+    "$bin" "${args[@]}" > >(log_writer server) 2>&1 &
     echo $! > "$STATE_DIR/server.pid"
     local rc=0; wait "$!" || rc=$?
     # wait returns early when a trapped signal arrives; wait for the real exit.
@@ -503,13 +572,14 @@ cmd_start() {
   check_config || die "Fix the configuration errors above, then try again"
   if service_installed; then sysctl_do start "$ISLE_SERVICE"; ok "Service $ISLE_SERVICE started"; return; fi
   if is_running; then warn "Server is already running"; return; fi
-  mkdir -p "$STATE_DIR"
-  local out="$STATE_DIR/console.log"
-  log "Starting server in the background (console output: $out)"
+  mkdir -p "$STATE_DIR" "$LOG_DIR"
+  # watchdog messages go to launcher_*.log, the game's console to server_*.log
+  local out; out="$(log_file launcher)" || out=/dev/null
+  log "Starting server in the background (logs: $LOG_DIR)"
   nohup "$SCRIPT_DIR/isle-server.sh" _watchdog >> "$out" 2>&1 < /dev/null &
   sleep 3
   if is_running; then ok "Server starting (watchdog PID $(read_pid "$STATE_DIR/watchdog.pid"))"
-  else die "Server failed to start - check $out"; fi
+  else die "Server failed to start - check $LOG_DIR"; fi
 }
 
 cmd_save() {
@@ -553,12 +623,26 @@ cmd_status() {
   else warn "Not running"; return 3; fi
 }
 
-cmd_logs() {
-  if [[ ! -f "$LOG_FILE" ]]; then
-    if service_installed; then exec journalctl -u "$ISLE_SERVICE" -n 200 "$@"; fi
-    die "No log file yet at $LOG_FILE"
+cmd_logs() {  # [-f] [game|server|launcher|ui|list]
+  local follow="" which="game" f
+  for f in "$@"; do case "$f" in -f|--follow) follow=1 ;; game|server|launcher|ui|list) which="$f" ;; *) die "Usage: $0 logs [-f] [game|server|launcher|ui|list]" ;; esac; done
+  if [[ "$which" == list ]]; then
+    [[ -d "$LOG_DIR" ]] || { warn "No logs yet in $LOG_DIR"; return 0; }
+    find "$LOG_DIR" -maxdepth 1 -type f -name '*.log' -printf '%f\t%s bytes\n' | grep -E "$LOG_NAME_RE|bytes" | LC_ALL=C sort -r; return 0
   fi
-  if [[ "${1:-}" == "-f" ]]; then exec tail -n 100 -F "$LOG_FILE"; else tail -n 200 "$LOG_FILE"; fi
+  if [[ "$which" == game ]]; then
+    f="$LOG_FILE"
+    if [[ ! -f "$f" ]]; then
+      f="$(log_files server | tail -n1)"; [[ -n "$f" ]] && f="$LOG_DIR/$f"
+    fi
+  else
+    f="$(log_files "$which" | tail -n1)"; [[ -n "$f" ]] && f="$LOG_DIR/$f"
+  fi
+  if [[ -z "$f" || ! -f "$f" ]]; then
+    if service_installed; then exec journalctl -u "$ISLE_SERVICE" -n 200 ${follow:+-f}; fi
+    die "No $which log yet (looked in $LOG_FILE and $LOG_DIR)"
+  fi
+  if [[ -n "$follow" ]]; then exec tail -n 100 -F "$f"; else tail -n 200 "$f"; fi
 }
 
 # ---------------------------------------------------------------- backups ---
@@ -567,7 +651,7 @@ cmd_backup() {
   [[ -d "$saved" ]] || die "Nothing to back up ($saved does not exist)"
   mkdir -p "$BACKUP_DIR"
   is_running && is_true "$(cfg SAVE_BEFORE_STOP)" && cmd_save
-  local file; file="$BACKUP_DIR/theisle-$(date +%Y%m%d-%H%M%S).tar.gz"
+  local file; file="$BACKUP_DIR/theisle-backup_$(stamp).tar.gz"
   log "Creating backup $file"
   tar -czf "$file" -C "$SERVER_DIR/TheIsle" --exclude='Saved/Logs' --exclude='Saved/Crashes' Saved \
     -C "$(dirname "$ISLE_CONF")" "$(basename "$ISLE_CONF")" 2>/dev/null \
@@ -619,10 +703,10 @@ cmd_restore() {
   file="$(ensure_targz "$file")"
   backup_has_saved "$file" || die "$file does not contain a Saved/ folder - not a server backup? Nothing was changed."
   local saved="$SERVER_DIR/TheIsle/Saved"
-  if [[ -d "$saved" ]]; then mv "$saved" "$saved.pre-restore-$(date +%Y%m%d-%H%M%S)"; fi
+  if [[ -d "$saved" ]]; then mv "$saved" "$saved.pre-restore_$(stamp)"; fi
   mkdir -p "$SERVER_DIR/TheIsle"
   tar -xzf "$file" -C "$SERVER_DIR/TheIsle" Saved
-  ok "Restored $file (previous data kept as Saved.pre-restore-*)"
+  ok "Restored $file (previous data kept as Saved.pre-restore_*)"
 }
 
 cmd_rcon() {
@@ -827,7 +911,7 @@ cmd_classes() {  # KEY SECTION RCON_CMD LABEL sub args...
 overlay_desc() { sed -n '1s/^# [A-Za-z]*: [^ ]* - //p' "$1"; }
 apply_overlay() {  # FILE... - write their KEY=VALUE lines into server.conf, validate, roll back on error
   local backup line key value file
-  backup="$ISLE_CONF.bak-$(date +%Y%m%d-%H%M%S)"
+  backup="$ISLE_CONF.bak_$(stamp)"
   cp -p "$ISLE_CONF" "$backup"
   for file in "$@"; do
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -970,7 +1054,12 @@ compose_env_file() {
       for k in $(printf '%s\n' "${!CFG[@]}" | sort); do
         v="${CFG[$k]}"; v="${v//\\/\\\\}"; v="${v//\"/\\\"}"; v="${v//\$/\$\$}"
         printf '%s="%s"\n' "$k" "$v"
-      done; } > "$f" )
+      done
+      # TIMEZONE=local: give the container this host's UTC offset as a POSIX TZ (no tzdata needed)
+      if [[ "${CFG[TIMEZONE],,}" != utc ]]; then
+        local z sign; z="$(date +%z)"; sign="-"; [[ "${z:0:1}" == "-" ]] && sign="+"
+        printf 'TZ="<%s>%s%s:%s"\n' "$z" "$sign" "${z:1:2}" "${z:3:2}"
+      fi; } > "$f" )
   printf '%s' "$f"
 }
 
@@ -1113,6 +1202,10 @@ main() {
     version|--version) printf 'isle-server.sh %s\n' "$SCRIPT_VERSION"; return 0 ;;
   esac
   load_config
+  case "$cmd" in
+    status|info|logs|check|version|help|ui|ui-token|_watchdog) ;;   # read-only (the watchdog's output is already a launcher log)
+    *) LOG_TO_FILE=1; file_log CMD "$cmd ${1:-}" ;;                 # only the first argument: values may be secrets
+  esac
   resolve_runtime
   case "$RUNTIME" in
     docker) docker_main "$cmd" "$@"; return ;;

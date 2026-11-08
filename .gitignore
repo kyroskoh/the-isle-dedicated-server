@@ -32,3 +32,8 @@ snapshots/
 config/ui-token
 config/*.bak-api
 config/*.tmp-api
+
+# log files (KIND_yyyymmdd_hhmmss.log)
+logs/
+config/*.bak_*
+config/*.bak-*

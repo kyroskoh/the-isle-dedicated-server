@@ -46,6 +46,7 @@ UI_DIR = os.path.join(REPO, "ui")
 sys.path.insert(0, TOOLS)
 import isle_rcon  # noqa: E402
 import isle_plugins  # noqa: E402
+import isle_logs  # noqa: E402
 
 API_VERSION = "1.0.0"
 MAX_BODY = 64 * 1024
@@ -53,7 +54,8 @@ MASK = "********"
 SECRET_KEYS = {"RCON_PASSWORD", "SERVER_PASSWORD", "EOS_CLIENT_SECRET", "STEAM_BRANCH_PASSWORD"}
 # never editable through the API: change these with the installer (machine / runtime / paths)
 LOCKED_KEYS = {"RUNTIME", "DOCKER_BUILD", "DOCKER_IMAGE", "PUID", "PGID", "STEAMCMD_DIR", "SERVER_DIR",
-               "BACKUP_DIR", "INI_OVERRIDES_DIR", "UI_HOST", "UI_PORT"}
+               "BACKUP_DIR", "INI_OVERRIDES_DIR", "UI_HOST", "UI_PORT", "LOG_DIR"}
+ACCESS_LOG = {"log": None, "lock": threading.Lock()}
 STEAMID_RE = re.compile(r"^7656119\d{10}$")
 CLASS_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -356,13 +358,17 @@ class Api(object):
 
     @route("GET", "/api/v1/status", "getStatus", "Server", "Is the game server running?",
            responses={"200": obj({"running": {"type": "boolean"}, "runtime": STR, "server_name": STR, "detail": STR,
-                                  "busy_job": {"type": ["string", "null"]}})})
+                                  "busy_job": {"type": ["string", "null"]}, "timezone": {"type": "string", "enum": ["local", "utc"]},
+                                  "utc_offset_minutes": {"type": "integer"}, "zone": STR})})
     def status(self, req):
         code, out = self.env.run("status", timeout=60)
         if code not in (0, 3):
             raise ApiError(502, "Status unavailable", out.strip()[-1000:])
-        return {"running": code == 0, "runtime": self.env.runtime(), "server_name": self.env.values().get("SERVER_NAME", ""),
-                "detail": out.strip()[-1000:], "busy_job": self.jobs.busy}
+        v = self.env.values()
+        return {"running": code == 0, "runtime": self.env.runtime(), "server_name": v.get("SERVER_NAME", ""),
+                "detail": out.strip()[-1000:], "busy_job": self.jobs.busy,
+                "timezone": "utc" if isle_logs.is_utc(v) else "local", "utc_offset_minutes": isle_logs.utc_offset_minutes(v),
+                "zone": isle_logs.zone_label(v)}
 
     @route("GET", "/api/v1/info", "getInfo", "Server", "Resolved paths, ports and runtime",
            responses={"200": {"type": "object", "additionalProperties": STR}})
@@ -405,6 +411,36 @@ class Api(object):
             raise ApiError(422, "Validation failed", "'lines' must be an integer")
         code, out = self.env.run("logs", timeout=60)
         return {"lines": out.splitlines()[-n:], "exit_code": code}
+
+    def _log_dir(self):
+        return isle_logs.log_dir(self.env.conf, self.env.values())
+
+    @route("GET", "/api/v1/log-files", "listLogFiles", "Server",
+           "This project's log files (launcher, server console, web UI), newest first",
+           responses={"200": {"type": "array", "items": obj({"name": STR, "kind": STR, "bytes": {"type": "integer"}, "modified": STR})}})
+    def log_files(self, req):
+        return isle_logs.listing(self._log_dir())
+
+    @route("GET", "/api/v1/log-files/{name}", "getLogFile", "Server", "Last lines of one log file",
+           params=[{"name": "name", "in": "path", "required": True, "schema": {"type": "string", "pattern": isle_logs.NAME_RE.pattern}},
+                   {"name": "lines", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 200}}],
+           responses={"200": obj({"name": STR, "lines": STR_LIST})})
+    def log_file(self, req, name):
+        if not isle_logs.NAME_RE.match(name):
+            raise ApiError(404, "Log file not found", name)
+        path = os.path.join(self._log_dir(), name)
+        if not os.path.isfile(path):
+            raise ApiError(404, "Log file not found", name)
+        try:
+            n = max(1, min(5000, int(req.query.get("lines", ["200"])[0])))
+        except ValueError:
+            raise ApiError(422, "Validation failed", "'lines' must be an integer")
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - 512 * 1024))
+            text = handle.read().decode("utf-8", "replace")
+        return {"name": name, "lines": text.splitlines()[-n:]}
 
     @route("POST", "/api/v1/rcon", "sendRcon", "Server", "Send an RCON command to the running server",
            body=obj({"command": {"type": "string", "enum": sorted(isle_rcon.COMMANDS)}, "args": STR_LIST}, ["command"]),
@@ -683,7 +719,7 @@ class Api(object):
         if not isinstance(parts, list) or any(p not in ("worlds", "backups", "settings", "overrides", "plugins") for p in parts):
             raise ApiError(422, "Validation failed", "include: worlds, backups, settings, overrides, plugins")
         os.makedirs(self.env.snap_dir, exist_ok=True)
-        out = os.path.join(self.env.snap_dir, "theisle-snapshot-%s.tar.gz" % datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+        out = os.path.join(self.env.snap_dir, "theisle-snapshot_%s.tar.gz" % isle_logs.stamp(self.env.values()))
         return self.jobs.start("snapshot-create", "snapshot", ["create", "--include", ",".join(parts), "--output", out])
 
     def _snap_path(self, name):
@@ -941,9 +977,16 @@ def make_handler(api, token, cors, tls, spec):
                 sys.stderr.write("[api] %s %s failed: %r\n" % (self.command, path, exc))
                 self._problem(ApiError(500, "Internal error", "see the server log (request %s)" % rid), rid, path)
             finally:
-                sys.stdout.write('%s %s "%s %s" %d %dms rid=%s\n' % (now_iso(), self.client_address[0], self.command,
-                                                                    path, status, (time.time() - start) * 1000, rid))
+                line = '%s %s "%s %s" %d %dms rid=%s\n' % (now_iso(), self.client_address[0], self.command,
+                                                           path, status, (time.time() - start) * 1000, rid)
+                sys.stdout.write(line)
                 sys.stdout.flush()
+                if ACCESS_LOG["log"]:
+                    with ACCESS_LOG["lock"]:
+                        try:
+                            ACCESS_LOG["log"].write(line)
+                        except OSError:
+                            ACCESS_LOG["log"] = None
 
         do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _dispatch
 
@@ -1002,6 +1045,10 @@ def main(argv=None):
     if not loopback and not tls:
         print("[WARN] Listening on %s without TLS - put it behind a TLS reverse proxy or use --cert/--key" % host, file=sys.stderr)
     api = Api(env)
+    try:  # access log in <LOG_DIR>/ui_<stamp>.log, rotated like the other logs
+        ACCESS_LOG["log"] = isle_logs.RotatingLog(isle_logs.log_dir(env.conf, values), "ui", values)
+    except OSError as exc:
+        print("[WARN] No access log file (%s) - logging to the console only" % exc, file=sys.stderr)
     httpd = Server((host, port), make_handler(api, token, o.cors, tls, build_spec()))
     if tls:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

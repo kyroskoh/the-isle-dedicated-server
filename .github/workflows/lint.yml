@@ -26,6 +26,8 @@ jobs:
         run: python3 -m unittest -v tests/test_snapshot.py
       - name: REST API tests (API-01..05)
         run: python3 -m unittest -v tests/test_api.py
+      - name: Logs, rotation and time zone (LOG-01..05)
+        run: python3 -m unittest -v tests/test_logs.py
       - name: Web UI via the real launcher (UI-04)
         run: |
           set -e
@@ -130,7 +132,7 @@ jobs:
       - name: Unit suites inside the Debian image (DEB-01)
         run: |
           docker run --rm -v "$PWD":/src:ro --entrypoint sh theisle-server:ci -c \
-            'cp -a /src /repo && cd /repo && ISLE_ALLOW_ROOT=1 bash tests/test_config_tools.sh && python3 -m unittest -v tests/test_plugins.py tests/test_snapshot.py tests/test_api.py'
+            'cp -a /src /repo && cd /repo && ISLE_ALLOW_ROOT=1 bash tests/test_config_tools.sh && python3 -m unittest -v tests/test_plugins.py tests/test_snapshot.py tests/test_api.py tests/test_logs.py'
       - name: End-to-end through the launcher with an RCON-speaking fake server
         run: ISLE_TEST_I_UNDERSTAND=1 IMAGE=theisle-server:ci bash tests/test_container_e2e.sh
       - name: Launcher in docker mode (LCH-01..08)
@@ -270,6 +272,11 @@ jobs:
         run: |
           python -m unittest -v tests\test_snapshot.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Logs, rotation and time zone (PowerShell 5.1)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests\test_logs.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: REST API tests (Windows Python)
         shell: powershell
         run: |
@@ -360,7 +367,7 @@ jobs:
           # Worlds with -Yes and backups kept: final backup first
           .\windows\Install.ps1 -Uninstall -Native -RemoveWorlds -Yes -InstallRoot $root
           if ($LASTEXITCODE -ne 0 -or (Test-Path "$root\server\TheIsle\Saved")) { Write-Host 'worlds not removed'; exit 1 }
-          if (-not (Get-ChildItem "$root\backups\theisle-final-*.tar.gz")) { Write-Host 'no final backup'; exit 1 }
+          if (-not (Get-ChildItem "$root\backups\theisle-final_*.tar.gz")) { Write-Host 'no final backup'; exit 1 }
           New-Item -ItemType Directory -Force -Path "$root\scripts\windows" | Out-Null
           Set-Content "$root\install-state.txt" "MODE=native`nSTATUS=uninstalled"
           # stdin redirected => non-interactive: purge must refuse without -Yes

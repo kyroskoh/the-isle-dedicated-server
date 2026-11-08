@@ -166,7 +166,7 @@ ck "refused, world kept"        "grep -q 'without confirmation' $LOGS/B.log && [
 echo "## C --remove-worlds --yes keeps backups and takes a final backup"
 run C --uninstall --native --remove-worlds --yes
 ck "native world removed"       "[ ! -e $NSAVED ]"
-ck "final backup has the world" "tar -tzf \"\$(ls -t /home/theisle/theisle-backups/theisle-final-*.tar.gz | head -1)\" | grep -q docker-world.txt"
+ck "final backup has the world" "tar -tzf \"\$(ls -t /home/theisle/theisle-backups/theisle-final_*.tar.gz | head -1)\" | grep -q docker-world.txt"
 ck "settings kept"              "[ -f $NC ]"
 run Cb --native --no-deps --start
 ck "reinstall imports retained volume world" "[ -f $NSAVED/SaveGames/docker-world.txt ] && waitfor nstat"
@@ -234,7 +234,7 @@ echo "## M3 --overwrite replaces an existing world (old one kept aside)"
 nat_put native-only.txt
 run M3 --native --no-deps --carry worlds --overwrite
 ck "world replaced"               "[ -f $NSAVED/SaveGames/move-world.txt ] && [ ! -f $NSAVED/SaveGames/native-only.txt ]"
-ck "old world kept aside"         "ls -d /home/theisle/theisle-server/TheIsle/Saved.pre-snapshot-*/SaveGames/native-only.txt >/dev/null 2>&1"
+ck "old world kept aside"         "ls -d /home/theisle/theisle-server/TheIsle/Saved.pre-snapshot_*/SaveGames/native-only.txt >/dev/null 2>&1"
 
 echo "## M4 migrate to a new machine: native snapshot -> purge -> docker --from-snapshot"
 sed -i 's/^SERVER_NAME=.*/SERVER_NAME="Migrated Server"/' "$NC"

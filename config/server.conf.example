@@ -151,6 +151,18 @@ BACKUP_RETENTION=10
 # Send "save" via RCON before stopping / backing up (needs RCON + python3).
 SAVE_BEFORE_STOP=true
 
+# ------------------------------------------------------------ Logs and time --
+# Clock for timestamps in logs and in dated file names: local or utc.
+# Every log file is KIND_yyyymmdd_hhmmss.log (launcher, server, ui); backups and
+# snapshots end with _yyyymmdd_hhmmss too (e.g. theisle-backup_20261108_143000.tar.gz).
+TIMEZONE=local
+# Folder for the log files (empty = <scripts>/logs; Docker: /data/logs).
+LOG_DIR=
+# Log files kept per kind - also applies to the game's TheIsle-backup-*.log (0 = keep all).
+LOG_RETENTION=14
+# Start a new log file once the current one is bigger than this, in MB (0 = no limit).
+LOG_MAX_SIZE_MB=20
+
 # ----------------------------------------------------------------- Web UI ----
 # Web UI + REST API ("isle-server ui", Windows: "IsleServer.ps1 UI"; see UI.md).
 # 127.0.0.1 = this machine only (recommended; reach it remotely through an SSH

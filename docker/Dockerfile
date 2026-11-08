@@ -37,6 +37,7 @@ RUN sed -i 's/\r$//' /opt/theisle-scripts/linux/*.sh /usr/local/bin/theisle-entr
 
 # Paths are written into /data/config/server.conf by the entrypoint (env overrides).
 ENV ISLE_CONF=/data/config/server.conf \
+    ISLE_LOG_DIR=/data/logs \
     ISLE_NO_SYSTEMD=1 \
     ISLE_RUNTIME=native \
     HOME=/data/home \

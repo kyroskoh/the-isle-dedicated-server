@@ -45,7 +45,7 @@ writeFileSync(conf, readFileSync(join(REPO, "config", "server.conf.example"), "u
 const port = await freePort();
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
   "--port", String(port), "--snapshot-dir", join(dir, "snapshots")],
-  { env: { ...process.env, ISLE_UI_TOKEN: TOKEN, FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.5" }, stdio: "ignore" });
+  { env: { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.5" }, stdio: "ignore" });
 const BASE = `http://127.0.0.1:${port}`;
 for (let i = 0; i < 100; i++) { try { if ((await fetch(BASE + "/api/v1/health")).ok) break; } catch { /* starting */ } await sleep(100); }
 

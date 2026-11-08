@@ -59,7 +59,7 @@ writeFileSync(join(srv, "TheIsle", "Saved", "Config", "LinuxServer", "Game.ini")
 const game = spawn(PY, [join(REPO, "tests", "fixtures", "fake-isle-server.py")], { cwd: srv, stdio: "ignore" });
 
 const port = await freePort();
-const env = { ...process.env, ISLE_UI_TOKEN: TOKEN, FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"),
+const env = { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"),
   FAKE_DELAY: "0.2", FAKE_LOG_FILE: join(dir, "server.log") };
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
   "--port", String(port), "--snapshot-dir", join(dir, "snapshots")], { env, stdio: "ignore" });

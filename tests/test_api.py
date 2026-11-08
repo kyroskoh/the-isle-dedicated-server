@@ -52,7 +52,11 @@ class ApiServer(object):
         self.log = os.path.join(self.dir, "launcher.log")
         self.snaps = os.path.join(self.dir, "snapshots")
         self.port = free_port()
-        env = dict(os.environ, ISLE_UI_TOKEN=TOKEN, FAKE_LAUNCHER_LOG=self.log, FAKE_STATE_DIR=self.dir,
+        self.logs = os.path.join(self.dir, "logs")
+        os.makedirs(self.logs)
+        with open(os.path.join(self.logs, "launcher_20261108_120000.log"), "w") as handle:
+            handle.write("".join("[2026-11-08 12:00:%02d UTC] INFO line %d\n" % (i % 60, i) for i in range(300)))
+        env = dict(os.environ, ISLE_UI_TOKEN=TOKEN, ISLE_LOG_DIR=self.logs, FAKE_LAUNCHER_LOG=self.log, FAKE_STATE_DIR=self.dir,
                    FAKE_DELAY="0.4", PYTHONUNBUFFERED="1")
         self.out = open(os.path.join(self.dir, "api.log"), "w")
         self.proc = subprocess.Popen([sys.executable, API, "--conf", self.conf, "--launcher", FAKE, "--port", str(self.port),
@@ -330,6 +334,33 @@ class ApiTest(unittest.TestCase):
         logs = self.s.call("GET", "/api/v1/logs?lines=5")[1]
         self.assertEqual(logs["lines"], ["log line %d" % i for i in range(295, 300)])
         self.assertEqual(self.s.call("GET", "/api/v1/logs?lines=many")[0], 422)
+
+    def test_status_reports_timezone(self):
+        body = self.s.call("GET", "/api/v1/status")[1]
+        self.assertIn(body["timezone"], ("local", "utc"))
+        self.assertIsInstance(body["utc_offset_minutes"], int)
+        self.assertTrue(body["zone"].startswith("UTC"))
+
+    def test_log_files(self):
+        code, items, _ = self.s.call("GET", "/api/v1/log-files")
+        self.assertEqual(code, 200)
+        names = [i["name"] for i in items]
+        self.assertIn("launcher_20261108_120000.log", names)
+        self.assertTrue(any(re.match(r"^ui_\d{8}_\d{6}(_\d+)?\.log$", n) for n in names), "the API writes its own access log")
+        body = self.s.call("GET", "/api/v1/log-files/launcher_20261108_120000.log?lines=3")[1]
+        self.assertEqual(body["lines"], ["[2026-11-08 12:00:%02d UTC] INFO line %d" % (i % 60, i) for i in (297, 298, 299)])
+        for bad in ("..%2fserver.conf", "launcher.log", "launcher_20261108_120000.txt", "nope_20990101_000000.log"):
+            self.assertEqual(self.s.call("GET", "/api/v1/log-files/" + bad)[0], 404, bad)
+        self.assertEqual(self.s.call("GET", "/api/v1/log-files/launcher_20261108_120000.log?lines=x")[0], 422)
+
+    def test_snapshot_name_has_stamp_suffix(self):
+        code, job, _ = self.s.call("POST", "/api/v1/snapshots", {"include": ["worlds"]})
+        self.assertEqual(code, 202)
+        self.s.wait_job(job["id"])
+        names = [x["name"] for x in self.s.call("GET", "/api/v1/snapshots")[1]]
+        self.assertTrue(any(re.match(r"^theisle-snapshot_\d{8}_\d{6}\.tar\.gz$", n) for n in names), names)
+        for n in names:
+            self.s.call("DELETE", "/api/v1/snapshots/" + n)
 
     def test_rcon_validation(self):
         self.assertEqual(self.s.call("POST", "/api/v1/rcon", {"command": "rm -rf"})[0], 422)

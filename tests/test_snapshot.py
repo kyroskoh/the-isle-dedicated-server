@@ -163,7 +163,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(self.b.conf_value("SERVER_DIR"), self.b.server, "machine keys stay")
         self.assertEqual(self.b.conf_value("MULTIHOME_IP"), "", "machine keys stay")
         self.assertEqual(self.b.conf_value("RCON_PASSWORD"), "pw-a", "server settings move")
-        self.assertTrue([n for n in os.listdir(os.path.dirname(self.b.conf)) if ".bak-snapshot-" in n])
+        self.assertTrue([n for n in os.listdir(os.path.dirname(self.b.conf)) if ".bak-snapshot_" in n])
         self.assertTrue(os.path.isfile(os.path.join(self.b.overrides, "Game.ini")))
         self.assertTrue(os.path.isfile(os.path.join(self.b.backups, "theisle-20260101-000000.tar.gz")))
         self.assertIn("discord-notify", open(os.path.join(os.path.dirname(self.b.conf), "plugins", "enabled.txt")).read())
@@ -185,7 +185,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(open(os.path.join(saved, "world.sav")).read(), "world-b")
         self.snap(self.b, self.lb, "restore", f, "--include", "worlds", "--overwrite")
         self.assertEqual(open(os.path.join(saved, "world.sav")).read(), "world-a")
-        kept = [n for n in os.listdir(os.path.join(self.b.server, "TheIsle")) if n.startswith("Saved.pre-snapshot-")]
+        kept = [n for n in os.listdir(os.path.join(self.b.server, "TheIsle")) if n.startswith("Saved.pre-snapshot_")]
         self.assertEqual(len(kept), 1)
 
     def test_restore_refused_while_running_unless_stop(self):
@@ -248,7 +248,7 @@ class SnapshotTests(unittest.TestCase):
     def test_info_and_list(self):
         self.snap(self.a, self.la, "create")
         _, out = self.snap(self.a, self.la, "list")
-        self.assertIn("theisle-snapshot-", out)
+        self.assertIn("theisle-snapshot_", out)
         f = self.create()
         _, out = self.snap(self.a, self.la, "info", f)
         self.assertIn('"server_name": "Server A"', out)

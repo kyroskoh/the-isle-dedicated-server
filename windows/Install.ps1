@@ -259,6 +259,10 @@ function Confirm-Purge {
 # ---------------------------------------------------------- config access --
 $script:cfgText = ''
 if (Test-Path $Conf) { $script:cfgText = [IO.File]::ReadAllText($Conf) }
+function Get-Stamp {  # yyyyMMdd_HHmmss in the install's TIMEZONE (local|utc), the suffix of dated files
+    if ((Get-Conf 'TIMEZONE' 'local').ToLowerInvariant() -eq 'utc') { return (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss') }
+    return (Get-Date).ToString('yyyyMMdd_HHmmss')
+}
 function Get-Conf([string]$k, [string]$d) {
     if ($script:cfgText -match "(?m)^$k=(.*)$") { $v = $Matches[1].Trim().Trim('"'); if ($v) { return $v } }
     return $d
@@ -362,7 +366,7 @@ function Remove-NativeData([hashtable]$rm) {
     $isle = Join-Path $sdir 'TheIsle'
     if ($rm.Worlds -and -not $rm.Backups -and -not $script:NoFinalBackup -and (Test-NativeWorld)) {
         New-Item -ItemType Directory -Force -Path $bdir | Out-Null
-        $f = Join-Path $bdir ('theisle-final-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz')
+        $f = Join-Path $bdir ('theisle-final_' + (Get-Stamp) + '.tar.gz')
         & tar -czf $f -C $isle --exclude=Saved/Logs --exclude=Saved/Crashes Saved
         if ($LASTEXITCODE -ne 0) { Fail 'Could not take a final backup - nothing was deleted' }
         Write-Ok "Final backup of the world: $f"
@@ -397,7 +401,7 @@ function Remove-DockerData([hashtable]$rm) {
             if (-not $img) { Fail "No image available to edit volume $Volume - nothing was deleted" }
             $cmd = 'set -e'
             if ($rm.Worlds -and -not $rm.Backups -and -not $script:NoFinalBackup -and (Test-VolumeWorld)) {
-                $cmd += '; mkdir -p /data/backups; tar -czf /data/backups/theisle-final-$(date +%Y%m%d-%H%M%S).tar.gz -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved'
+                $cmd += '; mkdir -p /data/backups; tar -czf /data/backups/theisle-final_' + (Get-Stamp) + '.tar.gz -C /data/server/TheIsle --exclude=Saved/Logs --exclude=Saved/Crashes Saved'
                 Write-Ok 'Taking a final backup of the world into /data/backups'
             }
             if ($rm.Game) {
@@ -405,7 +409,7 @@ function Remove-DockerData([hashtable]$rm) {
                 $cmd += "; [ -d /data/server/TheIsle ] && find /data/server/TheIsle -mindepth 1 -maxdepth 1 ! -name 'Saved*' -exec rm -rf {} + || true"
                 $cmd += '; rm -rf /data/steamcmd /data/home'
             }
-            if ($rm.Worlds) { $cmd += '; rm -rf /data/server/TheIsle/Saved /data/server/TheIsle/Saved.pre-restore-*' }
+            if ($rm.Worlds) { $cmd += '; rm -rf /data/server/TheIsle/Saved /data/server/TheIsle/Saved.pre-restore[-_]*' }
             if ($rm.Backups) { $cmd += '; rm -rf /data/backups' }
             if ($rm.Settings) { $cmd += '; rm -rf /data/config' }
             & docker run --rm -v "${Volume}:/data" --entrypoint sh $img -c $cmd
@@ -639,7 +643,7 @@ if ($parts -contains 'worlds') {
     }
 }
 if ($parts.Count) {
-    $out = Join-Path ([IO.Path]::GetTempPath()) ("theisle-carry-$sourceRuntime-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.tar.gz')
+    $out = Join-Path ([IO.Path]::GetTempPath()) ("theisle-carry-$sourceRuntime`_" + (Get-Stamp) + '.tar.gz')
     Write-Step ("Taking a snapshot of the $sourceRuntime data to carry over (" + ($parts -join ',') + ')')
     $r = Invoke-SnapshotTool $sourceRuntime @('create', '--include', ($parts -join ','), '--output', $out, '--no-save')
     if ($r.Code -eq 0) { $SnapFile = $out; $SnapParts = $parts; $SnapSource = $sourceRuntime }
