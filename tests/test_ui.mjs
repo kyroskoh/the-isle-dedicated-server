@@ -13,8 +13,14 @@ import { fileURLToPath } from "node:url";
 import net from "node:net";
 
 const require = createRequire(import.meta.url);
-let chromium;
-try { ({ chromium } = require("playwright")); } catch { ({ chromium } = await import("playwright")); }
+let pw;
+try { pw = require("playwright"); } catch { pw = await import("playwright"); }
+// BROWSER=chromium (default) | firefox | webkit - CI runs all three engines
+const ENGINE = process.env.BROWSER || "chromium";
+const chromium = pw[ENGINE];
+if (!chromium) throw new Error("unknown BROWSER " + ENGINE);
+const MOBILE = ENGINE !== "firefox";   // Firefox has no isMobile emulation (touch still works)
+console.log("## engine: " + ENGINE);
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const PY = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
@@ -34,6 +40,27 @@ async function waitUntil(page, fn, timeout = 10000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) { if (await page.evaluate(fn)) return true; await sleep(100); }
   throw new Error("timed out waiting for " + fn.toString().slice(0, 80));
+}
+
+// ------------------------------------------------- date formatting (unit)
+{
+  console.log("## date formatting");
+  const vm = await import("node:vm");
+  const store = {};
+  const sandbox = { window: {}, localStorage: { getItem: (k) => store[k] || null, setItem: (k, v) => { store[k] = String(v); } }, Date };
+  vm.runInNewContext(readFileSync(join(REPO, "ui", "datetime.js"), "utf8"), sandbox);
+  const T = sandbox.window.IsleTime;
+  const at = "2026-11-08T06:05:07Z";   // 14:05:07 at UTC+08:00
+  T.setServer(480, "UTC+08:00");
+  await ck("default format uses MMM", () => T.format(at) === "08 Nov 2026, 14:05:07");
+  await ck("UTC zone", () => T.format(at, "dd MMM yyyy HH:mm:ss ZZ", "utc") === "08 Nov 2026 06:05:07 UTC");
+  await ck("server zone", () => T.format(at, "yyyy-MM-dd HH:mm ZZ", "server") === "2026-11-08 14:05 UTC+08:00");
+  await ck("12-hour and weekday", () => T.format(at, "EEE, MMM d, yyyy h:mm:ss a", "server") === "Sun, Nov 8, 2026 2:05:07 PM");
+  await ck("full month, literals", () => T.format(at, "d MMMM yyyy 'at' HH'h'", "utc") === "8 November 2026 at 06h");
+  await ck("midnight is 12 AM", () => T.format("2026-01-01T00:00:00Z", "hh:mm a", "utc") === "12:00 AM");
+  await ck("negative offsets", () => { T.setServer(-300, null); const r = T.format(at, "HH:mm ZZ", "server"); T.setServer(480, "UTC+08:00"); return r === "01:05 UTC-05:00"; });
+  await ck("bad input does not throw", () => T.format("not a date") === "not a date" && T.format(null) === "–");
+  await ck("choice is remembered", () => { T.setFormat("yyyy-MM-dd"); T.setZone("utc"); return T.getFormat() === "yyyy-MM-dd" && T.getZone() === "utc"; });
 }
 
 // ------------------------------------------------------------- API server
@@ -149,12 +176,50 @@ try {
   await page.click(".card-head button:has-text('Save') >> nth=0");
   await ck("roster saved", async () => { await page.waitForSelector(".toast:has-text('Playable roster saved')"); return conf_("ALLOWED_CLASSES") === "Tyrannosaurus"; });
 
+  console.log("## date & time preferences");
+  await page.click('#nav a[href="#/"]');
+  await page.waitForSelector(".list time");
+  await ck("dates show with MMM by default", async () => /^\d{2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2}:\d{2}$/.test(await page.textContent(".list time")));
+  await ck("full timestamp peeks on hover", async () => { await page.hover(".list time"); await page.waitForSelector("#peek:not([hidden])");
+    return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/.test(await page.textContent("#peek")); });
+  await page.click("#datetime");
+  await page.waitForSelector("#modal[open] #date-format");
+  await page.check('input[name="tz"][value="utc"]');
+  await page.selectOption("#date-format", "yyyy-MM-dd HH:mm:ss");
+  await ck("live preview", async () => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(await page.textContent("output.preview")));
+  await shot(page, "05-date-time-dialog");
+  await page.click("#modal button:has-text('Save')");
+  await ck("UTC + ISO applied", async () => { await page.waitForSelector(".list time"); return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(await page.textContent(".list time")); });
+  await ck("UTC is really UTC", async () => { const iso = await page.getAttribute(".list time", "datetime"); return (await page.textContent(".list time")) === iso.replace("T", " ").replace("Z", ""); });
+  await page.click("#datetime");
+  await page.selectOption("#date-format", "custom");
+  await page.fill("#date-format-custom", "EEEE d MMMM 'at' HH:mm ZZ");
+  await ck("custom pattern preview", async () => / at \d{2}:\d{2} UTC$/.test(await page.textContent("output.preview")));
+  await page.click("#modal button:has-text('Save')");
+  await page.reload();
+  await ck("preferences survive a reload", async () => { await page.waitForSelector(".list time"); return / at \d{2}:\d{2} UTC$/.test(await page.textContent(".list time")); });
+  await page.evaluate(() => { localStorage.removeItem("isle-tz"); localStorage.removeItem("isle-datefmt"); });
+  await page.reload();
+  await page.waitForSelector(".list time");
+
   console.log("## responsive + docs");
-  const mobile = await newPage({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
+  const mobile = await newPage({ viewport: { width: 390, height: 844 }, colorScheme: "dark", hasTouch: true, isMobile: MOBILE });
   await mobile.page.goto(BASE + "/");
   await mobile.page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
   await mobile.page.reload();
   await ck("phone: no horizontal scroll", async () => { await mobile.page.waitForSelector("h1:text('Dashboard')"); return mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth); });
+  await mobile.page.goto(BASE + "/#/roster");
+  await mobile.page.waitForSelector(".chip");
+  await ck("phone: tap shows cut-off text (touch peek)", async () => {
+    const chip = mobile.page.locator(".chip", { hasText: "Pachycephalosaurus" }).first();
+    const cut = await chip.locator("span").first().evaluate((e) => e.scrollWidth > e.clientWidth);
+    if (!cut) return true;   // not truncated at this width: nothing to peek
+    await chip.tap();
+    await mobile.page.waitForSelector("#peek:not([hidden])", { timeout: 2000 });
+    return (await mobile.page.textContent("#peek")).includes("Pachycephalosaurus");
+  });
+  await mobile.page.goto(BASE + "/#/");
+  await mobile.page.waitForSelector("h1:text('Dashboard')");
   await mobile.page.click("#menu");
   await ck("phone: menu opens", async () => (await mobile.page.getAttribute("#menu", "aria-expanded")) === "true");
   await sleep(400);

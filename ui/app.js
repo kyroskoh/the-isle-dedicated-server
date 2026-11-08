@@ -58,10 +58,11 @@
     do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
     return n.toFixed(n < 10 ? 1 : 0) + " " + u[i];
   }
-  function fmtTime(iso) {
-    if (!iso) return "–";
-    var d = new Date(iso);
-    return isNaN(d) ? iso : d.toLocaleString();
+  function fmtTime(iso) { return window.IsleTime.format(iso); }
+  /* <time> in the chosen zone and format; the full timestamp with zone shows instantly on hover/focus/tap */
+  function timeEl(iso, cls) {
+    return h("time", { datetime: iso || "", class: cls || null, "data-peek": iso ? window.IsleTime.full(iso) : null, tabindex: iso ? "0" : null,
+      text: fmtTime(iso) });
   }
   var STEAMID = /^7656119\d{10}$/;
 
@@ -169,7 +170,7 @@
       pill.textContent = s.busy_job ? "Working…" : (s.running ? "Running" : "Stopped");
       if (s.busy_job) pill.className = "pill warn";
       $("#server-name").textContent = s.server_name || "The Isle";
-      $("#server-name").title = s.server_name || "";
+      window.IsleTime.setServer(s.utc_offset_minutes, s.zone);
       $("#runtime-badge").textContent = s.runtime === "docker" ? "Docker" : "Native";
       document.dispatchEvent(new CustomEvent("isle-status", { detail: s }));
     }, function (e) {
@@ -267,7 +268,7 @@
         var list = h("ul", { class: "list" });
         jobs.slice(0, 8).forEach(function (j) {
           var badge = h("span", { class: "badge " + (j.state === "succeeded" ? "green" : j.state === "running" ? "amber" : ""), text: j.state });
-          add(list, h("li", null, h("span", null, h("strong", { text: j.action }), " ", badge, h("br"), h("span", { class: "muted small", text: fmtTime(j.created) })),
+          add(list, h("li", null, h("span", null, h("strong", { text: j.action }), " ", badge, h("br"), timeEl(j.created, "muted small")),
             btn("Output", { kind: "sm", onclick: function () { modal(j.action + " - " + j.state, h("pre", { class: "output", text: j.output || "(no output)" })); } })));
         });
         jobsHolder.appendChild(list);
@@ -433,11 +434,11 @@
       };
       d.known.forEach(function (k) {
         var cb = h("input", { type: "checkbox", checked: chosen[k.name] });
-        cb.addEventListener("change", function () { chosen[k.name] = cb.checked; paint(); });
-        grid.appendChild(h("label", { class: "chip", title: k.name + (k.diet ? " (" + k.diet + ")" : "") }, cb, h("span", { text: k.name }),
+        cb.addEventListener("change", function () { chosen[k.name] = cb.checked; cb.parentNode.classList.toggle("checked", cb.checked); paint(); });
+        grid.appendChild(h("label", { class: "chip" + (chosen[k.name] ? " checked" : "") }, cb, h("span", { text: k.name }),
           k.diet ? h("span", { class: "badge diet " + (k.diet === "carnivore" ? "amber" : k.diet === "herbivore" ? "green" : ""), text: k.diet }) : null));
       });
-      var setAll = function (v) { grid.querySelectorAll("input").forEach(function (cb, i) { cb.checked = v; chosen[d.known[i].name] = v; }); paint(); };
+      var setAll = function (v) { grid.querySelectorAll("input").forEach(function (cb, i) { cb.checked = v; cb.parentNode.classList.toggle("checked", v); chosen[d.known[i].name] = v; }); paint(); };
       var saveBtn = btn("Save", { kind: "primary" });
       saveBtn.addEventListener("click", function () {
         var names = d.known.map(function (k) { return k.name; }).filter(function (n) { return chosen[n]; });
@@ -659,7 +660,7 @@
           });
           var src = s.source ? [s.source.os, s.source.runtime, s.source.host].filter(Boolean).join(" · ") : "–";
           tbody.appendChild(h("tr", null, h("td", { class: "data", "data-label": "Snapshot" }, h("code", { text: s.name }), h("br"), h("span", { class: "muted small", text: (s.server_name || "") })),
-            h("td", { "data-label": "Created", text: fmtTime(s.created) }), h("td", { "data-label": "From", text: src }),
+            h("td", { "data-label": "Created" }, timeEl(s.created)), h("td", { "data-label": "From", text: src }),
             h("td", { "data-label": "Parts", text: (s.parts || []).join(", ") }), h("td", { "data-label": "Size", text: fmtBytes(s.bytes) }),
             h("td", { class: "actions", "data-label": "Actions" }, restore, " ", del)));
         });
@@ -684,14 +685,22 @@
 
   function pageLogs(c) {
     var lines = h("select", { "aria-label": "Lines" }, [100, 200, 500, 1000, 2000].map(function (n) { return h("option", { value: n, text: n + " lines", selected: n === 200 }); }));
+    var source = h("select", { "aria-label": "Log", id: "log-source" }, h("option", { value: "", text: "Game log (TheIsle.log)" }));
     var auto = h("input", { type: "checkbox", role: "switch" });
     var refresh = btn("Refresh", { icon: "refresh" });
-    c.appendChild(pageHead("Logs", "The last lines of the server log.", [lines, h("label", { class: "switch" }, auto, h("span", { class: "track" }), h("span", { text: "Auto-refresh" })), refresh]));
+    c.appendChild(pageHead("Logs", "The game's log, or a rotated launcher / server console / web UI log (KIND_yyyymmdd_hhmmss.log).",
+      [source, lines, h("label", { class: "switch" }, auto, h("span", { class: "track" }), h("span", { text: "Auto-refresh" })), refresh]));
+    api("GET", "/log-files").then(function (files) {
+      files.forEach(function (f) {
+        source.appendChild(h("option", { value: f.name, text: f.name + " · " + fmtBytes(f.bytes) + " · " + fmtTime(f.modified) }));
+      });
+    }, function () { /* older API: game log only */ });
     var pre = h("pre", { class: "log", tabindex: "0", "aria-label": "Server log", text: "Loading…" });
     c.appendChild(h("section", { class: "card" }, pre));
     var timer = null;
     function load() {
-      return api("GET", "/logs?lines=" + lines.value).then(function (d) {
+      var url = source.value ? "/log-files/" + encodeURIComponent(source.value) + "?lines=" + lines.value : "/logs?lines=" + lines.value;
+      return api("GET", url).then(function (d) {
         var atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
         pre.textContent = d.lines.length ? d.lines.join("\n") : "(the log is empty)";
         if (atBottom || !timer) pre.scrollTop = pre.scrollHeight;
@@ -699,6 +708,7 @@
     }
     refresh.addEventListener("click", function () { busy(refresh, load()); });
     lines.addEventListener("change", load);
+    source.addEventListener("change", load);
     auto.addEventListener("change", function () {
       clearInterval(timer); timer = null;
       if (auto.checked) timer = setInterval(function () { if (!document.hidden) load(); }, 5000);
@@ -740,6 +750,47 @@
         log.textContent += "\n" + (r.reply || "(ok)");
       }, function (e) { log.textContent += "\n! " + e.message; }).finally(function () { log.scrollTop = log.scrollHeight; }));
     });
+  }
+
+  // ----------------------------------------------------------- date & time
+  function dateTimeDialog() {
+    var T = window.IsleTime;
+    var zone = T.getZone(), fmt = T.getFormat();
+    var preview = h("output", { class: "preview", "aria-live": "polite" });
+    var zones = h("fieldset", { class: "stack" }, h("legend", { text: "Time zone" }));
+    [["server", "Server time", T.zoneInfo("server").label], ["browser", "This browser", T.zoneInfo("browser").label.replace(" (this browser)", "")],
+      ["utc", "UTC", "UTC"]].forEach(function (z) {
+      var r = h("input", { type: "radio", name: "tz", value: z[0], checked: zone === z[0] });
+      r.addEventListener("change", function () { zone = z[0]; paint(); });
+      zones.appendChild(h("label", { class: "check" }, r, z[1], h("span", { class: "muted small", text: " · " + z[2] })));
+    });
+    var isPreset = T.PRESETS.some(function (p) { return p.id === fmt; });
+    var select = h("select", { id: "date-format", "aria-label": "Date format" },
+      T.PRESETS.map(function (p) { return h("option", { value: p.id, text: p.label, selected: p.id === fmt }); }),
+      h("option", { value: "custom", text: "Custom…", selected: !isPreset }));
+    var custom = h("input", { type: "text", id: "date-format-custom", value: fmt, spellcheck: "false", autocomplete: "off", "aria-describedby": "date-tokens" });
+    var customField = h("div", { class: "field" }, h("label", { for: "date-format-custom", text: "Custom pattern" }), custom,
+      h("span", { class: "hint", id: "date-tokens", text: "yyyy yy · MMMM MMM MM M · dd d · EEEE EEE · HH H hh h · mm ss · a (AM/PM) · ZZ (zone) · 'text'" }));
+    customField.hidden = isPreset;
+    function paint() {
+      fmt = select.value === "custom" ? (custom.value.trim() || T.DEFAULT_FMT) : select.value;
+      customField.hidden = select.value !== "custom";
+      preview.textContent = T.format(new Date(), fmt, zone);
+    }
+    select.addEventListener("change", function () { if (select.value === "custom") custom.value = fmt; paint(); });
+    custom.addEventListener("input", paint);
+    var save = btn("Save", { kind: "primary" });
+    var dlg = modal("Date & time", h("div", { class: "stack" }, zones,
+      h("div", { class: "field" }, h("label", { for: "date-format", text: "Date format" }), select), customField,
+      h("div", { class: "field" }, h("span", { class: "small", text: "Preview" }), preview),
+      h("p", { class: "muted small", text: "Saved in this browser. Log files and backup names use the server's TIMEZONE setting." }),
+      h("div", { class: "actions" }, btn("Cancel", { onclick: function () { dlg.close(); } }), save)));
+    save.addEventListener("click", function () {
+      T.setZone(zone); T.setFormat(fmt); dlg.close();
+      toast("Date & time saved", T.format(new Date(), fmt, zone));
+      navigate();
+    });
+    paint();
   }
 
   // ---------------------------------------------------------------- router
@@ -811,6 +862,7 @@
       });
     });
     $("#logout").addEventListener("click", function () { signOut(""); });
+    $("#datetime").addEventListener("click", dateTimeDialog);
     $("#menu").addEventListener("click", function () {
       var open = $("#app").classList.toggle("nav-open");
       $("#menu").setAttribute("aria-expanded", String(open));

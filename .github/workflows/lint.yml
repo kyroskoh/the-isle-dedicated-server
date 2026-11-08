@@ -378,24 +378,31 @@ jobs:
           exit 0
 
   web-ui:
+    # Chromium (Chrome/Edge/Opera), Firefox (Gecko) and WebKit (Safari) - desktop, tablet and phone shapes
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    env:
+      BROWSER: ${{ matrix.browser }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Install Playwright + Chromium
+      - name: Install Playwright + ${{ matrix.browser }}
         run: |
           npm install --no-save --no-package-lock playwright@1.48.2
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps ${{ matrix.browser }}
       - name: Web UI in a browser (UI-01..05)
         run: UI_SCREENSHOTS="$RUNNER_TEMP/ui-shots" node tests/test_ui.mjs
-      - name: Layout edge cases - long text at 320-1440 px (UI-02)
+      - name: Layout edge cases - long text, 320-1920 px, phones/tablets in both orientations (UI-02)
         run: node tests/test_ui_overflow.mjs
       - name: Screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ui-screenshots
+          name: ui-screenshots-${{ matrix.browser }}
           path: ${{ runner.temp }}/ui-shots
           if-no-files-found: ignore

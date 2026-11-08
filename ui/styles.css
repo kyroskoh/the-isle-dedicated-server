@@ -243,14 +243,27 @@ tbody tr:hover { background: var(--surface-2); }
 .table-wrap { overflow-x: auto; position: relative; }  /* relative: clips absolutely positioned (sr-only) cells too */
 td.actions { text-align: right; white-space: nowrap; }
 td.data { overflow-wrap: anywhere; min-width: 12rem; }  /* names and descriptions are data: wrap them, keep the columns visible */
-/* phones: each row becomes a labelled card instead of a table that scrolls sideways */
-@media (max-width: 600px) {
+/* narrow space: each row becomes a labelled card instead of a table that scrolls sideways.
+   The container query follows the card's own width (sidebar or not); the media query is the
+   fallback for browsers without container queries. */
+.card { container-type: inline-size; }
+@container (max-width: 660px) {
   .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; width: 100%; }
   .table-wrap thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .table-wrap tr { border-bottom: 1px solid var(--border); padding: .5rem 0; }
   .table-wrap td { border: 0; padding: .2rem 0; min-width: 0; }
   .table-wrap td[data-label]:not(.data)::before { content: attr(data-label); display: inline-block; min-width: 5.5rem; color: var(--muted); font-size: .8rem; }
   .table-wrap td.actions { text-align: left; white-space: normal; }
+}
+@supports not (container-type: inline-size) {
+  @media (max-width: 980px) {
+  .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; width: 100%; }
+    .table-wrap thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .table-wrap tr { border-bottom: 1px solid var(--border); padding: .5rem 0; }
+    .table-wrap td { border: 0; padding: .2rem 0; min-width: 0; }
+    .table-wrap td[data-label]:not(.data)::before { content: attr(data-label); display: inline-block; min-width: 5.5rem; color: var(--muted); font-size: .8rem; }
+    .table-wrap td.actions { text-align: left; white-space: normal; }
+  }
 }
 
 .list { list-style: none; margin: 0; padding: 0; }
@@ -265,7 +278,7 @@ td.data { overflow-wrap: anywhere; min-width: 12rem; }  /* names and description
 .chip > span:not(.badge) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip .badge { flex: none; }
 .chip:hover { border-color: var(--muted); }
-.chip:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+.chip:has(input:checked), .chip.checked { border-color: var(--primary); background: var(--primary-soft); }
 .chip .diet { margin-left: auto; }
 
 pre.output, pre.log {
@@ -341,7 +354,36 @@ dialog.wide { width: min(860px, calc(100vw - 2rem)); }
 .lock { color: var(--muted); }
 .tag-head { margin: 1.5rem 0 .6rem; }
 
+/* ------------------------------------------------------------ peek / time */
+.peek {
+  position: fixed; z-index: 200; max-width: min(420px, calc(100vw - 16px)); padding: .4rem .6rem; border-radius: var(--radius-sm);
+  background: var(--text); color: var(--surface); font-size: .85rem; line-height: 1.35; box-shadow: var(--shadow);
+  pointer-events: none; overflow-wrap: anywhere; white-space: normal;
+}
+time[data-peek] { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
+output.preview { display: block; font-family: var(--mono); padding: .45rem .6rem; background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+legend { font-weight: 600; font-size: .9rem; margin-bottom: .25rem; }
+
 /* --------------------------------------------------------------- responsive */
+/* mobile browsers: the dynamic viewport excludes the URL bar; safe areas keep content off notches */
+@supports (height: 100dvh) { .sidebar { height: 100dvh; } .login { min-height: 100dvh; } }
+.topbar { padding-left: max(1.5rem, env(safe-area-inset-left)); padding-right: max(1.5rem, env(safe-area-inset-right)); }
+.sidebar { padding-left: max(.75rem, env(safe-area-inset-left)); }
+.toasts { right: max(1rem, env(safe-area-inset-right)); bottom: max(1rem, env(safe-area-inset-bottom)); }
+/* touch screens: 44px targets */
+@media (pointer: coarse) {
+  .btn, .btn.sm { min-height: 44px; }
+  .nav a { min-height: 44px; }
+  .segmented label { width: 44px; height: 40px; }
+  input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; }
+}
+/* phones in landscape: short screens keep the sticky bars small */
+@media (max-height: 500px) and (orientation: landscape) {
+  .topbar { position: static; }
+  .sticky-bar { position: static; }
+  .content { padding-top: .75rem; }
+}
 @media (max-width: 860px) {
   .app { grid-template-columns: minmax(0, 1fr); }
   .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 260px; z-index: 30; transform: translateX(-100%); transition: transform .2s; }

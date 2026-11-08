@@ -17,8 +17,14 @@ import { fileURLToPath } from "node:url";
 import net from "node:net";
 
 const require = createRequire(import.meta.url);
-let chromium;
-try { ({ chromium } = require("playwright")); } catch { ({ chromium } = await import("playwright")); }
+let pw;
+try { pw = require("playwright"); } catch { pw = await import("playwright"); }
+// BROWSER=chromium (default) | firefox | webkit - CI runs all three engines
+const ENGINE = process.env.BROWSER || "chromium";
+const chromium = pw[ENGINE];
+if (!chromium) throw new Error("unknown BROWSER " + ENGINE);
+const MOBILE = ENGINE !== "firefox";   // Firefox has no isMobile emulation (touch still works)
+console.log("## engine: " + ENGINE);
 
 const SRC = dirname(dirname(fileURLToPath(import.meta.url)));
 const PY = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
@@ -94,7 +100,7 @@ function audit() {
     if (el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1 && !["auto", "scroll"].includes(cs.overflowX)) {
       if (cs.overflowX === "visible") out.add(`${desc(el)}: content overflows (${el.scrollWidth} > ${el.clientWidth})`);
       else if (cs.textOverflow !== "ellipsis") out.add(`${desc(el)}: clipped without an ellipsis`);
-      else if (!el.closest("[title]")) out.add(`${desc(el)}: truncated without a title tooltip`);
+      else if (!el.closest("[title], [data-peek]") && !(window.IslePeek && window.IslePeek.isTruncated(el))) out.add(`${desc(el)}: truncated text has no peek / tooltip`);
     }
   }
   // tables must fit: on wide screens the columns wrap their data, on phones rows stack
@@ -164,6 +170,25 @@ try {
         await settle(page);
         if (route === "settings") await page.evaluate(() => { const d = document.querySelector("details.settings-group"); if (d) d.open = true; });
         report(`${scheme} ${route || "dashboard"} @${width}`, await page.evaluate(audit));
+        if (route === "roster" && scheme === "light") {
+          // instant peek: the cut-off class name shows in full at once, inside the viewport
+          const chip = page.locator(".chip", { hasText: "Supercalifragilistic" }).first();
+          const t0 = Date.now();
+          await chip.hover();
+          await page.waitForSelector("#peek:not([hidden])", { timeout: 2000 });
+          const ms = Date.now() - t0;
+          const peek = await page.evaluate(() => { const r = document.querySelector("#peek").getBoundingClientRect();
+            return { text: document.querySelector("#peek").textContent, left: r.left, right: r.right, top: r.top, bottom: r.bottom, vw: innerWidth, vh: innerHeight }; });
+          const okPeek = peek.text.includes("SupercalifragilisticexpialidociousosaurusRex") && peek.left >= 0 && peek.right <= peek.vw && peek.top >= 0 && peek.bottom <= peek.vh && ms < 1000;
+          report(`peek on hover @${width} (${ms} ms)`, okPeek ? [] : [JSON.stringify(peek)]);
+          await page.mouse.move(1, 1);
+          const hidden = await page.evaluate(() => document.querySelector("#peek").hidden);
+          report(`peek hides on leave @${width}`, hidden ? [] : ["peek still visible"]);
+          await chip.locator("input").focus();
+          const focused = await page.evaluate(() => !document.querySelector("#peek").hidden && document.querySelector("#peek").textContent);
+          report(`peek on keyboard focus @${width}`, focused && focused.includes("Supercalifragilistic") ? [] : ["no peek on focus: " + focused]);
+          await page.keyboard.press("Escape");
+        }
         if (process.env.OVERFLOW_SHOTS && scheme === "light" && (width === 1280 || width === 320)) {
           mkdirSync(process.env.OVERFLOW_SHOTS, { recursive: true });
           await page.screenshot({ path: join(process.env.OVERFLOW_SHOTS, `${route || "dashboard"}-${width}.png`), fullPage: true });
@@ -194,6 +219,38 @@ try {
       }
       await ctx.close();
     }
+  }
+  // real device shapes: phones and tablets in both orientations, touch, mobile viewport
+  const DEVICES = [
+    ["phone 320x568 portrait", 320, 568], ["phone 568x320 landscape", 568, 320],
+    ["phone 390x844 portrait", 390, 844], ["phone 844x390 landscape", 844, 390],
+    ["phone 412x915 portrait", 412, 915], ["phone 915x412 landscape", 915, 412],
+    ["tablet 768x1024 portrait", 768, 1024], ["tablet 1024x768 landscape", 1024, 768],
+    ["tablet 820x1180 portrait", 820, 1180], ["tablet 1180x820 landscape", 1180, 820],
+    ["desktop 1920x1080", 1920, 1080]
+  ];
+  for (const [label, w, hgt] of DEVICES) {
+    const touch = w < 1300;
+    const ctx = await browser.newContext({ viewport: { width: w, height: hgt }, hasTouch: touch, isMobile: touch && MOBILE, reducedMotion: "reduce" });
+    const page = await ctx.newPage();
+    await page.goto(BASE + "/");
+    await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
+    await page.reload();
+    for (const route of ROUTES) {
+      await page.evaluate((r) => { location.hash = "#/" + r; }, route);
+      await page.waitForSelector("#content h1");
+      await settle(page);
+      report(`${label} ${route || "dashboard"}`, await page.evaluate(audit));
+    }
+    if (touch) {   // menu, dialogs and the date & time dialog on touch devices
+      await page.evaluate(() => { location.hash = "#/"; });
+      await page.waitForSelector(".list strong"); await settle(page);
+      if (await page.isVisible("#menu")) { await page.click("#menu"); await sleep(250); report(`${label} menu open`, await page.evaluate(audit)); await page.keyboard.press("Escape"); }
+      await page.evaluate(() => document.querySelector("#datetime").click());
+      await page.waitForSelector("#modal[open]");
+      report(`${label} date & time dialog`, await page.evaluate(audit));
+    }
+    await ctx.close();
   }
   for (const width of [1280, 390]) {
     const ctx = await browser.newContext({ viewport: { width, height: 900 } });
