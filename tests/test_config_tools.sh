@@ -11,7 +11,12 @@ set -u   # no pipefail: grep -q closing a pipe early is fine here
 
 SRC="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 T="$(mktemp -d)"
-trap 'rm -rf -- "$T"' EXIT
+# fake Steam for the name lookups (tests/fixtures/fake-steam.py)
+exec {STEAM_FD}< <(exec python3 "$SRC/tests/fixtures/fake-steam.py" 0)
+STEAM_PID=$!
+read -r _ STEAM_PORT <&"$STEAM_FD"
+export ISLE_STEAM_COMMUNITY_URL="http://127.0.0.1:$STEAM_PORT" ISLE_STEAM_API_URL="http://127.0.0.1:$STEAM_PORT"
+trap 'rm -rf -- "$T"; kill "$STEAM_PID" 2>/dev/null || true' EXIT
 mkdir -p "$T/repo"
 (cd "$SRC" && tar --exclude=.git --exclude='config/server.conf' -cf - .) | (cd "$T/repo" && tar -xf -)
 R="$T/repo"
@@ -49,10 +54,19 @@ ck "add two admins"               "out admins add $A1 $A2 >/dev/null && [ \"\$(c
 ck "duplicates are ignored"       "out admins add $A1 >/dev/null && [ \"\$(conf ADMIN_STEAM_IDS)\" = $A1,$A2 ]"
 ck "invalid SteamID refused"      "! out admins add 12345 >/dev/null && [ \"\$(conf ADMIN_STEAM_IDS)\" = $A1,$A2 ]"
 ck "remove one"                   "out admins remove $A1 >/dev/null && [ \"\$(conf ADMIN_STEAM_IDS)\" = $A2 ]"
-ck "list"                         "out admins list | grep -qx $A2"
+ck "list"                         "out admins list | grep -q '^$A2  '"
+
+echo "## Steam names (PLY-01..03)"
+ck "admins add shows the Steam name" "out admins add 76561198000000042 | grep -q '76561198000000042  NewAdmin'"
+ck "admins list shows names"      "out admins list | grep -q '^$A2  Ptera <Pal> & Co'"
+ck "unknown profile marked"       "out steam names 76561198000000099 | grep -q '(name unknown)'"
+ck "steam names checks ids"       "! out steam names 123 >/dev/null"
+ck "names are cached"             "[ -f $T/.steam-names.json ] && ISLE_STEAM_COMMUNITY_URL=http://127.0.0.1:9 out admins list | grep -q 'Ptera <Pal>'"
+ck "lookups can be turned off"    "sed -i 's/^STEAM_NAME_LOOKUP=.*/STEAM_NAME_LOOKUP=false/' $ISLE_CONF && out steam names --refresh 76561198000000003 | grep -q '(name unknown)'"
+sed -i 's/^STEAM_NAME_LOOKUP=.*/STEAM_NAME_LOOKUP=true/' "$ISLE_CONF"; out admins remove 76561198000000042 >/dev/null
 
 echo "## whitelist"
-ck "add + list"                   "out whitelist add $A1 >/dev/null && out whitelist list | grep -qx $A1"
+ck "add + list"                   "out whitelist add $A1 >/dev/null && out whitelist list | grep -q '^$A1  RexHunter'"
 ck "on"                           "out whitelist on >/dev/null && [ \"\$(conf WHITELIST_ENABLED)\" = true ]"
 ck "off"                          "out whitelist off >/dev/null && [ \"\$(conf WHITELIST_ENABLED)\" = false ]"
 ck "not running: no live RCON"    "out whitelist add $A2 | grep -q 'applies on the next start'"

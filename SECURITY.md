@@ -29,6 +29,10 @@ Please open a private security advisory on GitHub
     - set cookies or allow other origins (no CORS unless `--cors ORIGIN`)
   - **Headers:** pages are sent with a strict Content-Security-Policy (`'self'` only, no inline scripts),
     `X-Frame-Options: DENY`, `nosniff` and `no-referrer`.
+- **Steam name lookups** (`STEAM_NAME_LOOKUP=true`, the default) make the server, never the browser, fetch
+  public profile pages from `steamcommunity.com` for the SteamID64s you list (or call `api.steampowered.com`
+  when `STEAM_WEB_API_KEY` is set). Only SteamID64s are sent. `STEAM_WEB_API_KEY` is masked in the web UI like a
+  password; keep it out of shared snapshots. Set `STEAM_NAME_LOOKUP=false` to make no requests at all.
 - The sudoers rule the Linux installer adds lets the service user run only
   `systemctl start|stop|restart|status theisle-server`. Skip it with `--no-sudoers`.
 

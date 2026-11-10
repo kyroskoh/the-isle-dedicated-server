@@ -388,17 +388,28 @@
         clear(list);
         if (!d.ids.length) { list.appendChild(h("p", { class: "empty", text: "No one yet." })); return; }
         var ul = h("ul", { class: "list" });
+        var known = {};
+        (d.players || []).forEach(function (p) { known[p.steam_id] = p.name; });
+        var nameEls = {};
         d.ids.forEach(function (id) {
           var rm = btn("Remove", { kind: "sm", aria: "Remove " + id });
+          var nameEl = h("strong", { class: "steam-name" });
+          nameEls[id] = nameEl;
+          showName(nameEl, known[id], known[id] ? "done" : "pending");
           rm.addEventListener("click", function () {
-            confirmDialog({ title: "Remove " + id + "?", text: "From " + title.toLowerCase() + ".", ok: "Remove", danger: true }).then(function (yes) {
-              if (yes) busy(rm, api("DELETE", path + "/" + id).then(function () { toast("Removed " + id); load(); }, fail));
+            var who = known[id] ? known[id] + " (" + id + ")" : id;
+            confirmDialog({ title: "Remove " + who + "?", text: "From " + title.toLowerCase() + ".", ok: "Remove", danger: true }).then(function (yes) {
+              if (yes) busy(rm, api("DELETE", path + "/" + id).then(function () { toast("Removed " + who); load(); }, fail));
             });
           });
-          add(ul, h("li", null, h("code", { text: id }), h("span", { class: "row" },
+          add(ul, h("li", null, h("span", { class: "who" }, nameEl, h("code", { class: "small", text: id })), h("span", { class: "row" },
             h("a", { href: "https://steamcommunity.com/profiles/" + id, target: "_blank", rel: "noopener noreferrer", class: "small", text: "Profile" }), rm)));
         });
         list.appendChild(ul);
+        var missing = d.ids.filter(function (id) { return !known[id]; });
+        if (missing.length) steamNames(missing).then(function (r) {
+          r.players.forEach(function (p) { if (nameEls[p.steam_id]) { known[p.steam_id] = p.name; showName(nameEls[p.steam_id], p.name, r.lookup ? "done" : "off"); } });
+        }, function () { missing.forEach(function (id) { showName(nameEls[id], null, "error"); }); });
       }, function (e) { clear(list).appendChild(errorCard(e, load)); });
     }
     form.addEventListener("submit", function (ev) {
@@ -407,10 +418,26 @@
       var bad = ids.filter(function (i) { return !STEAMID.test(i); });
       if (!ids.length || bad.length) { input.setAttribute("aria-invalid", "true"); toast("Not a SteamID64", (bad[0] || "") + " - 17 digits starting with 7656119", "error"); input.focus(); return; }
       input.removeAttribute("aria-invalid");
-      busy(addBtn, api("POST", path, { ids: ids }).then(function () { input.value = ""; toast("Added " + ids.join(", ")); load(); }, fail));
+      busy(addBtn, api("POST", path, { ids: ids }).then(function () {
+        input.value = "";
+        load();
+        return steamNames(ids).then(function (r) {
+          var named = r.players.map(function (p) { return p.name ? p.name + " (" + p.steam_id + ")" : p.steam_id; });
+          toast("Added " + named.join(", "), r.players.some(function (p) { return !p.name; }) ? "Steam did not return a name (private profile, or lookups are off)." : "");
+        }, function () { toast("Added " + ids.join(", ")); });
+      }, fail));
     });
     load();
     return card;
+  }
+
+  /* Steam names: the API looks them up on Steam (cached on the server); the browser never calls Steam itself */
+  function steamNames(ids) { return api("GET", "/steam/names?ids=" + encodeURIComponent(ids.join(","))); }
+  function showName(el, name, stateName) {
+    el.classList.toggle("muted", !name);
+    el.textContent = name || { pending: "Looking up Steam name…", off: "Name lookups off", error: "Name unavailable", done: "Name unknown" }[stateName];
+    if (name) el.setAttribute("data-peek", name); else el.removeAttribute("data-peek");
+    el.title = name ? "" : (stateName === "done" ? "Private profile, or no Steam account with this ID" : stateName === "off" ? "STEAM_NAME_LOOKUP=false in Settings" : "");
   }
 
   function pagePlayers(c) {

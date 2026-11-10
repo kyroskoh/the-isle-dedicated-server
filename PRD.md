@@ -339,6 +339,9 @@ Priority: **M** = must, **S** = should, **C** = could.
 | ADM-01 | M | **Live admin commands** | `admin players\|player\|dm\|kick\|ban\|announce\|save\|wipecorpses\|details\|queue\|playables\|pause\|migrations\|humans\|chat\|ai-learning\|netupdate\|growth\|custom` on both OSes |
 | ADM-02 | M | **Admin API/UI** | `POST /api/v1/admin/{action}` validates SteamID64, text (one line, ≤500) and on/off/number values; UI Admin page |
 | ADM-03 | M | **Honest limits** | CLI, API and UI state that RCON cannot change size, skin, mutations, god mode, teleport or heal |
+| PLY-01 | M | **Steam names** | `tools/isle_steam.py` resolves SteamID64s (public profile XML, or the Web API with `STEAM_WEB_API_KEY`, 100 per call); cached in `config/.steam-names.json` (mode 600, `STEAM_NAME_CACHE_DAYS`); network errors keep the last name; never fails a command; `STEAM_NAME_LOOKUP=false` makes no requests |
+| PLY-02 | M | **Names in the CLI** | `admins list`, `whitelist list` (`--refresh`) and `add` show "SteamID64  name" on both OSes; `steam names <id...>` |
+| PLY-03 | M | **Names in the API/UI** | `GET /api/v1/admins` and `/whitelist` include cached names; `GET /api/v1/steam/names?ids=` looks up the rest (≤100, validated); the Players page fills names in, the add toast names the player; names are text only; the browser never calls Steam |
 | CRD-01 | S | **Author credit and project link** | README header and every doc footer, UI sidebar/login/API docs, CLI `version`/`help`/`info`, installers, OpenAPI `contact`/`externalDocs`, image labels |
 
 ## 7. CLI contract
@@ -446,7 +449,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M12 Config tools & plugins (v1.7.0) | CFX-01 – CFX-09, PLG-01 – PLG-07 | ✅ Done (v1.7.0). Linux + PowerShell 7 verified locally, Windows PowerShell 5.1 by CI. Live RCON pushes and real Discord/NAS targets need a live server (M6) |
 | M13 Snapshots & mode-switch data choices (v1.8.0) | MIG-01 – MIG-08 | ✅ Done (v1.8.0). Linux cycle (92 checks), snapshot tests, PowerShell 7 suites locally; Windows PowerShell 5.1 and Windows Docker Desktop paths via CI/field test (M6) |
 | M16 Maps, AI options & community sources (v1.11.0) | MAP-01 – MAP-03, AIX-01 – AIX-03, PLG-08 – PLG-09 | ✅ Done (v1.11.0). Config tool suites (bash, PowerShell), API and UI tests; Isla Spiro branch needs a field check (M6) |
-| M17 Roster types, mutations, scheduled 3-2-1 backups & admin (v1.12.0) | ROS-05 – ROS-07, MUT-01 – MUT-03, BAK-06 – BAK-09, ADM-01 – ADM-03, CRD-01 | ✅ Done (v1.12.0). Config tool suites (bash, PowerShell), API, UI and layout tests; live RCON admin commands need a field check (M6) |
+| M17 Roster types, mutations, scheduled 3-2-1 backups & admin (v1.12.0) | ROS-05 – ROS-07, MUT-01 – MUT-03, BAK-06 – BAK-09, ADM-01 – ADM-03, PLY-01 – PLY-03, CRD-01 | ✅ Done (v1.12.0). Config tool suites (bash, PowerShell), API, UI and layout tests; Steam lookups tested against a fake Steam server; live RCON admin commands and real Steam lookups need a field check (M6) |
 | M15 Logs, time zone, date display, peek & responsive (v1.10.0) | LOG-01 – LOG-05, UI-06 – UI-08 | ✅ Done (v1.10.0). `tests/test_logs.py`, `tests/test_logs.ps1`, UI suites on Chromium/Firefox/WebKit in CI |
 | M14 API, web UI & Debian verification (v1.9.0) | API-01 – API-05, UI-01 – UI-05, DEB-01 | ✅ Done (v1.9.0). API and UI suites on Linux and in the Debian image, Playwright UI test in CI, native Debian install job. Systemd `theisle-ui` unit and the Windows `TheIsleServer-UI` task need a field test (M6) |
 

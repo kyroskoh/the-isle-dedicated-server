@@ -70,6 +70,13 @@ ADMIN_STEAM_IDS=
 # Whitelist (only listed SteamID64s can join).
 WHITELIST_ENABLED=false
 WHITELIST_IDS=
+# Show Steam names next to SteamID64s (CLI lists, web UI). Names are looked up on Steam's public profiles
+# and cached. false = no lookups (cached names still show).
+STEAM_NAME_LOOKUP=true
+# Optional Steam Web API key: one batched lookup per 100 players (see CONFIGURATION.md). Kept secret.
+STEAM_WEB_API_KEY=
+# Days a Steam name stays cached (config/.steam-names.json).
+STEAM_NAME_CACHE_DAYS=7
 
 # ---------------------------------------------------------------- Queue ------
 QUEUE_ENABLED=true

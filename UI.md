@@ -58,7 +58,7 @@ plain text.
 |---|---|
 | Dashboard | State, Start/Stop/Restart/Save/Backup, Update/Verify game files, server details, recent jobs with their output |
 | Settings | Every `server.conf` key, grouped and searchable. Secrets are masked. Changes are checked with `check` and rolled back if invalid. Machine-specific keys (paths, runtime, UI address) are read-only here |
-| Players | Admins and whitelist (add, remove, on/off) |
+| Players | Admins and whitelist (add, remove, on/off), each with the player's Steam name (looked up by the server and cached) |
 | Roster | Playable classes as tick boxes (with types), roster presets, a type filter (incl. human and egg) with Only / Add / Remove, and the humans switch |
 | Map & AI | Switch maps (with their Steam branch), AI spawning, density (live), spawn interval, AI presets, disabled AI classes with their roles, mutations |
 | Profiles & presets | Apply a profile, or several presets in order |
@@ -106,7 +106,9 @@ Changed fields are highlighted until you save. Machine-specific keys sit read-on
 |---|---|
 | ![Settings with an unsaved change](docs/images/ui/settings.png) | ![Settings, dark theme](docs/images/ui/settings-dark.png) |
 
-**Players.** Admins and the whitelist, with SteamID64 validation in the browser and links to Steam profiles.
+**Players.** Admins and the whitelist, with SteamID64 validation in the browser, each player's Steam name (shown
+as soon as you add them) and links to Steam profiles. The server looks names up and caches them; the browser never
+contacts Steam. See [Steam names](CONFIGURATION.md#steam-names-for-steamid64s).
 
 ![Players page](docs/images/ui/players.png)
 

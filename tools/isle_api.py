@@ -48,11 +48,12 @@ import isle_rcon  # noqa: E402
 import isle_plugins  # noqa: E402
 import isle_logs  # noqa: E402
 import isle_cron  # noqa: E402
+import isle_steam  # noqa: E402
 
 API_VERSION = "1.1.0"
 MAX_BODY = 64 * 1024
 MASK = "********"
-SECRET_KEYS = {"RCON_PASSWORD", "SERVER_PASSWORD", "EOS_CLIENT_SECRET", "STEAM_BRANCH_PASSWORD"}
+SECRET_KEYS = {"RCON_PASSWORD", "SERVER_PASSWORD", "EOS_CLIENT_SECRET", "STEAM_BRANCH_PASSWORD", "STEAM_WEB_API_KEY"}
 # never editable through the API: change these with the installer (machine / runtime / paths)
 LOCKED_KEYS = {"RUNTIME", "DOCKER_BUILD", "DOCKER_IMAGE", "PUID", "PGID", "STEAMCMD_DIR", "SERVER_DIR",
                "BACKUP_DIR", "INI_OVERRIDES_DIR", "UI_HOST", "UI_PORT", "LOG_DIR",
@@ -359,6 +360,8 @@ def obj(props, required=None):
 
 STR = {"type": "string"}
 STR_LIST = {"type": "array", "items": STR}
+PLAYERS = {"type": "array", "items": {"type": "object", "properties": {"steam_id": {"type": "string"}, "name": {"type": ["string", "null"]},
+                                                                      "profile": {"type": "string"}}}}
 IDS_BODY = obj({"ids": {"type": "array", "items": {"type": "string", "pattern": STEAMID_RE.pattern}, "minItems": 1, "maxItems": 100}}, ["ids"])
 CLASSES_BODY = obj({"classes": {"type": "array", "items": {"type": "string", "pattern": CLASS_RE.pattern}, "maxItems": 100}}, ["classes"])
 JOB = {"$ref": "#/components/schemas/Job"}
@@ -573,9 +576,30 @@ class Api(object):
         return result(*self.env.run("check", timeout=60))
 
     # --------------------------------------------------------------- players
-    @route("GET", "/api/v1/admins", "listAdmins", "Players", "Admin SteamID64s", responses={"200": obj({"ids": STR_LIST})})
+    @route("GET", "/api/v1/admins", "listAdmins", "Players", "Admin SteamID64s", responses={"200": obj({"ids": STR_LIST, "players": PLAYERS})})
     def admins_list(self, req):
-        return {"ids": list_value(self.env.values(), "ADMIN_STEAM_IDS")}
+        ids = list_value(self.env.values(), "ADMIN_STEAM_IDS")
+        return {"ids": ids, "players": self._players(ids)}
+
+    def _players(self, ids, network=False, refresh=False):
+        """Steam names for ids: from the cache only (fast, for lists) unless network=True"""
+        res = isle_steam.Resolver(self.env.conf, self.env.values()).resolve(ids, refresh=refresh, cached_only=not network)
+        return [{"steam_id": sid, "name": res.get(sid, {}).get("name"), "profile": isle_steam.profile_url(sid)} for sid in ids]
+
+    @route("GET", "/api/v1/steam/names", "resolveSteamNames", "Players",
+           "Steam names for up to 100 SteamID64s (looked up on Steam, cached; STEAM_NAME_LOOKUP, STEAM_WEB_API_KEY)",
+           params=[{"name": "ids", "in": "query", "required": True, "schema": STR, "description": "comma-separated SteamID64s"},
+                   {"name": "refresh", "in": "query", "required": False, "schema": {"type": "boolean"}}],
+           responses={"200": obj({"lookup": {"type": "boolean"}, "players": PLAYERS})})
+    def steam_names(self, req):
+        ids = [i.strip() for i in ",".join(req.query.get("ids") or []).split(",") if i.strip()]
+        if not ids or len(ids) > 100:
+            raise ApiError(422, "Validation failed", "ids: 1 to 100 comma-separated SteamID64s")
+        check_ids(ids)
+        refresh = (req.query.get("refresh") or [""])[0].lower() in ("1", "true", "yes")
+        resolver = isle_steam.Resolver(self.env.conf, self.env.values())
+        res = resolver.resolve(ids, refresh=refresh)
+        return {"lookup": resolver.enabled, "players": [{"steam_id": sid, "name": res[sid]["name"], "profile": res[sid]["profile"]} for sid in ids]}
 
     @route("POST", "/api/v1/admins", "addAdmins", "Players", "Add admins (applied on restart)", body=IDS_BODY,
            responses={"200": OUTPUT})
@@ -591,11 +615,12 @@ class Api(object):
         return ensure_ok(*self.env.run("admins", ["remove", steam_id]))
 
     @route("GET", "/api/v1/whitelist", "getWhitelist", "Players", "Whitelist state and SteamID64s",
-           responses={"200": obj({"enabled": {"type": "boolean"}, "ids": STR_LIST})})
+           responses={"200": obj({"enabled": {"type": "boolean"}, "ids": STR_LIST, "players": PLAYERS})})
     def whitelist_get(self, req):
         v = self.env.values()
+        ids = list_value(v, "WHITELIST_IDS")
         return {"enabled": v.get("WHITELIST_ENABLED", "false").lower() in ("true", "yes", "1", "on"),
-                "ids": list_value(v, "WHITELIST_IDS")}
+                "ids": ids, "players": self._players(ids)}
 
     @route("POST", "/api/v1/whitelist", "addWhitelist", "Players", "Whitelist players (live via RCON when running)",
            body=IDS_BODY, responses={"200": OUTPUT})

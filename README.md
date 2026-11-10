@@ -39,6 +39,7 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
   archived Isla Spiro build). `isle-server ai density|interval|on|off|preset` tunes AI creatures, and the web UI has a
   **Map & AI** page for both.
 - **Admin, whitelist and roster commands** (`admins`, `whitelist`, `classes`, `ai-classes`) with SteamID and class validation. Whitelist and roster changes apply live over RCON.
+  Admins and whitelisted players show their **Steam name** next to the SteamID64 (CLI and UI; cached, optional Web API key).
 - **Roster by type.** `classes types`, `classes select carnivore`, `add-type flying`, `remove-type aquatic`, and
   `classes humans on|off` (humans are a switch, not a class; eggs and hatchlings have no server setting). The UI filters
   the roster by type, including human and egg.

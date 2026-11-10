@@ -72,9 +72,12 @@ const conf = join(dir, "config", "server.conf");
 writeFileSync(conf, readFileSync(join(REPO, "config", "server.conf.example"), "utf8")
   .replace(/^RCON_PASSWORD=.*$/m, "RCON_PASSWORD=secret-pw").replace(/^SERVER_NAME=.*$/m, 'SERVER_NAME="Jungle Test"'));
 const port = await freePort();
+// fake Steam (tests/fixtures/fake-steam.py): Steam names for SteamID64s without touching the internet
+const steamProc = spawn(PY, [join(REPO, "tests", "fixtures", "fake-steam.py"), "0"], { stdio: ["ignore", "pipe", "ignore"] });
+const steamUrl = await new Promise((res) => steamProc.stdout.once("data", (b) => res("http://127.0.0.1:" + String(b).trim().split(/\s+/)[1])));
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
   "--port", String(port), "--snapshot-dir", join(dir, "snapshots")],
-  { env: { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.5" }, stdio: ["ignore", "pipe", "pipe"] });
+  { env: { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.5" }, stdio: ["ignore", "pipe", "pipe"] });
 const apiLog = [];
 for (const stream of [api.stdout, api.stderr]) stream.on("data", (b) => { apiLog.push(String(b)); if (apiLog.length > 400) apiLog.shift(); });
 process.on("uncaughtException", (e) => { console.log("API log (last lines):\n" + apiLog.join("").split("\n").slice(-30).join("\n")); throw e; });
@@ -189,6 +192,14 @@ try {
   await page.fill('input[aria-label="SteamID64 to add"] >> nth=0', "76561198000000042");
   await page.click("form.input-group button >> nth=0");
   await ck("admin added", async () => { await page.waitForSelector("code:text('76561198000000042')"); return conf_("ADMIN_STEAM_IDS") === "76561198000000042"; });
+  await ck("Steam name resolved after adding", async () => { await page.waitForSelector(".toast:has-text('Added NewAdmin (76561198000000042)')");
+    await page.waitForSelector(".steam-name:text('NewAdmin')"); return true; });
+  await page.fill('input[aria-label="SteamID64 to add"] >> nth=1', "76561198000000002");
+  await page.click("form.input-group button >> nth=1");
+  await ck("names are text, never markup", async () => { await page.waitForSelector(".steam-name:has-text('Ptera <Pal> & Co')");
+    return page.evaluate(() => [...document.querySelectorAll(".steam-name")].every((e) => e.children.length === 0)); });
+  await ck("unknown profile says so", async () => { await page.fill('input[aria-label="SteamID64 to add"] >> nth=1', "76561198000000099");
+    await page.click("form.input-group button >> nth=1"); await page.waitForSelector(".steam-name:text('Name unknown')"); return true; });
 
   await page.click('#nav a[href="#/roster"]');
   await page.waitForSelector(".chip");
@@ -350,7 +361,7 @@ try {
   await ctx.close();
 } finally {
   await browser.close();
-  api.kill();
+  api.kill(); steamProc.kill();
   try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows lock */ }
 }
 if (SHOTS && existsSync(SHOTS)) console.log("screenshots: " + SHOTS);

@@ -464,3 +464,4 @@ input.num { width: 5.5rem; flex: none; min-width: 0; }
 .admin-grid { grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr)); align-items: start; }
 .admin-grid .input-group input { min-width: 0; flex: 1 1 8rem; }
 .checks .pill { min-width: 3.75rem; justify-content: center; }
+.steam-name.muted { font-weight: 400; font-style: italic; }

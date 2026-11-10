@@ -9,7 +9,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [1.12.0] - 2026-11-10
 
 Planned in [PRD.md](PRD.md) as milestone M17 (ROS-05 to ROS-07, MUT-01 to MUT-03, BAK-06 to BAK-09, ADM-01 to ADM-03,
-CRD-01).
+PLY-01 to PLY-03, CRD-01).
 
 ### Added
 - **Roster by type:** classes carry types (carnivore, herbivore, omnivore, flying, aquatic).
@@ -31,6 +31,14 @@ CRD-01).
   details, custom), `POST /api/v1/admin/{action}` and a new **Admin** page. More RCON opcodes in `tools/isle_rcon.py`.
   The CLI, API and UI explain that RCON cannot change a player's size, skin or mutations, or give god mode, teleport
   or heal.
+- **Steam names for SteamID64s:** admin and whitelist lists show each player's Steam name, and adding a player
+  prints (CLI) or toasts (UI) who it is.
+  - `tools/isle_steam.py` looks names up from public profiles, or with the Steam Web API when `STEAM_WEB_API_KEY`
+    is set, and caches them in `config/.steam-names.json` (`STEAM_NAME_CACHE_DAYS`, default 7).
+  - `STEAM_NAME_LOOKUP=false` turns lookups off. A lookup never fails a command.
+  - CLI: `admins|whitelist list [--refresh]`, `steam names <id...>` (Windows: `Steam names`).
+  - API: names in `GET /api/v1/admins` and `/whitelist`, plus `GET /api/v1/steam/names?ids=`. The server does the
+    lookup, so the browser never contacts Steam.
 - **Credits and project link:** "Made with ❤️ by Kyros Koh" with links to the author and to the repository in the
   README (new header with badges and a Support section), every doc, the web UI (sidebar, sign-in page, API docs), the
   CLI (`version`, `help`, `info`), the installers' summaries, the OpenAPI document and the Docker image labels.

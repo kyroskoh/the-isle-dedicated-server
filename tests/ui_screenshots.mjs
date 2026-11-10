@@ -70,7 +70,10 @@ writeFileSync(join(srv, "TheIsle", "Saved", "Config", "LinuxServer", "Game.ini")
 const game = spawn(PY, [join(REPO, "tests", "fixtures", "fake-isle-server.py")], { cwd: srv, stdio: "ignore" });
 
 const port = await freePort();
-const env = { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"),
+// fake Steam (tests/fixtures/fake-steam.py): Steam names for SteamID64s without touching the internet
+const steamProc = spawn(PY, [join(REPO, "tests", "fixtures", "fake-steam.py"), "0"], { stdio: ["ignore", "pipe", "ignore"] });
+const steamUrl = await new Promise((res) => steamProc.stdout.once("data", (b) => res("http://127.0.0.1:" + String(b).trim().split(/\s+/)[1])));
+const env = { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"),
   FAKE_DELAY: "0.2", FAKE_LOG_FILE: join(dir, "server.log") };
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
   "--port", String(port), "--snapshot-dir", join(dir, "snapshots")], { env, stdio: "ignore" });
@@ -236,7 +239,7 @@ try {
   }
 } finally {
   await browser.close();
-  api.kill(); game.kill();
+  api.kill(); game.kill(); steamProc.kill();
   try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows lock */ }
 }
 

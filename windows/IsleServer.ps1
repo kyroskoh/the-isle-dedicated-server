@@ -35,6 +35,8 @@
     RemoveService  Remove that scheduled task
     Admins         list|add|remove <SteamID64...>             (e.g. Admins add 7656119...)
     Whitelist      list|add|remove <SteamID64...>|on|off      (live via RCON when running)
+                   lists and adds show Steam names (cached; list --refresh looks again)
+    Steam          names [--refresh] <SteamID64...>           (resolve SteamID64s to Steam names)
     Classes        list|known|set|add|remove <Class...>|reset|preset [roster]
                    types | select|add-type|remove-type <type...> | humans [on|off]
     Mutations      list | enable <Name> [value] | disable <Name...> | reset
@@ -84,7 +86,7 @@ param(
     [ValidateSet('Install', 'Update', 'Validate', 'Check', 'Configure', 'Start', 'Stop', 'Restart', 'Status', 'Run',
                  'Logs', 'Backup', 'Restore', 'Rcon', 'Save', 'Firewall', 'RemoveFirewall',
                  'InstallService', 'RemoveService', 'Info', 'Version', 'Help',
-                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot', 'UI', 'UiToken', 'AI', 'Maps', 'Mutations', 'Admin')]
+                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot', 'UI', 'UiToken', 'AI', 'Maps', 'Mutations', 'Admin', 'Steam')]
     [string]$Command = 'Help',
 
     [string]$ConfigPath,
@@ -306,7 +308,7 @@ function Test-ServerConfig {
         'RCON_ENABLED', 'GLOBAL_CHAT', 'ENABLE_HUMANS', 'DYNAMIC_WEATHER', 'ENABLE_MUTATIONS', 'ENABLE_DIETS',
         'ENABLE_PATROL_ZONES', 'ALLOW_RECORDING_REPLAY', 'SPAWN_PLANTS', 'SPAWN_AI', 'ENABLE_MIGRATION',
         'ENABLE_MASS_MIGRATION', 'MANAGE_INI_FILES', 'AUTO_RESTART', 'SAVE_BEFORE_STOP', 'DOCKER_BUILD',
-        'REGION_SPAWNING', 'REGION_SPAWN_COOLDOWN'
+        'REGION_SPAWNING', 'REGION_SPAWN_COOLDOWN', 'STEAM_NAME_LOOKUP'
     foreach ($k in $boolKeys) {
         $v = C $k
         if ($v -and (@('true', 'false', 'yes', 'no', '1', '0', 'on', 'off') -notcontains $v.ToLowerInvariant())) { $errors.Add("$k='$v' must be true or false") }
@@ -315,7 +317,7 @@ function Test-ServerConfig {
         $v = C $k
         if ($v -and $v -notmatch '^\d+(\.\d+)?$') { $errors.Add("$k='$v' must be a number") }
     }
-    foreach ($k in 'MAX_MIGRATION_TIME', 'MASS_MIGRATION_TIME', 'MASS_MIGRATION_DISABLE_TIME', 'STOP_TIMEOUT', 'BACKUP_RETENTION', 'REGION_SPAWN_COOLDOWN_SECONDS', 'NET_TICK_RATE', 'AI_SPAWN_INTERVAL') {
+    foreach ($k in 'MAX_MIGRATION_TIME', 'MASS_MIGRATION_TIME', 'MASS_MIGRATION_DISABLE_TIME', 'STOP_TIMEOUT', 'BACKUP_RETENTION', 'REGION_SPAWN_COOLDOWN_SECONDS', 'NET_TICK_RATE', 'AI_SPAWN_INTERVAL', 'STEAM_NAME_CACHE_DAYS') {
         $v = C $k
         if ($v -and $v -notmatch '^\d+$') { $errors.Add("$k='$v' must be a whole number") }
     }
@@ -1421,6 +1423,34 @@ function Send-LiveRcon([string[]]$rconArgs) {
     }
     if ($rc -eq 0) { Write-Ok "Applied live via RCON ($($rconArgs[0]))" } else { Write-Warn 'Live RCON update failed - the change applies on the next restart' }
 }
+# SteamID64 -> Steam name via tools/isle_steam.py (cached; STEAM_NAME_LOOKUP, STEAM_WEB_API_KEY). Never throws.
+function Get-SteamNames([string[]]$ids, [switch]$Refresh) {
+    $names = @{}
+    if (-not $ids -or $ids.Count -eq 0) { return $names }
+    $py = Get-Python
+    if (-not $py) { return $names }
+    $a = @(); if ($py[1]) { $a += $py[1] }
+    $a += @((Join-Path $RepoDir 'tools\isle_steam.py'), '--conf', $ConfigPath, 'names', '--json')
+    if ($Refresh) { $a += '--refresh' }
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $out = (& $py[0] @($a + $ids) 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -eq 0 -and $out) {
+            $obj = $out | ConvertFrom-Json
+            foreach ($p in $obj.PSObject.Properties) { if ($p.Value.name) { $names[$p.Name] = [string]$p.Value.name } }
+        }
+    } catch { Write-Verbose "Steam name lookup failed: $_" } finally { $ErrorActionPreference = $prev }
+    return $names
+}
+function Show-SteamIds([string[]]$ids, [string]$empty, [string]$indent = '', [switch]$Refresh) {
+    $ids = @($ids | Where-Object { $_ })
+    if ($ids.Count -eq 0) { Write-Host $empty; return }
+    $names = Get-SteamNames $ids -Refresh:$Refresh
+    foreach ($id in $ids) {
+        $n = '(name unknown)'; if ($names.ContainsKey($id)) { $n = $names[$id] }
+        Write-Host "$indent$id  $n"
+    }
+}
 function Show-List([string]$key, [string]$empty) {
     $v = @(Get-ListValues $key)
     if ($v.Count -eq 0) { Write-Host $empty } else { $v | ForEach-Object { Write-Host $_ } }
@@ -1431,12 +1461,13 @@ function Invoke-ListCommand([string]$kind) {
     switch ($kind) {
         'Admins' {
             switch ($sub) {
-                'list' { Show-List 'ADMIN_STEAM_IDS' '(no admins)' }
+                'list' { Show-SteamIds @(Get-ListValues 'ADMIN_STEAM_IDS') '(no admins)' -Refresh:($rest -contains '--refresh') }
                 { $_ -in 'add', 'remove' } {
                     if ($rest.Count -eq 0) { throw "Usage: IsleServer.ps1 Admins $sub <SteamID64> [...]" }
                     Assert-SteamIds $rest
                     $v = @(Edit-List 'ADMIN_STEAM_IDS' $sub $rest)
                     Write-Ok "Admins: $($v.Count) - restart the server to apply (the game reads admins at start)"
+                    if ($sub -eq 'add') { Show-SteamIds $rest '' '  ' }
                 }
                 default { throw 'Usage: IsleServer.ps1 Admins list|add|remove <SteamID64> [...]' }
             }
@@ -1445,13 +1476,14 @@ function Invoke-ListCommand([string]$kind) {
             switch ($sub) {
                 'list' {
                     $state = 'OFF'; if (Test-True (C 'WHITELIST_ENABLED' 'false')) { $state = 'ON' }
-                    Write-Host "Whitelist is $state"; Show-List 'WHITELIST_IDS' '(no whitelisted players)'
+                    Write-Host "Whitelist is $state"; Show-SteamIds @(Get-ListValues 'WHITELIST_IDS') '(no whitelisted players)' -Refresh:($rest -contains '--refresh')
                 }
                 { $_ -in 'add', 'remove' } {
                     if ($rest.Count -eq 0) { throw "Usage: IsleServer.ps1 Whitelist $sub <SteamID64> [...]" }
                     Assert-SteamIds $rest
                     $v = @(Edit-List 'WHITELIST_IDS' $sub $rest)
                     Write-Ok "Whitelist: $($v.Count) player(s)"
+                    if ($sub -eq 'add') { Show-SteamIds $rest '' '  ' }
                     $verb = 'removewhitelist'; if ($sub -eq 'add') { $verb = 'addwhitelist' }
                     Send-LiveRcon @($verb, ($rest -join ','))
                 }
@@ -1699,6 +1731,12 @@ function Invoke-ConfigTool([string]$cmd) {
         'Maps' { Invoke-MapsCommand; return $true }
         'Mutations' { Invoke-MutationsCommand; return $true }
         'Admin' { Invoke-AdminCommand; return $true }
+        'Steam' {
+            $rest = @($Items | Select-Object -Skip 1)
+            if (-not $Items -or $Items[0] -ne 'names' -or -not @($rest | Where-Object { $_ -ne '--refresh' }).Count) { throw 'Usage: IsleServer.ps1 Steam names [--refresh] <SteamID64...>' }
+            $ids = @($rest | Where-Object { $_ -ne '--refresh' }); Assert-SteamIds $ids
+            Show-SteamIds $ids '' -Refresh:($rest -contains '--refresh'); return $true
+        }
         'Backup' {
             if ($Items -and $Items.Count -and @('schedule', 'status', 'tick') -contains $Items[0].ToLowerInvariant()) { Invoke-BackupTool; return $true }
             return $false

@@ -28,6 +28,8 @@ jobs:
         run: python3 -m unittest -v tests/test_api.py
       - name: Logs, rotation and time zone (LOG-01..05)
         run: python3 -m unittest -v tests/test_logs.py
+      - name: Steam names (PLY-01..03)
+        run: python3 -m unittest -v tests/test_steam.py
       - name: Web UI via the real launcher (UI-04)
         run: |
           set -e
@@ -132,7 +134,7 @@ jobs:
       - name: Unit suites inside the Debian image (DEB-01)
         run: |
           docker run --rm -v "$PWD":/src:ro --entrypoint sh theisle-server:ci -c \
-            'cp -a /src /repo && cd /repo && ISLE_ALLOW_ROOT=1 bash tests/test_config_tools.sh && python3 -m unittest -v tests/test_plugins.py tests/test_snapshot.py tests/test_api.py tests/test_logs.py'
+            'cp -a /src /repo && cd /repo && ISLE_ALLOW_ROOT=1 bash tests/test_config_tools.sh && python3 -m unittest -v tests/test_plugins.py tests/test_snapshot.py tests/test_api.py tests/test_logs.py tests/test_steam.py'
       - name: End-to-end through the launcher with an RCON-speaking fake server
         run: ISLE_TEST_I_UNDERSTAND=1 IMAGE=theisle-server:ci bash tests/test_container_e2e.sh
       - name: Launcher in docker mode (LCH-01..08)

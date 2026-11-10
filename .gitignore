@@ -1,6 +1,9 @@
 # Local configuration (contains passwords)
 config/server.conf
 config/*.bak
+# Local state: Steam name cache, backup scheduler marks
+config/.steam-names.json*
+config/.backup-*
 
 # Server data if someone installs inside the repo
 steamcmd/

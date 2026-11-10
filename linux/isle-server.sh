@@ -28,8 +28,10 @@
 #    restore <f>  Restore a backup archive (server must be stopped)
 #    rcon <cmd>   Send an RCON command (see tools/isle_rcon.py)
 #    save         Ask the server to save via RCON
-#    admins       list|add|remove <SteamID64...>         (admins, applied on restart)
-#    whitelist    list|add|remove <SteamID64...>|on|off  (live via RCON when running)
+#    admins       list [--refresh]|add|remove <SteamID64...>         (admins, applied on restart)
+#    whitelist    list [--refresh]|add|remove <SteamID64...>|on|off  (live via RCON when running)
+#                 lists and adds show each player's Steam name (cached; STEAM_NAME_LOOKUP)
+#    steam names [--refresh] <SteamID64...>   resolve SteamID64s to Steam names
 #    classes      list|known|set|add|remove <Class...>|reset|preset [roster]
 #                 types | select|add-type|remove-type <type...> | humans [on|off]
 #                 (types: carnivore herbivore omnivore flying aquatic)
@@ -224,11 +226,11 @@ BOOL_KEYS=(UPDATE_ON_START VALIDATE_ON_UPDATE FIREWALL_OPEN_RCON WHITELIST_ENABL
            RCON_ENABLED GLOBAL_CHAT ENABLE_HUMANS DYNAMIC_WEATHER ENABLE_MUTATIONS ENABLE_DIETS
            ENABLE_PATROL_ZONES ALLOW_RECORDING_REPLAY SPAWN_PLANTS SPAWN_AI ENABLE_MIGRATION
            ENABLE_MASS_MIGRATION MANAGE_INI_FILES AUTO_RESTART SAVE_BEFORE_STOP DOCKER_BUILD
-           REGION_SPAWNING REGION_SPAWN_COOLDOWN)
+           REGION_SPAWNING REGION_SPAWN_COOLDOWN STEAM_NAME_LOOKUP)
 NUMBER_KEYS=(GROWTH_MULTIPLIER CORPSE_DECAY_MULTIPLIER PLANT_SPAWN_MULTIPLIER AI_DENSITY
              DAY_LENGTH_MINUTES NIGHT_LENGTH_MINUTES WEATHER_MIN_INTERVAL WEATHER_MAX_INTERVAL)
 INT_KEYS=(MAX_MIGRATION_TIME MASS_MIGRATION_TIME MASS_MIGRATION_DISABLE_TIME STOP_TIMEOUT BACKUP_RETENTION
-          REGION_SPAWN_COOLDOWN_SECONDS NET_TICK_RATE AI_SPAWN_INTERVAL)
+          REGION_SPAWN_COOLDOWN_SECONDS NET_TICK_RATE AI_SPAWN_INTERVAL STEAM_NAME_CACHE_DAYS)
 
 # Validate server.conf (PRD CFG-05). Prints every problem; returns 1 on errors.
 check_config() {
@@ -944,6 +946,32 @@ merge_ini_overrides() {  # BASE_FILE (edited in place) OVERRIDE_FILE
 # and push a live change through RCON when the server is up.
 list_norm() { tr ',' '\n' | tr -d ' \t\r' | awk 'NF && !seen[$0]++' | paste -sd, -; }
 list_show() { if [[ -z "$1" ]]; then echo "${2:-(empty)}"; else tr ',' '\n' <<< "$1" | sed '/^$/d'; fi; }
+# SteamID64 -> Steam name (tools/isle_steam.py: cached, STEAM_NAME_LOOKUP / STEAM_WEB_API_KEY); never fails a command
+steam_names() {  # [--refresh] ID... -> "ID<TAB>name" lines (name may be empty)
+  local extra=()
+  [[ "${1:-}" == --refresh ]] && { extra=(--refresh); shift; }
+  [[ $# -gt 0 ]] || return 0
+  if command -v python3 >/dev/null 2>&1; then
+    timeout 60 python3 "$REPO_DIR/tools/isle_steam.py" --conf "$ISLE_CONF" names "${extra[@]}" "$@" 2>/dev/null && return 0
+  fi
+  printf '%s\t\n' "$@"
+}
+ids_show() {  # LIST EMPTY_TEXT [--refresh] - one "SteamID64  name" line per id
+  [[ -n "$1" ]] || { echo "${2:-(empty)}"; return 0; }
+  local ids; mapfile -t ids < <(tr ',' '\n' <<< "$1" | sed '/^$/d')
+  steam_names ${3:+"$3"} "${ids[@]}" | awk -F'\t' '{ printf "%s  %s\n", $1, ($2 == "" ? "(name unknown)" : $2) }'
+}
+cmd_steam() {
+  local sub="${1:-}"; shift || true
+  case "$sub" in
+    names)
+      local refresh=""; [[ "${1:-}" == --refresh ]] && { refresh=--refresh; shift; }
+      [[ $# -gt 0 ]] || die "Usage: isle-server steam names [--refresh] <SteamID64...>"
+      check_ids "$@"
+      ids_show "$(IFS=,; printf '%s' "$*")" "" "$refresh" ;;
+    *) die "Usage: isle-server steam names [--refresh] <SteamID64...>   (Steam names; see STEAM_NAME_LOOKUP)" ;;
+  esac
+}
 list_count() { if [[ -z "$1" ]]; then echo 0; else tr ',' '\n' <<< "$1" | sed '/^$/d' | wc -l | tr -d ' '; fi; }
 
 # ------------------------------------------------------------------ maps ---
@@ -1198,13 +1226,14 @@ edit_list() {  # KEY add|remove|set items... -> updates server.conf, prints the 
 cmd_admins() {
   local sub="${1:-list}"; shift || true
   case "$sub" in
-    list) list_show "$(cfg ADMIN_STEAM_IDS)" "(no admins)" ;;
+    list) ids_show "$(cfg ADMIN_STEAM_IDS)" "(no admins)" "${1:-}" ;;
     add|remove)
       [[ $# -gt 0 ]] || die "Usage: isle-server admins $sub <SteamID64> [...]"
       check_ids "$@"
       local v; v="$(edit_list ADMIN_STEAM_IDS "$sub" "$@")"
-      ok "Admins: $(list_count "$v") - restart the server to apply (the game reads admins at start)" ;;
-    *) die "Usage: isle-server admins list|add|remove <SteamID64> [...]" ;;
+      ok "Admins: $(list_count "$v") - restart the server to apply (the game reads admins at start)"
+      if [[ "$sub" == add ]]; then ids_show "$(IFS=,; printf '%s' "$*")" | sed 's/^/  /'; fi ;;
+    *) die "Usage: isle-server admins list [--refresh]|add|remove <SteamID64> [...]" ;;
   esac
 }
 
@@ -1213,12 +1242,13 @@ cmd_whitelist() {
   case "$sub" in
     list)
       printf 'Whitelist is %s\n' "$(is_true "$(cfg WHITELIST_ENABLED false)" && echo ON || echo OFF)"
-      list_show "$(cfg WHITELIST_IDS)" "(no whitelisted players)" ;;
+      ids_show "$(cfg WHITELIST_IDS)" "(no whitelisted players)" "${1:-}" ;;
     add|remove)
       [[ $# -gt 0 ]] || die "Usage: isle-server whitelist $sub <SteamID64> [...]"
       check_ids "$@"
       local v; v="$(edit_list WHITELIST_IDS "$sub" "$@")"
       ok "Whitelist: $(list_count "$v") player(s)"
+      if [[ "$sub" == add ]]; then ids_show "$(IFS=,; printf '%s' "$*")" | sed 's/^/  /'; fi
       if [[ "$sub" == add ]]; then live_rcon addwhitelist "$(IFS=,; printf '%s' "$*")"
       else live_rcon removewhitelist "$(IFS=,; printf '%s' "$*")"; fi ;;
     on|off)
@@ -1229,7 +1259,7 @@ cmd_whitelist() {
       ok "Whitelist turned $sub"
       if [[ "$was" != "$want" ]]; then live_rcon togglewhitelist; fi
       if [[ "$want" == true && -z "$(cfg WHITELIST_IDS)" ]]; then warn "The whitelist is empty - nobody can join"; fi ;;
-    *) die "Usage: isle-server whitelist list|add|remove <SteamID64> [...]|on|off" ;;
+    *) die "Usage: isle-server whitelist list [--refresh]|add|remove <SteamID64> [...]|on|off" ;;
   esac
 }
 
@@ -1409,6 +1439,7 @@ config_tool() {  # dispatch shared by both runtimes; returns 1 if CMD is not a c
     maps)       cmd_maps "$@" ;;
     mutations)  cmd_mutations "$@" ;;
     admin)      cmd_admin "$@" ;;
+    steam)      cmd_steam "$@" ;;
     profile)    cmd_overlay profile "$@" ;;
     preset)     cmd_overlay preset "$@" ;;
     plugins)    cmd_plugins "$@" ;;

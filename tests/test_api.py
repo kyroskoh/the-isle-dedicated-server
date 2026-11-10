@@ -22,6 +22,7 @@ import urllib.request
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API = os.path.join(REPO, "tools", "isle_api.py")
 FAKE = os.path.join(REPO, "tests", "fixtures", "fake-launcher.py")
+FAKE_STEAM = os.path.join(REPO, "tests", "fixtures", "fake-steam.py")
 TOKEN = "test-token-0123456789abcdef"
 ADMIN = "76561198000000001"
 
@@ -57,7 +58,9 @@ class ApiServer(object):
         os.makedirs(self.logs)
         with open(os.path.join(self.logs, "launcher_20261108_120000.log"), "w") as handle:
             handle.write("".join("[2026-11-08 12:00:%02d UTC] INFO line %d\n" % (i % 60, i) for i in range(300)))
-        env = dict(os.environ, ISLE_UI_TOKEN=TOKEN, ISLE_LOG_DIR=self.logs, FAKE_LAUNCHER_LOG=self.log, FAKE_STATE_DIR=self.dir,
+        self.steam = subprocess.Popen([sys.executable, FAKE_STEAM, "0"], stdout=subprocess.PIPE, universal_newlines=True)
+        steam_url = "http://127.0.0.1:%s" % self.steam.stdout.readline().split()[1]
+        env = dict(os.environ, ISLE_STEAM_COMMUNITY_URL=steam_url, ISLE_STEAM_API_URL=steam_url, ISLE_UI_TOKEN=TOKEN, ISLE_LOG_DIR=self.logs, FAKE_LAUNCHER_LOG=self.log, FAKE_STATE_DIR=self.dir,
                    FAKE_DELAY="0.4", PYTHONUNBUFFERED="1")
         self.out = open(os.path.join(self.dir, "api.log"), "w")
         self.proc = subprocess.Popen([sys.executable, API, "--conf", self.conf, "--launcher", FAKE, "--port", str(self.port),
@@ -71,6 +74,9 @@ class ApiServer(object):
         raise RuntimeError("API did not start: %s" % slurp(os.path.join(self.dir, "api.log")))
 
     def stop(self):
+        self.steam.terminate()
+        self.steam.wait(10)
+        self.steam.stdout.close()
         self.proc.terminate()
         try:
             self.proc.wait(10)
@@ -492,6 +498,25 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.s.call("PUT", "/api/v1/humans", {"enabled": "no"})[0], 422)
         self.s.call("PUT", "/api/v1/humans", {"enabled": True})
         self.s.call("PUT", "/api/v1/classes", {"classes": []})
+
+    def test_steam_names(self):
+        rex, nobody = "76561198000000001", "76561198000000099"
+        code, body, _ = self.s.call("GET", "/api/v1/steam/names?ids=%s,%s" % (rex, nobody))
+        self.assertEqual(code, 200, body)
+        self.assertTrue(body["lookup"])
+        self.assertEqual([(p["steam_id"], p["name"]) for p in body["players"]], [(rex, "RexHunter"), (nobody, None)])
+        self.assertEqual(body["players"][0]["profile"], "https://steamcommunity.com/profiles/" + rex)
+        # lists carry cached names without asking Steam
+        self.s.call("POST", "/api/v1/whitelist", {"ids": [rex, nobody]})
+        wl = self.s.call("GET", "/api/v1/whitelist")[1]
+        self.assertEqual({p["steam_id"]: p["name"] for p in wl["players"]}, {rex: "RexHunter", nobody: None})
+        for bad in ("", "?ids=123", "?ids=" + ",".join([rex] * 101), "?ids=%s;rm" % rex):
+            self.assertEqual(self.s.call("GET", "/api/v1/steam/names" + bad)[0], 422, bad)
+        self.s.call("DELETE", "/api/v1/whitelist/" + rex)
+        self.s.call("DELETE", "/api/v1/whitelist/" + nobody)
+        key = [k for k in self.s.call("GET", "/api/v1/config")[1]["settings"] if k["key"] == "STEAM_WEB_API_KEY"]
+        self.assertEqual(len(key), 1)
+        self.assertTrue(key[0]["secret"], "the Web API key is masked like a password")
 
     def test_rcon_validation(self):
         self.assertEqual(self.s.call("POST", "/api/v1/rcon", {"command": "rm -rf"})[0], 422)

@@ -126,6 +126,32 @@ In the [web UI](UI.md) these are the **Players** and **Roster** pages:
 - When the server is running and RCON is enabled, whitelist and roster changes are also sent live. Otherwise
   they apply on the next start. In docker mode the live change goes through the container.
 
+### Steam names for SteamID64s
+
+The admin and whitelist lists show each player's Steam name next to the SteamID64, in the CLI and in the web UI,
+and adding a player prints who you added:
+
+```text
+$ isle-server admins add 76561198012345678
+[ OK ] Admins: 1 - restart the server to apply (the game reads admins at start)
+  76561198012345678  Gondwa Warden
+$ isle-server admins list            # --refresh asks Steam again instead of using the cache
+$ isle-server steam names 76561198012345678 76561198087654321
+```
+
+On Windows: `IsleServer.ps1 Admins list`, `Whitelist add <id>`, `Steam names <id...>`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `STEAM_NAME_LOOKUP` | `true` | Look names up on Steam. `false` = no requests (names already cached still show) |
+| `STEAM_WEB_API_KEY` | (empty) | Optional [Steam Web API key](https://steamcommunity.com/dev/apikey): one batched call per 100 players instead of one profile page each. Masked in the UI |
+| `STEAM_NAME_CACHE_DAYS` | `7` | How long a name is cached in `config/.steam-names.json` |
+
+Without a key, names come from each public profile (`steamcommunity.com/profiles/<id>?xml=1`). A private profile
+or an ID with no Steam account shows "(name unknown)". A lookup never fails a command: when Steam can't be reached,
+the last known name is shown. Names are what players call themselves on Steam and can change at any time; the
+SteamID64 is what the server uses.
+
 ### Roster by type, humans and eggs
 
 Each playable class in [`config/classes.txt`](config/classes.txt) has one or more types: `carnivore`, `herbivore`,

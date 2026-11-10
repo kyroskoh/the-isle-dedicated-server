@@ -17,6 +17,13 @@ Set-Content (Join-Path $W 'overrides/Game.ini') @(
     '[/Script/TheIsle.TIGameSession]', 'GrowthMultiplier=9', 'AllowedClasses=Carnotaurus', '+Arr=1', '',
     '[/Script/TheIsle.Custom]', 'Foo=Bar')
 $m = Join-Path $Repo 'windows/IsleServer.ps1'
+# fake Steam for the name lookups (tests/fixtures/fake-steam.py)
+$py = 'python3'; if (-not (Get-Command $py -ErrorAction SilentlyContinue)) { $py = 'python' }
+$steamOut = Join-Path $W 'steam.out'
+$steam = Start-Process $py -ArgumentList @((Join-Path $Repo 'tests/fixtures/fake-steam.py'), '0') -RedirectStandardOutput $steamOut -PassThru -NoNewWindow
+for ($i = 0; $i -lt 100 -and -not ((Test-Path $steamOut) -and (Get-Content $steamOut -ErrorAction SilentlyContinue)); $i++) { Start-Sleep -Milliseconds 100 }
+$env:ISLE_STEAM_COMMUNITY_URL = 'http://127.0.0.1:' + ((Get-Content $steamOut | Select-Object -First 1) -split ' ')[1]
+$env:ISLE_STEAM_API_URL = $env:ISLE_STEAM_COMMUNITY_URL
 $fails = 0
 function ck($label, [scriptblock]$b) { $r = $false; try { $r = [bool](& $b) } catch { Write-Host "    error: $_" }; if ($r) { "  PASS $label" } else { "  FAIL $label"; $script:fails++ } }
 function conf($k) { ((Get-Content $Conf) | Where-Object { $_ -match "^$k=" } | Select-Object -Last 1) -replace "^$k=", '' }
@@ -68,6 +75,12 @@ ck 'Backup status json'      { $j = ((run Backup status --json) -split "`n" | Wh
 ck 'Admin kick needs id'     { (run Admin kick 123) -match 'SteamID64|Usage' }
 ck 'Admin notes limits'      { (run Admin) -match 'god mode' }
 ck 'Version shows credits'   { $v = & $m Version *>&1 | Out-String; ($v -match 'github.com/kyroskoh/the-isle-dedicated-server') -and ($v -match 'Kyros Koh') }
+ck 'Admins list shows names'  { (run Admins list) -match '76561198000000002  Ptera <Pal> & Co' }
+ck 'Whitelist add shows name' { (run Whitelist add 76561198000000003) -match '76561198000000003  ' }
+ck 'Steam names'             { $o = run Steam names 76561198000000001 76561198000000099; ($o -match '76561198000000001  RexHunter') -and ($o -match '76561198000000099  \(name unknown\)') }
+ck 'Steam names checks ids'  { (run Steam names 123) -match 'SteamID64' }
+ck 'Names cached'            { Test-Path (Join-Path $W '.steam-names.json') }
+Stop-Process -Id $steam.Id -Force -ErrorAction SilentlyContinue
 Remove-Item $W -Recurse -Force -ErrorAction SilentlyContinue
 "RESULT: $fails failure(s)"
 if ($fails -gt 0) { exit 1 }
