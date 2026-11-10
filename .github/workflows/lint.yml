@@ -10,6 +10,7 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # a hung step fails the job instead of running for hours
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck
@@ -75,6 +76,7 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 45   # a hung step fails the job instead of running for hours
     steps:
       - uses: actions/checkout@v4
       - name: hadolint
@@ -178,6 +180,7 @@ jobs:
   debian-native:
     # Native install on Debian with the real apt dependencies (PRD DEB-01)
     runs-on: ubuntu-latest
+    timeout-minutes: 30   # a hung step fails the job instead of running for hours
     container: debian:bookworm
     steps:
       - uses: actions/checkout@v4
@@ -186,6 +189,7 @@ jobs:
 
   installer-cycle:
     runs-on: ubuntu-latest
+    timeout-minutes: 30   # a hung step fails the job instead of running for hours
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck test script
@@ -195,6 +199,7 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    timeout-minutes: 30   # a hung step fails the job instead of running for hours
     steps:
       - uses: actions/checkout@v4
       - name: Parse PowerShell (Windows PowerShell 5.1)
@@ -382,6 +387,7 @@ jobs:
   web-ui:
     # Chromium (Chrome/Edge/Opera), Firefox (Gecko) and WebKit (Safari) - desktop, tablet and phone shapes
     runs-on: ubuntu-latest
+    timeout-minutes: 30   # a hung step fails the job instead of running for hours
     strategy:
       fail-fast: false
       matrix:

@@ -150,6 +150,26 @@ async function closeCtx(ctx) {
   const b = owned.get(ctx);
   if (b) await b.close().catch(() => {});
 }
+/* One viewport/device pass with a time limit. Playwright's page.evaluate has no timeout, so a frozen tab
+   (seen now and then in WebKit on CI) would hang the job for hours: the pass is closed and retried once in
+   a fresh browser instead, and a second freeze fails the run with a clear message. */
+async function pass(label, fn, ms = 240000) {
+  for (let attempt = 1; ; attempt++) {
+    const ctxs = [];
+    const mk = async (opts) => { const c = await newCtx(opts); ctxs.push(c); return c; };
+    let timer;
+    const limit = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label}: no progress for ${ms / 1000} s`)), ms); });
+    const run = fn(mk);
+    run.catch(() => {});   // a pass abandoned on timeout fails later, when its context is closed
+    try { await Promise.race([run, limit]); return; } catch (e) {
+      if (attempt >= 2 || !/no progress/.test(e.message)) throw e;
+      console.log(`  note: ${e.message} - closing it and retrying once in a fresh browser`);
+    } finally {
+      clearTimeout(timer);
+      for (const c of ctxs) await Promise.race([closeCtx(c), sleep(15000)]);
+    }
+  }
+}
 let fails = 0;
 const report = (label, found) => {
   if (found.length) { fails++; console.log(`  FAIL ${label}`); found.slice(0, 8).forEach((f) => console.log("       " + f)); if (found.length > 8) console.log(`       ... ${found.length - 8} more`); }
@@ -212,8 +232,8 @@ const ROUTES = ["", "settings", "players", "roster", "world", "profiles", "plugi
 const WIDTHS = [1440, 1280, 1024, 820, 600, 390, 320];
 try {
   for (const scheme of ["light", "dark"]) {
-    for (const width of WIDTHS) {
-      const ctx = await newCtx({ viewport: { width, height: 900 }, colorScheme: scheme, ...MOTION });
+    for (const width of WIDTHS) await pass(`${scheme} @${width}`, async (mk) => {
+      const ctx = await mk({ viewport: { width, height: 900 }, colorScheme: scheme, ...MOTION });
       let page = watch(await ctx.newPage());
       page = await open(ctx, page, BASE + "/");
       if (scheme === "light" && width === WIDTHS[0]) {
@@ -286,8 +306,7 @@ try {
           report(`${scheme} phone menu @${width}`, await page.evaluate(audit));
         }
       }
-      await closeCtx(ctx);
-    }
+    });
   }
   // real device shapes: phones and tablets in both orientations, touch, mobile viewport
   const DEVICES = [
@@ -298,9 +317,9 @@ try {
     ["tablet 820x1180 portrait", 820, 1180], ["tablet 1180x820 landscape", 1180, 820],
     ["desktop 1920x1080", 1920, 1080]
   ];
-  for (const [label, w, hgt] of DEVICES) {
+  for (const [label, w, hgt] of DEVICES) await pass(label, async (mk) => {
     const touch = w < 1300;
-    const ctx = await newCtx({ viewport: { width: w, height: hgt }, hasTouch: touch, isMobile: touch && MOBILE, ...MOTION });
+    const ctx = await mk({ viewport: { width: w, height: hgt }, hasTouch: touch, isMobile: touch && MOBILE, ...MOTION });
     let page = watch(await ctx.newPage());
     page = await open(ctx, page, BASE + "/");
     await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
@@ -319,17 +338,15 @@ try {
       await page.waitForSelector("#modal[open]");
       report(`${label} date & time dialog`, await page.evaluate(audit));
     }
-    await closeCtx(ctx);
-  }
-  for (const width of [1280, 390]) {
-    const ctx = await newCtx({ viewport: { width, height: 900 } });
+  });
+  for (const width of [1280, 390]) await pass(`docs @${width}`, async (mk) => {
+    const ctx = await mk({ viewport: { width, height: 900 } });
     const page = await ctx.newPage();
     await page.goto(BASE + "/docs", { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".op");
     await page.click("#patchConfig > summary");
     report(`docs @${width}`, await page.evaluate(audit));
-    await closeCtx(ctx);
-  }
+  });
 } finally {
   await browser.close();
   api.kill(); steamProc.kill();
