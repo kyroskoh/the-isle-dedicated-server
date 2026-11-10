@@ -32,7 +32,7 @@ COMMANDS = {
     "serverdetails": 0x12,
     "wipecorpses": 0x13,
     "updateplayables": 0x15,    # <class list>
-    "ban": 0x20,                # <name>,<steamid>,<reason>,<minutes>
+    "ban": 0x20,                # <steamid>,<reason>
     "kick": 0x30,               # <steamid>,<reason>
     "playerlist": 0x40,
     "save": 0x50,
@@ -45,6 +45,16 @@ COMMANDS = {
     "toggleai": 0x90,
     "disableaiclasses": 0x91,   # <class,class,...>
     "aidensity": 0x92,          # <float>
+    # from the community-documented Evrima protocol (isle-evrima-rcon); may change with game updates
+    "getplayables": 0x14,
+    "togglemigrations": 0x19,   # 1|0
+    "togglegrowthmultiplier": 0x21,  # 1|0
+    "setgrowthmultiplier": 0x22,     # <float>
+    "togglenetupdate": 0x23,    # 1|0  network update distance checks
+    "pause": 0x60,              # 1|0
+    "custom": 0x70,             # <command> - experimental, may not be functional
+    "queuestatus": 0x93,
+    "toggleailearning": 0x94,   # 1|0
 }
 
 

@@ -245,6 +245,9 @@ function Remove-DockerContainer {
         & docker stop -t 90 $Container *> $null
         & docker rm $Container *> $null
     }
+    foreach ($t in @("$TaskName-Backup")) {   # the docker-mode scheduled backup task
+        if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName $t -Confirm:$false }
+    }
     Write-Ok 'Container removed'
 }
 
@@ -700,6 +703,9 @@ if (-not $NoFirewall) {
 if ($Mode -eq 'native' -and -not $NoService) {
     Write-Step 'Registering the boot-time scheduled task'
     [void](Invoke-Manager InstallService -ServiceAccount $ServiceAccount)
+} elseif ($Mode -eq 'docker' -and -not $NoService) {
+    Write-Step 'Registering the scheduled backup task (BACKUP_SCHEDULE)'
+    [void](Invoke-Manager InstallService)
 }
 if ($Start) {
     Write-Step 'Starting the server'
@@ -727,3 +733,6 @@ if ($uiWanted) {
 }
 if ($MigrateHint) { Write-Host ''; Write-Host "  $MigrateHint" -ForegroundColor Yellow }
 Write-Host '  Remember to forward the game and queue ports on your router / cloud firewall.'
+Write-Host ''
+Write-Host '  Project     : https://github.com/kyroskoh/the-isle-dedicated-server  (docs, issues, updates)'
+Write-Host ('  Made with ' + [char]0x2665 + ' by Kyros Koh (https://github.com/kyroskoh)')

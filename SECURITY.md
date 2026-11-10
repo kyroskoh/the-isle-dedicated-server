@@ -31,3 +31,7 @@ Please open a private security advisory on GitHub
     `X-Frame-Options: DENY`, `nosniff` and `no-referrer`.
 - The sudoers rule the Linux installer adds lets the service user run only
   `systemctl start|stop|restart|status theisle-server`. Skip it with `--no-sudoers`.
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

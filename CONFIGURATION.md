@@ -126,6 +126,56 @@ In the [web UI](UI.md) these are the **Players** and **Roster** pages:
 - When the server is running and RCON is enabled, whitelist and roster changes are also sent live. Otherwise
   they apply on the next start. In docker mode the live change goes through the container.
 
+### Roster by type, humans and eggs
+
+Each playable class in [`config/classes.txt`](config/classes.txt) has one or more types: `carnivore`, `herbivore`,
+`omnivore`, `flying`, `aquatic`.
+
+| Linux | Windows | Effect |
+|---|---|---|
+| `isle-server classes types` | `IsleServer.ps1 Classes types` | Lists the classes of each type |
+| `isle-server classes select carnivore [flying ...]` | `Classes select ...` | Only those types are playable |
+| `isle-server classes add-type herbivore` / `remove-type flying` | `Classes add-type` / `remove-type` | Adds or removes a whole type |
+| `isle-server classes humans on\|off` | `Classes humans on` | `ENABLE_HUMANS` (live via RCON `togglehumans`) |
+
+Humans are not a class: one switch turns them on or off. Eggs and hatchlings are not a class either and the server
+has no setting for them. The UI roster has filters for every type plus **human** and **egg**, with **Only**, **Add**
+and **Remove** buttons for the type in view.
+
+## Mutations
+
+`ENABLE_MUTATIONS` turns the mutation system on or off. `ENABLED_MUTATIONS` picks which mutations exist and how strong
+they are. When it is empty (the default), every mutation is available at the game's values. When it lists any, only
+those are available, written to `Game.ini` as `EnabledMutations=Name, value` lines.
+
+| Linux | Windows |
+|---|---|
+| `isle-server mutations list` | `IsleServer.ps1 Mutations list` |
+| `isle-server mutations enable Hemomania 0.1` | `Mutations enable Hemomania 0.1` |
+| `isle-server mutations disable Wader Featherweight` | `Mutations disable ...` |
+| `isle-server mutations reset` (all, game default) | `Mutations reset` |
+
+The names and defaults come from [`config/mutations.txt`](config/mutations.txt). "Fixed" mutations only take `1`.
+Values other than the default warn: they can make gameplay unstable. The UI has a **Mutations** card on the Map & AI page.
+
+## Admin commands (live, over RCON)
+
+`isle-server admin <action>` / `IsleServer.ps1 Admin <action>` and the UI **Admin** page send live commands to a
+running server with RCON enabled:
+
+| Action | What it does |
+|---|---|
+| `players`, `player [SteamID64]`, `details`, `queue`, `playables` | Players online, a player's data, server details, queue status, playable classes |
+| `announce <text>`, `dm <id> <text>` | Message everyone, or one player |
+| `kick <id> [reason]`, `ban <id> [reason]` | Kick or ban (sent as `id,reason`) |
+| `save`, `wipecorpses` | Save the world, remove every corpse |
+| `pause`, `migrations`, `humans`, `chat`, `ai-learning`, `netupdate` `on\|off` | Live switches (reset to server.conf on restart) |
+| `growth on\|off\|<multiplier>` | Growth multiplier, e.g. `growth 1.5` |
+| `custom "<command>"` | Experimental raw command |
+
+Evrima's RCON has **no** commands to change a player's size or growth stage, skin, or mutations, to give god mode, or
+to teleport or heal. Admins listed in `ADMIN_STEAM_IDS` do those in game with the game's own admin panel.
+
 ## Any Game.ini / Engine.ini key (overrides)
 
 Put `Game.ini` and/or `Engine.ini` in `config/overrides/` (or the folder set in `INI_OVERRIDES_DIR`).
@@ -316,8 +366,47 @@ Replace them only if the developers announce new values.
 | `EXTRA_ARGS` | `-log` | Extra command-line arguments for the server |
 | `STOP_TIMEOUT` | `60` | Seconds to wait for a graceful exit before killing |
 | `AUTO_RESTART` | `true` | Restart after a crash (watchdog mode) |
-| `BACKUP_RETENTION` | `10` | Number of backup archives to keep (0 = all) |
+| `BACKUP_RETENTION` | `10` | Number of backup archives to keep (0 = all). Also applies to `BACKUP_COPY_DIR` |
+| `BACKUP_SCHEDULE` | `0 5 * * *` | When the scheduled task backs up: cron syntax, `@daily`/`@hourly`/..., or `off` |
+| `BACKUP_COPY_DIR` | (empty) | Second copy of every backup, ideally on another disk or a network share (3-2-1) |
+| `BACKUP_OFFSITE_COMMAND` | (empty) | Command run after every backup to send it off-site; `{file}` is the archive |
 | `SAVE_BEFORE_STOP` | `true` | Send RCON `save` before stopping or backing up |
+
+### Scheduled backups and the 3-2-1 rule
+
+The installers add a per-minute task (systemd `theisle-server-backup.timer`, or the `TheIsleServer-Backup` scheduled
+task on Windows) that runs `backup tick`. It backs up when `BACKUP_SCHEDULE` falls due, at most once per due minute,
+and catches up on a minute missed while the machine was busy.
+
+`BACKUP_SCHEDULE` uses the five cron fields `minute hour day-of-month month day-of-week`, in the server's
+`TIMEZONE`. Lists (`1,15`), ranges (`1-5`), steps (`*/15`), names (`MON-FRI`, `JAN`) and `@hourly`, `@daily`,
+`@weekly`, `@monthly`, `@yearly` work; `off` turns scheduled backups off. Examples:
+
+| Schedule | Meaning |
+|---|---|
+| `0 5 * * *` | Every day at 05:00 (default) |
+| `0 */6 * * *` | Every 6 hours |
+| `30 4 * * MON-FRI` | Weekdays at 04:30 |
+| `0 5,17 * * *` | 05:00 and 17:00 |
+
+```bash
+isle-server backup schedule set "0 */6 * * *"   # validated before it is saved
+isle-server backup schedule show                # the next runs
+isle-server backup status                       # last backup and the 3-2-1 check (--json for scripts)
+```
+
+**3-2-1** means 3 copies of your data, on 2 different media, 1 of them off-site. The live world is one copy and
+`BACKUP_DIR` the second. Set `BACKUP_COPY_DIR` to another disk or a network share for the second medium, and
+`BACKUP_OFFSITE_COMMAND` for the off-site copy, for example:
+
+```bash
+BACKUP_COPY_DIR=/mnt/nas/theisle-backups
+BACKUP_OFFSITE_COMMAND=rclone copy {file} b2:my-bucket/theisle
+```
+
+The off-site command runs with a one-hour time limit, and a failure only warns. The `offsite-backup` plugin is an
+alternative. `backup status` (and the UI) warn when `BACKUP_COPY_DIR` is on the same disk as `BACKUP_DIR`. Both are
+machine settings and are not editable from the web UI.
 
 ## Logs and time
 
@@ -376,3 +465,7 @@ The command bytes come from community documentation and may change with game upd
   `0 6 * * * systemctl restart theisle-server`
 - **Windows:** create a daily task that runs
   `C:\TheIsle\scripts\windows\Restart.bat` with the environment variable `ISLE_NOPAUSE=1` set.
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

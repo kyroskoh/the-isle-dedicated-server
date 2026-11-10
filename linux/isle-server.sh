@@ -21,13 +21,24 @@
 #    logs [-f] [game|server|launcher|ui|list]
 #                 Show (or follow) a log: the game's own log (default), the
 #                 rotated server console / launcher / web UI logs, or list them
-#    backup       Archive save data / config to BACKUP_DIR
+#    backup       Archive save data / config to BACKUP_DIR (+ second copy and off-site, 3-2-1)
+#    backup schedule [show|set "<cron>"|off]   when the scheduled task backs up
+#    backup status [--json]                     schedule, last backup and the 3-2-1 check
+#    backup tick  run by the per-minute timer: backs up when BACKUP_SCHEDULE is due
 #    restore <f>  Restore a backup archive (server must be stopped)
 #    rcon <cmd>   Send an RCON command (see tools/isle_rcon.py)
 #    save         Ask the server to save via RCON
 #    admins       list|add|remove <SteamID64...>         (admins, applied on restart)
 #    whitelist    list|add|remove <SteamID64...>|on|off  (live via RCON when running)
 #    classes      list|known|set|add|remove <Class...>|reset|preset [roster]
+#                 types | select|add-type|remove-type <type...> | humans [on|off]
+#                 (types: carnivore herbivore omnivore flying aquatic)
+#    mutations    list | enable <Name> [value] | disable <Name...> | reset
+#    admin        players | player [SteamID64] | dm <id> <text> | kick <id> [reason] |
+#                 ban <id> [reason] | announce <text> | save | wipecorpses | details |
+#                 queue | playables | pause|migrations|humans|chat|ai-learning|
+#                 netupdate on|off | growth on|off|<multiplier> | custom "<command>"
+#                 live admin commands over RCON (the server must be running)
 #    ai-classes   list|known|set|add|remove <Class...>|reset  (disabled AI)
 #    ai           status|on|off|density <n>|interval <s>|preset <name>
 #                 AI spawning, density (live via RCON), spawn interval, AI presets
@@ -56,6 +67,9 @@
 #
 #  Logs: <LOG_DIR>/KIND_yyyymmdd_hhmmss.log (launcher, server, ui), rotated at
 #  LOG_MAX_SIZE_MB, LOG_RETENTION files kept per kind, in TIMEZONE (local|utc).
+#
+#  Project: https://github.com/kyroskoh/the-isle-dedicated-server
+#  Made with ♥ by Kyros Koh (https://github.com/kyroskoh)
 # =============================================================================
 set -Eeuo pipefail
 
@@ -64,6 +78,9 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ISLE_CONF="${ISLE_CONF:-$REPO_DIR/config/server.conf}"
 ISLE_SERVICE="${ISLE_SERVICE:-theisle-server}"
 SCRIPT_VERSION="$(cat "$REPO_DIR/VERSION" 2>/dev/null || echo unknown)"
+PROJECT_URL="https://github.com/kyroskoh/the-isle-dedicated-server"
+AUTHOR="Kyros Koh"; AUTHOR_URL="https://github.com/kyroskoh"
+version_text() { printf 'isle-server.sh %s\nProject: %s\nMade with ♥ by %s (%s)\n' "$SCRIPT_VERSION" "$PROJECT_URL" "$AUTHOR" "$AUTHOR_URL"; }
 STEAMCMD_URL="https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
 
 # ----------------------------------------------------------------- output ---
@@ -168,7 +185,8 @@ load_config() {
            "SERVER_NAME:The Isle Evrima Server" UPDATE_ON_START:true VALIDATE_ON_UPDATE:false \
            AUTO_RESTART:true MANAGE_INI_FILES:true SAVE_BEFORE_STOP:true RCON_ENABLED:true \
            QUEUE_ENABLED:true EXTRA_ARGS:-log RUNTIME:native DOCKER_BUILD:true \
-           DOCKER_IMAGE:theisle-server:latest TIMEZONE:local LOG_RETENTION:14 LOG_MAX_SIZE_MB:20; do
+           DOCKER_IMAGE:theisle-server:latest TIMEZONE:local LOG_RETENTION:14 LOG_MAX_SIZE_MB:20 \
+           "BACKUP_SCHEDULE:0 5 * * *"; do
     [[ -z "${CFG[${k%%:*}]:-}" ]] && CFG[${k%%:*}]="${k#*:}"
   done
   STEAMCMD_DIR="${CFG[STEAMCMD_DIR]}"
@@ -222,6 +240,18 @@ check_config() {
       errors+=("$k='$v' is not a port number (1-65535)")
     fi
   done
+  if command -v python3 >/dev/null 2>&1; then
+    v="$(python3 "$REPO_DIR/tools/isle_cron.py" check "$(cfg BACKUP_SCHEDULE)" 2>&1 >/dev/null)" || errors+=("BACKUP_SCHEDULE: $v")
+  fi
+  if [[ -n "$(cfg ENABLED_MUTATIONS)" ]]; then
+    local _m
+    IFS=';' read -ra _m <<< "$(cfg ENABLED_MUTATIONS)"
+    for v in "${_m[@]}"; do
+      [[ -z "${v// }" ]] && continue
+      [[ "$v" =~ ^[A-Za-z][A-Za-z\ \-]*:[0-9]+([.][0-9]+)?$ ]] || { errors+=("ENABLED_MUTATIONS entry '$v' must be Name:value"); continue; }
+      mutation_line "${v%:*}" >/dev/null || warnings+=("ENABLED_MUTATIONS: '${v%:*}' is not in config/mutations.txt")
+    done
+  fi
   case "$(cfg TIMEZONE local)" in local|LOCAL|Local|utc|UTC|Utc) ;; *) errors+=("TIMEZONE='$(cfg TIMEZONE)' must be local or utc") ;; esac
   for k in LOG_RETENTION LOG_MAX_SIZE_MB; do
     v="$(cfg "$k")"; [[ "$v" =~ ^[0-9]+$ ]] || errors+=("$k='$v' must be a whole number (0 = no limit)")
@@ -403,6 +433,16 @@ render_game_ini() {
   printf 'GrowthMultiplier=%s\n' "$(cfg GROWTH_MULTIPLIER 1)"
   printf 'CorpseDecayMultiplier=%s\n' "$(cfg CORPSE_DECAY_MULTIPLIER 1)"
   printf 'bEnableMutations=%s\n' "$(ue_bool "$(cfg ENABLE_MUTATIONS true)")"
+  # EnabledMutations: empty = every mutation (game default); otherwise ONLY the listed ones
+  local mut name val
+  if [[ -n "$(cfg ENABLED_MUTATIONS)" ]]; then
+    IFS=';' read -ra mut <<< "$(cfg ENABLED_MUTATIONS)"
+    for name in "${mut[@]}"; do
+      [[ -n "${name// }" ]] || continue
+      val="${name##*:}"; name="${name%:*}"
+      printf 'EnabledMutations=%s, %s\n' "$name" "$val"
+    done
+  fi
   printf 'bEnableDiets=%s\n' "$(ue_bool "$(cfg ENABLE_DIETS true)")"
   printf 'bEnablePatrolZones=%s\n' "$(ue_bool "$(cfg ENABLE_PATROL_ZONES true)")"
   printf 'bAllowRecordingReplay=%s\n' "$(ue_bool "$(cfg ALLOW_RECORDING_REPLAY true)")"
@@ -665,11 +705,134 @@ cmd_backup() {
     -C "$(dirname "$ISLE_CONF")" "$(basename "$ISLE_CONF")" 2>/dev/null \
     || tar -czf "$file" -C "$SERVER_DIR/TheIsle" --exclude='Saved/Logs' --exclude='Saved/Crashes' Saved
   ok "Backup written ($(du -h "$file" | cut -f1))"
+  backup_321 "$file"
   local keep; keep="$(cfg BACKUP_RETENTION 10)"
   if [[ "$keep" =~ ^[0-9]+$ ]] && (( keep > 0 )); then
     find "$BACKUP_DIR" -maxdepth 1 -name 'theisle-*.tar.gz' -printf '%T@ %p\n' | sort -rn \
       | tail -n +$((keep + 1)) | cut -d' ' -f2- | while IFS= read -r old; do rm -f -- "$old"; log "Pruned $old"; done
   fi
+}
+
+# -------------------------------------------------- 3-2-1 and the schedule ---
+# 3 copies (the live world + BACKUP_DIR + BACKUP_COPY_DIR), 2 media (BACKUP_COPY_DIR on another disk),
+# 1 off-site (BACKUP_OFFSITE_COMMAND or the offsite-backup plugin). PRD BAK-06..09.
+state_file() { printf '%s/.%s' "$(dirname "$ISLE_CONF")" "$1"; }
+backup_321() {  # FILE - second copy + off-site for a finished backup archive
+  local file="$1" copy keep cmd rc
+  copy="$(cfg BACKUP_COPY_DIR)"
+  if [[ -n "$copy" ]]; then
+    if mkdir -p "$copy" 2>/dev/null && cp -- "$file" "$copy/"; then
+      ok "Second copy: $copy/$(basename "$file")"
+      if [[ "$(stat -c %d "$copy" 2>/dev/null)" == "$(stat -c %d "$(dirname "$file")" 2>/dev/null)" ]]; then
+        warn "BACKUP_COPY_DIR is on the same disk as the backups - use another disk for the '2 media' of 3-2-1"
+      fi
+      keep="$(cfg BACKUP_RETENTION 10)"
+      if [[ "$keep" =~ ^[0-9]+$ ]] && (( keep > 0 )); then
+        find "$copy" -maxdepth 1 -name 'theisle-*' -printf '%T@ %p\n' | sort -rn | tail -n +$((keep + 1)) | cut -d' ' -f2- \
+          | while IFS= read -r old; do rm -f -- "$old"; done
+      fi
+    else
+      warn "Could not copy the backup to BACKUP_COPY_DIR=$copy"
+    fi
+  fi
+  cmd="$(cfg BACKUP_OFFSITE_COMMAND)"
+  if [[ -n "$cmd" ]]; then
+    # {file} is replaced by the quoted archive path; $BACKUP_FILE is set too (e.g. rclone copy {file} remote:theisle)
+    cmd="${cmd//\{file\}/$(printf '%q' "$file")}"
+    log "Off-site copy: $cmd"
+    rc=0; BACKUP_FILE="$file" timeout 3600 bash -c "$cmd" || rc=$?
+    printf '%s %s %s\n' "$(date '+%F %T %Z')" "$rc" "$(basename "$file")" > "$(state_file backup-offsite)" 2>/dev/null || true
+    if (( rc == 0 )); then ok "Off-site copy done"; else warn "Off-site copy failed (exit $rc) - the local backups are fine"; fi
+  fi
+}
+docker_backup_321() {  # copy the newest archive out of the volume when a second copy / off-site is configured
+  [[ -n "$(cfg BACKUP_COPY_DIR)$(cfg BACKUP_OFFSITE_COMMAND)" ]] || return 0
+  local name tmp
+  name="$(dc run --rm --entrypoint sh theisle -c 'ls -t /data/backups/theisle-*.tar.gz 2>/dev/null | head -n1' 2>/dev/null | tr -d '\r')"
+  [[ -n "$name" ]] || { warn "No backup found in the volume for the second copy / off-site step"; return 0; }
+  tmp="$(mktemp -d)"
+  if docker cp "$(dc ps -aq theisle | head -n1):$name" "$tmp/" >/dev/null 2>&1; then backup_321 "$tmp/$(basename "$name")"
+  else warn "Could not copy $name out of the volume"; fi
+  rm -rf -- "$tmp"
+}
+newest_backup() {  # newest archive in BACKUP_DIR (native) - prints "path epoch"
+  find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'theisle-*.tar.gz' -o -name 'theisle-*.zip' \) -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1
+}
+backup_tool() {  # backup schedule|status|tick ...; returns 1 for a plain backup
+  case "${1:-}" in
+    schedule) shift; backup_schedule "$@" ;;
+    status)   shift; backup_status "$@" ;;
+    tick)     backup_tick ;;
+    ""|now)   return 1 ;;
+    *) die "Usage: $0 backup [now|schedule [show|set \"<cron>\"|off]|status [--json]|tick]" ;;
+  esac
+}
+backup_schedule() {
+  command -v python3 >/dev/null 2>&1 || die "python3 is required for schedules"
+  local cron="$REPO_DIR/tools/isle_cron.py"
+  case "${1:-show}" in
+    show)
+      printf 'Schedule : %s  (%s)\n' "$(cfg BACKUP_SCHEDULE)" "$(python3 "$cron" describe "$(cfg BACKUP_SCHEDULE)" 2>&1)"
+      printf 'Next     :\n'; python3 "$cron" --conf "$ISLE_CONF" next "$(cfg BACKUP_SCHEDULE)" -n 5 | sed 's/^/  /' ;;
+    set)
+      [[ -n "${2:-}" ]] || die "Usage: $0 backup schedule set \"<minute hour day month weekday>\"   e.g. \"0 5 * * *\", \"0 */6 * * *\", @daily"
+      python3 "$cron" check "$2" >/dev/null || die "Not a valid schedule: $2"
+      set_conf BACKUP_SCHEDULE "$2"
+      ok "Backups scheduled: $(python3 "$cron" describe "$2") - next: $(python3 "$cron" --conf "$ISLE_CONF" next "$2" -n 1)" ;;
+    off)
+      set_conf BACKUP_SCHEDULE off
+      ok "Scheduled backups are off (manual: $0 backup)" ;;
+    *) die "Usage: $0 backup schedule [show|set \"<cron>\"|off]" ;;
+  esac
+}
+backup_tick() {  # one minute of the scheduler: back up when BACKUP_SCHEDULE fell due since the last run
+  command -v python3 >/dev/null 2>&1 || die "python3 is required for scheduled backups"
+  local f due last; f="$(state_file backup-tick)"
+  last="$(cat "$f" 2>/dev/null || true)"
+  due="$(python3 "$REPO_DIR/tools/isle_cron.py" --conf "$ISLE_CONF" due "$(cfg BACKUP_SCHEDULE)" ${last:+--since "$last"})" || return 0
+  printf '%s\n' "$due" > "$f"
+  log "Scheduled backup ($due, $(cfg BACKUP_SCHEDULE))"
+  "$SCRIPT_DIR/isle-server.sh" backup
+}
+backup_status() {  # [--json] - schedule, last backup and the 3-2-1 check
+  local newest path age copy n_local=0 n_copy=0 other=false off_cfg="" off_last="" copies media offsite
+  newest="$(newest_backup)"; path="${newest#* }"
+  [[ -d "$BACKUP_DIR" ]] && n_local="$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'theisle-*' | wc -l)"
+  copy="$(cfg BACKUP_COPY_DIR)"
+  if [[ -n "$copy" && -d "$copy" ]]; then
+    n_copy="$(find "$copy" -maxdepth 1 -type f -name 'theisle-*' | wc -l)"
+    [[ "$(stat -c %d "$copy")" != "$(stat -c %d "$BACKUP_DIR" 2>/dev/null)" ]] && other=true
+  fi
+  if [[ -n "$(cfg BACKUP_OFFSITE_COMMAND)" ]]; then off_cfg="command"; fi
+  if grep -qx offsite-backup "$(dirname "$ISLE_CONF")/plugins/enabled.txt" 2>/dev/null; then off_cfg="${off_cfg:+$off_cfg+}offsite-backup plugin"; fi
+  off_last="$(cat "$(state_file backup-offsite)" 2>/dev/null || true)"
+  copies=1; (( n_local > 0 )) && copies=$((copies + 1)); (( n_copy > 0 )) && copies=$((copies + 1)); [[ -n "$off_cfg" ]] && copies=$((copies + 1))
+  media=1; { [[ "$other" == true ]] || [[ -n "$off_cfg" ]]; } && media=2
+  offsite=false; [[ -n "$off_cfg" ]] && offsite=true
+  age=""; [[ -n "$newest" ]] && age=$(( $(date +%s) - ${newest%%.*} ))
+  if [[ "${1:-}" == --json ]]; then
+    python3 - "$(cfg BACKUP_SCHEDULE)" "$path" "${age:-}" "$BACKUP_DIR" "$n_local" "$copy" "$n_copy" "$other" "$off_cfg" "$off_last" \
+      "$copies" "$media" "$offsite" "$ISLE_CONF" "$REPO_DIR" <<'PY'
+import json, subprocess, sys
+a = sys.argv[1:]
+cron = [sys.executable, a[14] + "/tools/isle_cron.py", "--conf", a[13]]
+nxt = json.loads(subprocess.run(cron + ["next", a[0], "-n", "5", "--json"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout or b"{}")
+print(json.dumps({"schedule": a[0], "describe": nxt.get("describe", ""), "zone": nxt.get("zone", ""), "next": nxt.get("next", []),
+                  "last": {"file": a[1].rsplit("/", 1)[-1] if a[1] else None, "age_seconds": int(a[2]) if a[2] else None},
+                  "local": {"dir": a[3], "count": int(a[4])}, "copy": {"dir": a[5], "count": int(a[6]), "other_disk": a[7] == "true"},
+                  "offsite": {"configured": a[8], "last": a[9]},
+                  "rule321": {"copies": int(a[10]), "media": int(a[11]), "offsite": a[12] == "true",
+                              "ok": int(a[10]) >= 3 and int(a[11]) >= 2 and a[12] == "true"}}))
+PY
+    return 0
+  fi
+  backup_schedule show
+  printf 'Last     : %s\n' "${path:+$(basename "$path") ($(( ${age:-0} / 3600 ))h $(( ${age:-0} % 3600 / 60 ))m ago)}"
+  printf 'Local    : %s backups in %s\n' "$n_local" "$BACKUP_DIR"
+  printf 'Copy 2   : %s\n' "${copy:+$n_copy in $copy ($([[ $other == true ]] && echo 'another disk' || echo 'SAME disk'))}"
+  printf 'Off-site : %s%s\n' "${off_cfg:-not configured (BACKUP_OFFSITE_COMMAND or the offsite-backup plugin)}" "${off_last:+ - last: $off_last}"
+  printf '3-2-1    : %s copies %s, %s media %s, off-site %s\n' "$copies" "$([[ $copies -ge 3 ]] && echo OK || echo '(need 3)')" \
+    "$media" "$([[ $media -ge 2 ]] && echo OK || echo '(need 2)')" "$([[ $offsite == true ]] && echo OK || echo '(need 1)')"
 }
 
 # Windows native backups are .zip; repack them as .tar.gz (python3, stdlib only).
@@ -725,7 +888,7 @@ cmd_rcon() {
 
 cmd_info() {
   cat <<EOF
-Scripts       : v$SCRIPT_VERSION
+Scripts       : v$SCRIPT_VERSION ($PROJECT_URL)
 Runtime       : native
 Config file   : $ISLE_CONF
 SteamCMD dir  : $STEAMCMD_DIR
@@ -855,6 +1018,125 @@ cmd_ai() {  # status | on | off | density <n> | interval <s> | preset <name>
   esac
 }
 
+# ------------------------------------------------------------- mutations ---
+mutation_line() {  # NAME (case-insensitive) -> "Name<TAB>default<TAB>flag"
+  [[ -f "$REPO_DIR/config/mutations.txt" ]] || return 1
+  awk -F'\t' -v want="$(tr '[:upper:]' '[:lower:]' <<< "$1")" '$1 !~ /^#/ && NF >= 2 && tolower($1) == want { print; found = 1; exit } END { exit !found }' "$REPO_DIR/config/mutations.txt"
+}
+mutation_catalog() { awk -F'\t' '$1 !~ /^#/ && NF >= 2 { print $1 ":" $2 }' "$REPO_DIR/config/mutations.txt"; }
+cmd_mutations() {  # list | enable <Name> [value] | disable <Name...> | reset
+  local sub="${1:-list}" cur line name def val entry
+  shift || true
+  [[ -f "$REPO_DIR/config/mutations.txt" ]] || die "config/mutations.txt is missing"
+  cur="$(cfg ENABLED_MUTATIONS)"
+  case "$sub" in
+    list)
+      [[ -z "$cur" ]] && printf 'All mutations are available (ENABLED_MUTATIONS is empty - the game default).\n\n'
+      while IFS=$'\t' read -r name def flag; do
+        [[ "$name" == \#* || -z "$name" ]] && continue
+        if [[ -z "$cur" ]]; then val="$def"; state=on
+        elif entry="$(tr ';' '\n' <<< "$cur" | grep -i "^$name:")"; then val="${entry##*:}"; state=on
+        else val="-"; state=off; fi
+        printf '  %-3s %-34s %-6s %s\n' "$state" "$name" "$val" "${flag:+(value must be 1)}"
+      done < "$REPO_DIR/config/mutations.txt" ;;
+    enable|disable)
+      [[ $# -gt 0 ]] || die "Usage: $0 mutations $sub <Name> ...   (see: $0 mutations list)"
+      # first change: start from every mutation at its default, then edit
+      [[ -n "$cur" ]] || cur="$(mutation_catalog | paste -sd';' -)"
+      if [[ "$sub" == enable ]]; then
+        line="$(mutation_line "$1")" || die "Unknown mutation '$1' (see: $0 mutations list)"
+        name="$(cut -f1 <<< "$line")"; def="$(cut -f2 <<< "$line")"; val="${2:-$def}"
+        [[ "$val" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "The value must be a number, e.g. $def"
+        [[ "$(cut -f3 <<< "$line")" == fixed && "$val" != 1 ]] && die "$name only takes 1 (leave it out to disable it)"
+        [[ "$val" != "$def" ]] && warn "$name: $val differs from the default $def - changed values may produce unstable gameplay"
+        cur="$(tr ';' '\n' <<< "$cur" | grep -vi "^$name:" | grep . ; printf '%s:%s' "$name" "$val")"
+        cur="$(tr '\n' ';' <<< "$cur" | sed 's/;*$//')"
+        set_conf ENABLED_MUTATIONS "$cur"; ok "Mutation $name enabled ($val)"
+      else
+        for entry in "$@"; do
+          line="$(mutation_line "$entry")" || die "Unknown mutation '$entry' (see: $0 mutations list)"
+          name="$(cut -f1 <<< "$line")"
+          cur="$(tr ';' '\n' <<< "$cur" | grep -vi "^$name:" | paste -sd';' -)"
+          ok "Mutation $name disabled"
+        done
+        [[ -n "$cur" ]] || die "Disabling every mutation: set ENABLE_MUTATIONS=false instead"
+        set_conf ENABLED_MUTATIONS "$cur"
+      fi
+      log "$(tr ';' '\n' <<< "$cur" | grep -c .) of $(mutation_catalog | wc -l) mutations available - restart the server to apply" ;;
+    reset) set_conf ENABLED_MUTATIONS ""; ok "Every mutation is available again (game default) - restart to apply" ;;
+    *) die "Usage: $0 mutations list|enable <Name> [value]|disable <Name...>|reset" ;;
+  esac
+}
+
+# ----------------------------------------------------------- class types ---
+classes_of_type() {  # SECTION TYPE... -> class names whose diet or traits match any TYPE
+  awk -v want="[$1]" -v types=" ${*:2} " 'BEGIN { types = tolower(types) }
+    /^\[/ { on = ($0 == want); next }
+    on && $1 !~ /^#/ && NF { for (i = 2; i <= NF; i++) if (index(types, " " tolower($i) " ")) { print $1; break } }' "$REPO_DIR/config/classes.txt"
+}
+class_types() {  # SECTION -> "type: names" lines
+  awk -v want="[$1]" '/^\[/ { on = ($0 == want); next }
+    on && $1 !~ /^#/ && NF > 1 { for (i = 2; i <= NF; i++) t[$i] = t[$i] (t[$i] ? ", " : "") $1 }
+    END { for (k in t) printf "  %-10s %s\n", k, t[k] }' "$REPO_DIR/config/classes.txt" | sort
+}
+
+# ----------------------------------------------------------------- admin ---
+rcon_now() {  # COMMAND [ARGS] - live RCON; the server must be running
+  command -v python3 >/dev/null 2>&1 || die "python3 is required for RCON"
+  is_true "$(cfg RCON_ENABLED)" && [[ -n "$(cfg RCON_PASSWORD)" ]] || die "RCON is disabled or has no password (RCON_ENABLED, RCON_PASSWORD)"
+  if [[ "${RUNTIME:-native}" == docker ]]; then
+    docker_running 2>/dev/null || die "The server is not running"
+    dc exec -T theisle isle-server rcon "$@"
+  else
+    ISLE_RCON_PASSWORD="$(cfg RCON_PASSWORD)" python3 "$REPO_DIR/tools/isle_rcon.py" -p "$(cfg RCON_PORT)" "$@"
+  fi
+}
+onoff() { case "${1:-}" in on|1|true|yes) echo 1 ;; off|0|false|no) echo 0 ;; *) return 1 ;; esac; }
+cmd_admin() {
+  local sub="${1:-}" id v
+  shift || true
+  case "$sub" in
+    players)   rcon_now playerlist ;;
+    player)    rcon_now playerdata "$@" ;;
+    details)   rcon_now serverdetails ;;
+    queue)     rcon_now queuestatus ;;
+    playables) rcon_now getplayables ;;
+    save)      rcon_now save ;;
+    wipecorpses) rcon_now wipecorpses; ok "Corpses wiped" ;;
+    announce)  [[ $# -gt 0 ]] || die "Usage: $0 admin announce <text>"; rcon_now announce "$*" ;;
+    dm|kick|ban)
+      id="${1:-}"; shift || true
+      [[ "$id" =~ ^7656119[0-9]{10}$ ]] || die "Usage: $0 admin $sub <SteamID64> $([[ $sub == dm ]] && echo '<text>' || echo '[reason]')"
+      if [[ "$sub" == dm ]]; then [[ $# -gt 0 ]] || die "Usage: $0 admin dm <SteamID64> <text>"; rcon_now directmessage "$id,$*"
+      else rcon_now "$sub" "$id,${*:-Removed by an admin}"; ok "$sub: $id"; fi ;;
+    pause|migrations|humans|chat|ai-learning|netupdate)
+      v="$(onoff "${1:-}")" || die "Usage: $0 admin $sub on|off"
+      case "$sub" in
+        pause)       rcon_now pause "$v" ;;
+        migrations)  rcon_now togglemigrations "$v"; set_conf ENABLE_MIGRATION "$([[ $v == 1 ]] && echo true || echo false)" ;;
+        humans)      rcon_now togglehumans "$v"; set_conf ENABLE_HUMANS "$([[ $v == 1 ]] && echo true || echo false)" ;;
+        chat)        rcon_now toggleglobalchat "$v"; set_conf GLOBAL_CHAT "$([[ $v == 1 ]] && echo true || echo false)" ;;
+        ai-learning) rcon_now toggleailearning "$v" ;;
+        netupdate)   rcon_now togglenetupdate "$v" ;;
+      esac
+      ok "$sub $1" ;;
+    growth)
+      case "${1:-}" in
+        on|off) rcon_now togglegrowthmultiplier "$(onoff "$1")"; ok "Growth multiplier $1" ;;
+        *)
+          [[ "${1:-}" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "Usage: $0 admin growth on|off|<multiplier e.g. 1.5>"
+          rcon_now setgrowthmultiplier "$1"; set_conf GROWTH_MULTIPLIER "$1"; ok "Growth multiplier $1 (live and in server.conf)" ;;
+      esac ;;
+    custom)
+      [[ $# -gt 0 ]] || die "Usage: $0 admin custom \"<command>\"   (experimental: the game may ignore it)"
+      warn "custom RCON commands are experimental - the game may ignore them"
+      rcon_now custom "$*" ;;
+    *) die "Usage: $0 admin players|player [id]|dm|kick|ban|announce|save|wipecorpses|details|queue|playables|pause|migrations|humans|chat|ai-learning|netupdate on|off|growth on|off|<n>|custom <cmd>
+Note: Evrima's RCON has no commands to change a player's size, skin or mutations, give god mode, teleport or heal -
+in-game admins (ADMIN_STEAM_IDS) use the game's own admin panel for those." ;;
+  esac
+}
+
 known_classes() {  # SECTION (playable|ai) -> one name per line
   local file="$REPO_DIR/config/classes.txt"
   [[ -f "$file" ]] || return 0
@@ -958,6 +1240,36 @@ cmd_classes() {  # KEY SECTION RCON_CMD LABEL sub args...
   case "$sub" in
     list)  list_show "$(cfg "$key")" "$([[ "$section" == playable ]] && echo '(all classes allowed)' || echo '(none disabled)')"; return ;;
     known) known_classes "$section"; return ;;
+    types)
+      printf 'Types (%s):\n' "$section"; class_types "$section"
+      [[ "$section" == playable ]] && printf '\n  Humans are not a class: %s humans on|off (ENABLE_HUMANS, live via RCON).\n  Eggs/hatchlings are not a class either and have no server setting.\n' "$0 classes"
+      return ;;
+    select|add-type|remove-type)
+      [[ $# -gt 0 ]] || die "Usage: isle-server $label $sub <type> [...]   (see: isle-server $label types)"
+      mapfile -t items < <(classes_of_type "$section" "$@")
+      (( ${#items[@]} )) || die "No $section class has type: $* (see: isle-server $label types)"
+      case "$sub" in
+        select)      v="$(edit_list "$key" set "${items[@]}")" ;;
+        add-type)    v="$(edit_list "$key" add "${items[@]}")" ;;
+        remove-type)
+          local base
+          if [[ -z "$(cfg "$key")" && "$section" == playable ]]; then base="$(known_classes "$section")"   # "all allowed": start from every class
+          else base="$(tr ',' '
+' <<< "$(cfg "$key")")"; fi
+          mapfile -t keep < <(grep -vxF -f <(printf '%s
+' "${items[@]}") <<< "$base" | grep .)
+          (( ${#keep[@]} )) || die "That would leave no playable class"
+          v="$(edit_list "$key" set "${keep[@]}")" ;;
+      esac ;;
+    humans)
+      [[ "$section" == playable ]] || die "Usage: isle-server classes humans [on|off]"
+      case "${1:-}" in
+        "") printf 'Humans: %s\n' "$(cfg ENABLE_HUMANS false)"; return ;;
+        on|off)
+          set_conf ENABLE_HUMANS "$([[ $1 == on ]] && echo true || echo false)"; ok "Humans $1"
+          live_rcon togglehumans "$(onoff "$1")"; return ;;
+        *) die "Usage: isle-server classes humans [on|off]" ;;
+      esac ;;
     set|add|remove)
       [[ $# -gt 0 ]] || die "Usage: isle-server $label $sub <Class> [...]"
       check_classes "$section" "$@"
@@ -976,7 +1288,7 @@ cmd_classes() {  # KEY SECTION RCON_CMD LABEL sub args...
       mapfile -t items < <(grep -vE '^\s*(#|$)' "$file" | tr -d '\r ')
       if (( ${#items[@]} )); then check_classes playable "${items[@]}"; v="$(edit_list "$key" set "${items[@]}")"
       else v=""; set_conf "$key" ""; fi ;;
-    *) die "Usage: isle-server $label list|known|set|add|remove <Class> [...]|reset$([[ "$section" == playable ]] && echo '|preset [name]')" ;;
+    *) die "Usage: isle-server $label list|known|types|set|add|remove <Class> [...]|select|add-type|remove-type <type> [...]|reset$([[ "$section" == playable ]] && echo '|preset [name]|humans [on|off]')" ;;
   esac
   if [[ -z "$v" ]]; then
     ok "$label: $([[ "$section" == playable ]] && echo 'all classes allowed' || echo 'none disabled')"
@@ -1095,6 +1407,8 @@ config_tool() {  # dispatch shared by both runtimes; returns 1 if CMD is not a c
     ai-classes) cmd_classes DISABLED_AI_CLASSES ai disableaiclasses ai-classes "$@" ;;
     ai)         cmd_ai "$@" ;;
     maps)       cmd_maps "$@" ;;
+    mutations)  cmd_mutations "$@" ;;
+    admin)      cmd_admin "$@" ;;
     profile)    cmd_overlay profile "$@" ;;
     preset)     cmd_overlay preset "$@" ;;
     plugins)    cmd_plugins "$@" ;;
@@ -1220,8 +1534,10 @@ docker_main() {
     logs)
       if [[ "${1:-}" == "-f" ]]; then dc logs --tail 100 -f theisle; else dc logs --tail 200 theisle; fi ;;
     backup)
+      if backup_tool "$@"; then return; fi
       if docker_running; then dc exec -T theisle isle-server backup
       else dc run --rm theisle backup; fi
+      docker_backup_321
       run_hooks post-backup ;;
     restore)
       local file="${1:-}" target
@@ -1256,7 +1572,7 @@ docker_info() {
   fi
   is_true "$(cfg DOCKER_BUILD)" && image_src="built from this repo"
   printf '%-14s: %s\n' \
-    "Scripts" "v$SCRIPT_VERSION" \
+    "Scripts" "v$SCRIPT_VERSION ($PROJECT_URL)" \
     "Runtime" "docker" \
     "Config file" "$ISLE_CONF (passed to the container)" \
     "Compose file" "$REPO_DIR/docker-compose.yml" \
@@ -1281,7 +1597,7 @@ main() {
   local cmd="${1:-help}"; shift || true
   case "$cmd" in
     help|-h|--help) usage; return 0 ;;
-    version|--version) printf 'isle-server.sh %s\n' "$SCRIPT_VERSION"; return 0 ;;
+    version|--version) version_text; return 0 ;;
   esac
   load_config
   case "$cmd" in
@@ -1304,7 +1620,7 @@ main() {
     update)    require_stopped update; update_server "$@"; run_hooks post-update ;;
     validate)  require_stopped validate; update_server --validate; run_hooks post-update ;;
     check)     check_config && ok "Configuration OK ($ISLE_CONF)" ;;
-    version)   printf 'isle-server.sh %s\n' "$SCRIPT_VERSION" ;;
+    version)   version_text ;;
     configure) configure --force ;;
     start)     cmd_start; run_hooks post-start ;;
     stop)      if server_running; then run_hooks pre-stop; fi; cmd_stop; run_hooks post-stop ;;
@@ -1313,7 +1629,7 @@ main() {
     run)       cmd_run ;;
     _watchdog) cmd_watchdog ;;
     logs)      cmd_logs "$@" ;;
-    backup)    cmd_backup; run_hooks post-backup ;;
+    backup)    if backup_tool "$@"; then return; fi; cmd_backup; run_hooks post-backup ;;
     restore)   require_stopped restore; cmd_restore "$@" ;;
     rcon)      cmd_rcon "$@" ;;
     save)      cmd_save ;;

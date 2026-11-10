@@ -205,7 +205,7 @@ const settle = async (page) => {
   for (let i = 0; i < 80; i++) { if (await page.evaluate(() => !document.querySelector("#content [role=status]"))) break; await sleep(100); }
   await sleep(150);
 };
-const ROUTES = ["", "settings", "players", "roster", "world", "profiles", "plugins", "snapshots", "logs", "console"];
+const ROUTES = ["", "settings", "players", "roster", "world", "profiles", "plugins", "snapshots", "logs", "admin", "console"];
 const WIDTHS = [1440, 1280, 1024, 820, 600, 390, 320];
 try {
   for (const scheme of ["light", "dark"]) {

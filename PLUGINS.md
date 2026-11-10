@@ -188,3 +188,7 @@ support, and may be rejected by the game or anti-cheat. In docker mode, copy fil
 | `config/plugins/enabled.txt` | Enabled plugins |
 | `config/plugins/<name>.conf` | Plugin settings (mode 600) |
 | `config/plugins/sources.txt` | Extra catalogs |
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

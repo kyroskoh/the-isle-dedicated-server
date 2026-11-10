@@ -24,7 +24,8 @@
     Status         Show whether the server is running
     Run            Run the server in this window with an auto-restart watchdog
     Logs           Show a log: the game's own log (default) or Logs launcher|ui|list (add -Follow to tail it)
-    Backup         Zip save data and config into BACKUP_DIR
+    Backup         Zip save data and config into BACKUP_DIR (+ second copy and off-site, 3-2-1)
+                   Backup schedule [show|set "<cron>"|off], Backup status [--json], Backup tick (per-minute task)
     Restore        Restore a backup (-Path <.zip or .tar.gz>; both work in both runtimes)
     Rcon           Send an RCON command (-RconArgs 'announce','Hello')
     Save           Ask the server to save via RCON
@@ -35,6 +36,11 @@
     Admins         list|add|remove <SteamID64...>             (e.g. Admins add 7656119...)
     Whitelist      list|add|remove <SteamID64...>|on|off      (live via RCON when running)
     Classes        list|known|set|add|remove <Class...>|reset|preset [roster]
+                   types | select|add-type|remove-type <type...> | humans [on|off]
+    Mutations      list | enable <Name> [value] | disable <Name...> | reset
+    Admin          players | player | dm <id> <text> | kick|ban <id> [reason] | announce <text> | save |
+                   wipecorpses | details | queue | playables | pause|migrations|humans|chat|ai-learning|
+                   netupdate on|off | growth on|off|<n> | custom "<command>"   (live over RCON)
     AIClasses      list|known|set|add|remove <Class...>|reset (disabled AI)
     AI             status|on|off|density <n>|interval <s>|preset <ai-name>  (AI spawning and density)
     Maps           list|show [name]|set <name> [--keep-branch]  (config\maps.txt; set also switches STEAM_BRANCH)
@@ -65,6 +71,12 @@
     .\IsleServer.ps1 Rcon -RconArgs announce,'Restart in 5 minutes'
     .\IsleServer.ps1 Profile apply realism
     .\IsleServer.ps1 Classes preset carnivores
+
+.NOTES
+    Made with love by Kyros Koh (https://github.com/kyroskoh). MIT licence.
+
+.LINK
+    https://github.com/kyroskoh/the-isle-dedicated-server
 #>
 [CmdletBinding()]
 param(
@@ -72,7 +84,7 @@ param(
     [ValidateSet('Install', 'Update', 'Validate', 'Check', 'Configure', 'Start', 'Stop', 'Restart', 'Status', 'Run',
                  'Logs', 'Backup', 'Restore', 'Rcon', 'Save', 'Firewall', 'RemoveFirewall',
                  'InstallService', 'RemoveService', 'Info', 'Version', 'Help',
-                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot', 'UI', 'UiToken', 'AI', 'Maps')]
+                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot', 'UI', 'UiToken', 'AI', 'Maps', 'Mutations', 'Admin')]
     [string]$Command = 'Help',
 
     [string]$ConfigPath,
@@ -104,6 +116,8 @@ $RepoDir = Split-Path -Parent $ScriptDir
 if (-not $ConfigPath) {
     if ($env:ISLE_CONF) { $ConfigPath = $env:ISLE_CONF } else { $ConfigPath = Join-Path $RepoDir 'config\server.conf' }
 }
+$ProjectUrl = 'https://github.com/kyroskoh/the-isle-dedicated-server'
+$Author = 'Kyros Koh'; $AuthorUrl = 'https://github.com/kyroskoh'
 $ScriptVersion = 'unknown'
 $versionFile = Join-Path $RepoDir 'VERSION'
 if (Test-Path $versionFile) { $ScriptVersion = (Get-Content $versionFile | Select-Object -First 1).Trim() }
@@ -221,7 +235,7 @@ function Import-ServerConfig {
         BACKUP_RETENTION = '10'; UPDATE_ON_START = 'true'; VALIDATE_ON_UPDATE = 'false'; AUTO_RESTART = 'true'
         MANAGE_INI_FILES = 'true'; SAVE_BEFORE_STOP = 'true'; RCON_ENABLED = 'true'; QUEUE_ENABLED = 'true'
         EXTRA_ARGS = '-log'; RUNTIME = 'native'; DOCKER_BUILD = 'true'; DOCKER_IMAGE = 'theisle-server:latest'
-        TIMEZONE = 'local'; LOG_RETENTION = '14'; LOG_MAX_SIZE_MB = '20'
+        TIMEZONE = 'local'; LOG_RETENTION = '14'; LOG_MAX_SIZE_MB = '20'; BACKUP_SCHEDULE = '0 5 * * *'
     }
     $script:RawServerName = C 'SERVER_NAME'
     foreach ($k in $defaults.Keys) {
@@ -258,6 +272,10 @@ function Test-ServerConfig {
     if (@('local', 'utc') -notcontains (C 'TIMEZONE' 'local').ToLowerInvariant()) { $errors.Add("TIMEZONE='$(C 'TIMEZONE')' must be local or utc") }
     foreach ($k in 'LOG_RETENTION', 'LOG_MAX_SIZE_MB') {
         if ((C $k '0') -notmatch '^\d+$') { $errors.Add("$k='$(C $k)' must be a whole number (0 = no limit)") }
+    }
+    if (Get-Python) {
+        $chk = Invoke-Cron @('check', (C 'BACKUP_SCHEDULE'))
+        if ($chk.Code -ne 0) { $errors.Add("BACKUP_SCHEDULE: $($chk.Out)") }
     }
     $mapName = C 'MAP_NAME'
     if ($mapName -and (Test-Path (Join-Path $RepoDir 'config\maps.txt')) -and -not (Get-MapEntry $mapName)) {
@@ -427,6 +445,9 @@ function Get-GameIni {
     $o.Add("GrowthMultiplier=$(C 'GROWTH_MULTIPLIER' '1')")
     $o.Add("CorpseDecayMultiplier=$(C 'CORPSE_DECAY_MULTIPLIER' '1')")
     $o.Add("bEnableMutations=$(UeBool (C 'ENABLE_MUTATIONS' 'true'))")
+    foreach ($m in ((C 'ENABLED_MUTATIONS') -split ';')) {   # empty = every mutation (game default)
+        if ($m.Trim()) { $i = $m.LastIndexOf(':'); $o.Add(('EnabledMutations={0}, {1}' -f $m.Substring(0, $i), $m.Substring($i + 1))) }
+    }
     $o.Add("bEnableDiets=$(UeBool (C 'ENABLE_DIETS' 'true'))")
     $o.Add("bEnablePatrolZones=$(UeBool (C 'ENABLE_PATROL_ZONES' 'true'))")
     $o.Add("bAllowRecordingReplay=$(UeBool (C 'ALLOW_RECORDING_REPLAY' 'true'))")
@@ -693,6 +714,7 @@ function Invoke-Backup {
         Write-Step "Creating backup $zip"
         Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
         Write-Ok ("Backup written ({0:N1} MB)" -f ((Get-Item $zip).Length / 1MB))
+        Invoke-Backup321 $zip
     } finally {
         Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -700,6 +722,131 @@ function Invoke-Backup {
     if ($keep -gt 0) {
         Get-ChildItem -Path $BackupDir -Filter 'theisle-*.zip' | Sort-Object LastWriteTime -Descending |
             Select-Object -Skip $keep | ForEach-Object { Remove-Item $_.FullName -Force; Write-Step "Pruned $($_.Name)" }
+    }
+}
+
+# ---------------------------------------------------- 3-2-1 and the schedule --
+function Get-StateFile([string]$name) { return (Join-Path (Split-Path -Parent $ConfigPath) ".$name") }
+function Invoke-Cron([string[]]$cronArgs) {
+    $py = Get-Python
+    if (-not $py) { throw 'Python 3 is required for backup schedules (winget install Python.Python.3.12)' }
+    $a = @(); if ($py[1]) { $a += $py[1] }
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $py[0] @($a + @((Join-Path $RepoDir 'tools\isle_cron.py'), '--conf', $ConfigPath) + $cronArgs) 2>&1 | ForEach-Object { "$_" }
+        return @{ Code = $LASTEXITCODE; Out = (@($out) -join "`n") }
+    } finally { $ErrorActionPreference = $prev }
+}
+function Invoke-Backup321([string]$file) {
+    $copy = C 'BACKUP_COPY_DIR'
+    if ($copy) {
+        try {
+            New-Item -ItemType Directory -Force -Path $copy | Out-Null
+            Copy-Item -LiteralPath $file -Destination $copy -Force
+            Write-Ok "Second copy: $(Join-Path $copy (Split-Path -Leaf $file))"
+            if ([IO.Path]::GetPathRoot([IO.Path]::GetFullPath($copy)) -eq [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($file))) {
+                Write-Warn "BACKUP_COPY_DIR is on the same drive as the backups - use another disk for the '2 media' of 3-2-1"
+            }
+            $keep = [int](C 'BACKUP_RETENTION' '10')
+            if ($keep -gt 0) {
+                Get-ChildItem -Path $copy -Filter 'theisle-*' -File | Sort-Object LastWriteTime -Descending | Select-Object -Skip $keep |
+                    ForEach-Object { Remove-Item $_.FullName -Force }
+            }
+        } catch { Write-Warn "Could not copy the backup to BACKUP_COPY_DIR=$copy ($_)" }
+    }
+    $cmd = C 'BACKUP_OFFSITE_COMMAND'
+    if ($cmd) {
+        $cmd = $cmd.Replace('{file}', '"' + $file + '"')
+        Write-Step "Off-site copy: $cmd"
+        $env:BACKUP_FILE = $file
+        $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        & cmd.exe /d /c $cmd *>&1 | ForEach-Object { Write-Host "$_" }
+        $rc = $LASTEXITCODE
+        $ErrorActionPreference = $prev
+        Set-Content -Path (Get-StateFile 'backup-offsite') -Value ('{0} {1} {2} {3}' -f (Get-Now).ToString('yyyy-MM-dd HH:mm:ss', $Invariant), (Get-ZoneLabel), $rc, (Split-Path -Leaf $file))
+        if ($rc -eq 0) { Write-Ok 'Off-site copy done' } else { Write-Warn "Off-site copy failed (exit $rc) - the local backups are fine" }
+    }
+}
+function Invoke-DockerBackup321 {
+    if (-not ((C 'BACKUP_COPY_DIR') + (C 'BACKUP_OFFSITE_COMMAND'))) { return }
+    $name = (Invoke-Dc @('run', '--rm', '--entrypoint', 'sh', 'theisle', '-c', 'ls -t /data/backups/theisle-*.tar.gz 2>/dev/null | head -n1') 2>$null | Select-Object -Last 1)
+    if (-not "$name".Trim()) { Write-Warn 'No backup found in the volume for the second copy / off-site step'; return }
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('theisle-321-' + [guid]::NewGuid())
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    try {
+        $id = (Invoke-Dc @('ps', '-aq', 'theisle') | Select-Object -First 1)
+        & docker cp ("{0}:{1}" -f "$id".Trim(), "$name".Trim()) $tmp *> $null
+        $local = Join-Path $tmp (Split-Path -Leaf "$name".Trim())
+        if (Test-Path $local) { Invoke-Backup321 $local } else { Write-Warn "Could not copy $name out of the volume" }
+    } finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+}
+function Invoke-BackupTool {   # Backup schedule|status|tick
+    $sub = $Items[0].ToLowerInvariant(); $rest = @($Items | Select-Object -Skip 1)
+    switch ($sub) {
+        'schedule' {
+            $what = 'show'; if ($rest.Count) { $what = $rest[0].ToLowerInvariant() }
+            switch ($what) {
+                'show' {
+                    $d = Invoke-Cron @('describe', (C 'BACKUP_SCHEDULE'))
+                    Write-Host ("Schedule : {0}  ({1})" -f (C 'BACKUP_SCHEDULE'), $d.Out)
+                    Write-Host 'Next     :'; (Invoke-Cron @('next', (C 'BACKUP_SCHEDULE'), '-n', '5')).Out -split "`n" | Where-Object { $_ } | ForEach-Object { Write-Host "  $_" }
+                }
+                'set' {
+                    if ($rest.Count -lt 2) { throw 'Usage: IsleServer.ps1 Backup schedule set "<minute hour day month weekday>"  e.g. "0 5 * * *", "0 */6 * * *", @daily' }
+                    $chk = Invoke-Cron @('check', $rest[1])
+                    if ($chk.Code -ne 0) { throw "Not a valid schedule: $($chk.Out)" }
+                    Set-ConfigValue 'BACKUP_SCHEDULE' $rest[1]
+                    Write-Ok ("Backups scheduled: {0} - next: {1}" -f $chk.Out, ((Invoke-Cron @('next', $rest[1], '-n', '1')).Out))
+                }
+                'off' { Set-ConfigValue 'BACKUP_SCHEDULE' 'off'; Write-Ok 'Scheduled backups are off (manual: IsleServer.ps1 Backup)' }
+                default { throw 'Usage: IsleServer.ps1 Backup schedule [show|set "<cron>"|off]' }
+            }
+        }
+        'tick' {
+            $f = Get-StateFile 'backup-tick'
+            $a = @('due', (C 'BACKUP_SCHEDULE'))
+            if (Test-Path $f) { $a += @('--since', ((Get-Content $f -Raw).Trim())) }
+            $r = Invoke-Cron $a
+            if ($r.Code -ne 0) { return }
+            Set-Content -Path $f -Value $r.Out.Trim()
+            Write-Step "Scheduled backup ($($r.Out.Trim()), $(C 'BACKUP_SCHEDULE'))"
+            & (Join-Path $ScriptDir 'IsleServer.ps1') Backup -ConfigPath $ConfigPath
+        }
+        'status' {
+            $dir = $BackupDir
+            $local = @(); if (Test-Path $dir) { $local = @(Get-ChildItem -Path $dir -Filter 'theisle-*' -File | Sort-Object LastWriteTime -Descending) }
+            $copy = C 'BACKUP_COPY_DIR'; $nCopy = 0; $other = $false
+            if ($copy -and (Test-Path $copy)) {
+                $nCopy = @(Get-ChildItem -Path $copy -Filter 'theisle-*' -File).Count
+                $other = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($copy)) -ne [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($dir))
+            }
+            $off = @(); if (C 'BACKUP_OFFSITE_COMMAND') { $off += 'command' }
+            $en = Join-Path (Split-Path -Parent $ConfigPath) 'plugins\enabled.txt'
+            if ((Test-Path $en) -and ((Get-Content $en) -contains 'offsite-backup')) { $off += 'offsite-backup plugin' }
+            $offLast = ''; if (Test-Path (Get-StateFile 'backup-offsite')) { $offLast = (Get-Content (Get-StateFile 'backup-offsite') -Raw).Trim() }
+            $copies = 1 + [int]($local.Count -gt 0) + [int]($nCopy -gt 0) + [int]($off.Count -gt 0)
+            $media = 1; if ($other -or $off.Count) { $media = 2 }
+            $last = $null; $age = $null
+            if ($local.Count) { $last = $local[0].Name; $age = [int]((Get-Date) - $local[0].LastWriteTime).TotalSeconds }
+            if ($rest -contains '--json') {
+                $nx = (Invoke-Cron @('next', (C 'BACKUP_SCHEDULE'), '-n', '5', '--json')).Out | ConvertFrom-Json
+                [ordered]@{ schedule = (C 'BACKUP_SCHEDULE'); describe = $nx.describe; zone = $nx.zone; next = @($nx.next)
+                    last = [ordered]@{ file = $last; age_seconds = $age }; local = [ordered]@{ dir = $dir; count = $local.Count }
+                    copy = [ordered]@{ dir = $copy; count = $nCopy; other_disk = $other }
+                    offsite = [ordered]@{ configured = ($off -join '+'); last = $offLast }
+                    rule321 = [ordered]@{ copies = $copies; media = $media; offsite = [bool]$off.Count; ok = ($copies -ge 3 -and $media -ge 2 -and $off.Count -gt 0) }
+                } | ConvertTo-Json -Depth 4 -Compress | Write-Host
+                return
+            }
+            $script:Items = @('schedule', 'show'); Invoke-BackupTool
+            Write-Host ("Last     : {0}" -f $last)
+            Write-Host ("Local    : {0} backups in {1}" -f $local.Count, $dir)
+            if ($copy) { $where = 'SAME drive'; if ($other) { $where = 'another drive' }; Write-Host ("Copy 2   : {0} in {1} ({2})" -f $nCopy, $copy, $where) }
+            $offText = 'not configured (BACKUP_OFFSITE_COMMAND or the offsite-backup plugin)'; if ($off.Count) { $offText = ($off -join '+') }
+            if ($offLast) { $offText += " - last: $offLast" }
+            Write-Host "Off-site : $offText"
+            Write-Host ("3-2-1    : {0} copies, {1} media, off-site {2}" -f $copies, $media, [bool]$off.Count)
+        }
     }
 }
 
@@ -780,13 +927,19 @@ function Install-ServerService {
         -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
     Write-Ok "Scheduled task '$TaskName' registered (runs at boot as $ServiceAccount, root $root)"
 
+    Register-BackupTask $principal
+}
+# Per-minute task that runs "Backup tick": backs up when BACKUP_SCHEDULE (cron syntax) is due.
+function Register-BackupTask($principal) {
     $backupTask = "$TaskName-Backup"
+    $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $bAction = New-ScheduledTaskAction -Execute $psExe -WorkingDirectory $ScriptDir `
-        -Argument ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"{0}`" Backup -ConfigPath `"{1}`"" -f (Join-Path $ScriptDir 'IsleServer.ps1'), $ConfigPath)
-    $bTrigger = New-ScheduledTaskTrigger -Daily -At '05:00'
-    Register-ScheduledTask -TaskName $backupTask -Description 'Daily backup of The Isle server' -Action $bAction `
-        -Trigger $bTrigger -Principal $principal -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable) -Force | Out-Null
-    Write-Ok "Scheduled task '$backupTask' registered (daily 05:00)"
+        -Argument ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"{0}`" Backup tick -ConfigPath `"{1}`"" -f (Join-Path $ScriptDir 'IsleServer.ps1'), $ConfigPath)
+    $bTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes 1)
+    $bSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+    Register-ScheduledTask -TaskName $backupTask -Description 'The Isle server: backups on BACKUP_SCHEDULE (checked every minute)' -Action $bAction `
+        -Trigger $bTrigger -Principal $principal -Settings $bSettings -Force | Out-Null
+    Write-Ok "Scheduled task '$backupTask' registered: backups follow BACKUP_SCHEDULE ($(C 'BACKUP_SCHEDULE')). Change it with: IsleServer.ps1 Backup schedule set `"<cron>`""
 }
 function Remove-ServerService {
     Assert-Admin 'Removing the service'
@@ -801,7 +954,7 @@ function Remove-ServerService {
 
 function Show-Info {
 @"
-Scripts       : v$ScriptVersion
+Scripts       : v$ScriptVersion ($ProjectUrl)
 Runtime       : native
 Config file   : $ConfigPath
 SteamCMD dir  : $SteamCmdDir
@@ -928,7 +1081,7 @@ function Show-DockerInfo {
     $src = 'prebuilt'
     if (Test-True (C 'DOCKER_BUILD' 'true')) { $src = 'built from this repo' }
 @"
-Scripts       : v$ScriptVersion
+Scripts       : v$ScriptVersion ($ProjectUrl)
 Runtime       : docker
 Config file   : $ConfigPath (passed to the container)
 Compose file  : $(Join-Path $RepoDir 'docker-compose.yml')
@@ -945,8 +1098,9 @@ function Invoke-DockerCommand([string]$cmd) {
         'Check' { if (Test-ServerConfig) { Write-Ok "Configuration OK ($ConfigPath, runtime docker)"; return } else { exit 1 } }
         'Info'  { Show-DockerInfo; return }
         'InstallService' {
-            Write-Warn 'RUNTIME=docker: no scheduled task is needed. The container uses restart: unless-stopped.'
+            Write-Warn 'RUNTIME=docker: no server task is needed. The container uses restart: unless-stopped.'
             Write-Warn "Enable 'Start Docker Desktop when you sign in' in Docker Desktop settings so it starts with Windows."
+            Register-BackupTask (New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive)
             return
         }
         'RemoveService' { Remove-ServerService; return }
@@ -998,6 +1152,7 @@ function Invoke-DockerCommand([string]$cmd) {
         'Backup' {
             if (Test-DockerRunning) { Invoke-DcChecked @('exec', '-T', 'theisle', 'isle-server', 'backup') }
             else { Invoke-DcChecked @('run', '--rm', 'theisle', 'backup') }
+            Invoke-DockerBackup321
             Invoke-Hooks 'post-backup'
         }
         'Restore' {
@@ -1099,10 +1254,132 @@ function Set-ListValues([string]$key, [string[]]$values) {
         if ($t -and -not $seen.ContainsKey($t.ToLowerInvariant())) { $seen[$t.ToLowerInvariant()] = $true; $unique.Add($t) }
     }
     Set-ConfigValue $key ($unique -join ',')
-    return , $unique.ToArray()
+    return $unique.ToArray()   # callers wrap the result in @() (a comma here would nest the array)
 }
 function Assert-SteamIds([string[]]$ids) {
     foreach ($i in $ids) { if ($i -notmatch '^7656119\d{10}$') { throw "'$i' is not a SteamID64 (17 digits starting with 7656119)" } }
+}
+function Get-ClassEntries([string]$section) {   # [{Name, Types}] - diet and traits from classes.txt
+    $file = Join-Path $RepoDir 'config\classes.txt'
+    if (-not (Test-Path $file)) { return @() }
+    $on = $false
+    $out = foreach ($line in [IO.File]::ReadAllLines($file)) {
+        $t = $line.Trim()
+        if ($t -match '^\[(.+)\]$') { $on = ($Matches[1] -eq $section); continue }
+        if ($on -and $t -and -not $t.StartsWith('#')) {
+            $f = $t -split '\s+'
+            [pscustomobject]@{ Name = $f[0]; Types = @($f | Select-Object -Skip 1 | ForEach-Object { $_.ToLowerInvariant() }) }
+        }
+    }
+    return @($out)
+}
+# -------------------------------------------------------------- mutations --
+function Get-MutationEntries {
+    $file = Join-Path $RepoDir 'config\mutations.txt'
+    if (-not (Test-Path $file)) { return @() }
+    $out = foreach ($line in [IO.File]::ReadAllLines($file)) {
+        if (-not $line.Trim() -or $line.StartsWith('#')) { continue }
+        $f = $line -split "`t"
+        $flag = ''; if ($f.Count -gt 2) { $flag = $f[2] }
+        [pscustomobject]@{ Name = $f[0]; Default = $f[1]; Fixed = ($flag -eq 'fixed') }
+    }
+    return @($out)
+}
+function Invoke-MutationsCommand {
+    $sub = 'list'; $rest = @()
+    if ($Items -and $Items.Count -gt 0) { $sub = $Items[0].ToLowerInvariant(); $rest = @($Items | Select-Object -Skip 1) }
+    $all = Get-MutationEntries
+    $cur = C 'ENABLED_MUTATIONS'
+    $map = [ordered]@{}
+    foreach ($e in ($cur -split ';')) { if ($e.Trim()) { $i = $e.LastIndexOf(':'); $map[$e.Substring(0, $i)] = $e.Substring($i + 1) } }
+    switch ($sub) {
+        'list' {
+            if (-not $cur) { Write-Host "All mutations are available (ENABLED_MUTATIONS is empty - the game default).`n" }
+            foreach ($m in $all) {
+                $state = 'off'; $val = '-'
+                if (-not $cur) { $state = 'on'; $val = $m.Default } elseif ($map.Contains($m.Name)) { $state = 'on'; $val = $map[$m.Name] }
+                $note = ''; if ($m.Fixed) { $note = '(value must be 1)' }
+                Write-Host ('  {0,-3} {1,-34} {2,-6} {3}' -f $state, $m.Name, $val, $note)
+            }
+        }
+        { $_ -in 'enable', 'disable' } {
+            if (-not $rest.Count) { throw "Usage: IsleServer.ps1 Mutations $sub <Name> ...   (see: Mutations list)" }
+            if (-not $cur) { foreach ($m in $all) { $map[$m.Name] = $m.Default } }
+            if ($sub -eq 'enable') {
+                $m = $all | Where-Object { $_.Name -eq $rest[0] } | Select-Object -First 1
+                if (-not $m) { throw "Unknown mutation '$($rest[0])' (see: Mutations list)" }
+                $val = $m.Default; if ($rest.Count -gt 1) { $val = $rest[1] }
+                if ($val -notmatch '^\d+(\.\d+)?$') { throw "The value must be a number, e.g. $($m.Default)" }
+                if ($m.Fixed -and $val -ne '1') { throw "$($m.Name) only takes 1 (leave it out to disable it)" }
+                if ($val -ne $m.Default) { Write-Warn "$($m.Name): $val differs from the default $($m.Default) - changed values may produce unstable gameplay" }
+                $map[$m.Name] = $val
+                Write-Ok "Mutation $($m.Name) enabled ($val)"
+            } else {
+                foreach ($n in $rest) {
+                    $m = $all | Where-Object { $_.Name -eq $n } | Select-Object -First 1
+                    if (-not $m) { throw "Unknown mutation '$n' (see: Mutations list)" }
+                    $map.Remove($m.Name); Write-Ok "Mutation $($m.Name) disabled"
+                }
+                if (-not $map.Count) { throw 'Disabling every mutation: set ENABLE_MUTATIONS=false instead' }
+            }
+            Set-ConfigValue 'ENABLED_MUTATIONS' ((@($map.Keys | ForEach-Object { "${_}:$($map[$_])" })) -join ';')
+            Write-Step "$($map.Count) of $($all.Count) mutations available - restart the server to apply"
+        }
+        'reset' { Set-ConfigValue 'ENABLED_MUTATIONS' ''; Write-Ok 'Every mutation is available again (game default) - restart to apply' }
+        default { throw 'Usage: IsleServer.ps1 Mutations list|enable <Name> [value]|disable <Name...>|reset' }
+    }
+}
+# ------------------------------------------------------------------ admin --
+function Invoke-RconNow([string[]]$rconArgs) {
+    if (-not (Test-True (C 'RCON_ENABLED')) -or -not (C 'RCON_PASSWORD')) { throw 'RCON is disabled or has no password (RCON_ENABLED, RCON_PASSWORD)' }
+    if ((Get-Runtime) -eq 'docker') {
+        if (-not (Test-DockerRunning)) { throw 'The server is not running' }
+        $rc = Invoke-Dc (@('exec', '-T', 'theisle', 'isle-server', 'rcon') + $rconArgs)
+    } else {
+        if (-not (Get-Python)) { throw 'Python 3 is required for RCON' }
+        $rc = Invoke-PyRcon $rconArgs
+    }
+    if ($rc -ne 0) { throw "RCON $($rconArgs[0]) failed (is the server running?)" }
+}
+function Invoke-AdminCommand {
+    if (-not $Items -or -not $Items.Count) {
+        throw "Usage: IsleServer.ps1 Admin players|player|dm|kick|ban|announce|save|wipecorpses|details|queue|playables|pause|migrations|humans|chat|ai-learning|netupdate on|off|growth on|off|<n>|custom <cmd>`nNote: Evrima's RCON has no commands to change a player's size, skin or mutations, give god mode, teleport or heal - in-game admins (ADMIN_STEAM_IDS) use the game's own admin panel for those."
+    }
+    $sub = $Items[0].ToLowerInvariant(); $rest = @($Items | Select-Object -Skip 1)
+    $toggles = @{ pause = 'pause'; migrations = 'togglemigrations'; humans = 'togglehumans'; chat = 'toggleglobalchat'; 'ai-learning' = 'toggleailearning'; netupdate = 'togglenetupdate' }
+    $persist = @{ migrations = 'ENABLE_MIGRATION'; humans = 'ENABLE_HUMANS'; chat = 'GLOBAL_CHAT' }
+    $simple = @{ players = 'playerlist'; details = 'serverdetails'; queue = 'queuestatus'; playables = 'getplayables'; save = 'save'; wipecorpses = 'wipecorpses' }
+    if ($simple.ContainsKey($sub)) { Invoke-RconNow @($simple[$sub]); return }
+    switch ($sub) {
+        'player' { Invoke-RconNow (@('playerdata') + $rest) }
+        'announce' { if (-not $rest.Count) { throw 'Usage: IsleServer.ps1 Admin announce <text>' }; Invoke-RconNow @('announce', ($rest -join ' ')) }
+        { $_ -in 'dm', 'kick', 'ban' } {
+            if (-not $rest.Count -or $rest[0] -notmatch '^7656119\d{10}$') { throw "Usage: IsleServer.ps1 Admin $sub <SteamID64> [text]" }
+            $text = ($rest | Select-Object -Skip 1) -join ' '
+            if ($sub -eq 'dm') { if (-not $text) { throw 'Usage: IsleServer.ps1 Admin dm <SteamID64> <text>' }; Invoke-RconNow @('directmessage', "$($rest[0]),$text") }
+            else { if (-not $text) { $text = 'Removed by an admin' }; Invoke-RconNow @($sub, "$($rest[0]),$text"); Write-Ok "${sub}: $($rest[0])" }
+        }
+        { $toggles.ContainsKey($_) } {
+            if (-not $rest.Count -or @('on', 'off') -notcontains $rest[0].ToLowerInvariant()) { throw "Usage: IsleServer.ps1 Admin $sub on|off" }
+            $on = $rest[0].ToLowerInvariant() -eq 'on'; $bit = '0'; if ($on) { $bit = '1' }
+            Invoke-RconNow @($toggles[$sub], $bit)
+            if ($persist.ContainsKey($sub)) { Set-ConfigValue $persist[$sub] ($on.ToString().ToLowerInvariant()) }
+            Write-Ok "$sub $($rest[0])"
+        }
+        'growth' {
+            if (-not $rest.Count) { throw 'Usage: IsleServer.ps1 Admin growth on|off|<multiplier e.g. 1.5>' }
+            $a = $rest[0].ToLowerInvariant()
+            if ($a -in 'on', 'off') { $bit = '0'; if ($a -eq 'on') { $bit = '1' }; Invoke-RconNow @('togglegrowthmultiplier', $bit); Write-Ok "Growth multiplier $a" }
+            elseif ($a -match '^\d+(\.\d+)?$') { Invoke-RconNow @('setgrowthmultiplier', $a); Set-ConfigValue 'GROWTH_MULTIPLIER' $a; Write-Ok "Growth multiplier $a (live and in server.conf)" }
+            else { throw 'Usage: IsleServer.ps1 Admin growth on|off|<multiplier e.g. 1.5>' }
+        }
+        'custom' {
+            if (-not $rest.Count) { throw 'Usage: IsleServer.ps1 Admin custom "<command>"  (experimental: the game may ignore it)' }
+            Write-Warn 'custom RCON commands are experimental - the game may ignore them'
+            Invoke-RconNow @('custom', ($rest -join ' '))
+        }
+        default { $script:Items = @(); Invoke-AdminCommand }
+    }
 }
 function Get-KnownClasses([string]$section) {
     $file = Join-Path $RepoDir 'config\classes.txt'
@@ -1195,6 +1472,38 @@ function Invoke-ListCommand([string]$kind) {
             switch ($sub) {
                 'list' { $e = '(none disabled)'; if ($section -eq 'playable') { $e = '(all classes allowed)' }; Show-List $key $e; return }
                 'known' { Get-KnownClasses $section | ForEach-Object { Write-Host $_ }; return }
+                'types' {
+                    Write-Host "Types ($section):"
+                    $t = [ordered]@{}
+                    foreach ($c in Get-ClassEntries $section) { foreach ($ty in $c.Types) { if (-not $t.Contains($ty)) { $t[$ty] = @() }; $t[$ty] += $c.Name } }
+                    foreach ($k in ($t.Keys | Sort-Object)) { Write-Host ('  {0,-10} {1}' -f $k, ($t[$k] -join ', ')) }
+                    if ($section -eq 'playable') { Write-Host "`n  Humans are not a class: IsleServer.ps1 Classes humans on|off (ENABLE_HUMANS, live via RCON).`n  Eggs/hatchlings are not a class either and have no server setting." }
+                    return
+                }
+                { $_ -in 'select', 'add-type', 'remove-type' } {
+                    if ($rest.Count -eq 0) { throw "Usage: IsleServer.ps1 $label $sub <type> [...] (see: $label types)" }
+                    $want = @($rest | ForEach-Object { $_.ToLowerInvariant() })
+                    $match = @(Get-ClassEntries $section | Where-Object { @($_.Types | Where-Object { $want -contains $_ }).Count } | ForEach-Object Name)
+                    if (-not $match.Count) { throw "No $section class has type: $($rest -join ' ') (see: $label types)" }
+                    if ($sub -eq 'select') { $v = @(Edit-List $key 'set' $match) }
+                    elseif ($sub -eq 'add-type') { $v = @(Edit-List $key 'add' $match) }
+                    else {
+                        $base = @((C $key) -split ',' | Where-Object { $_ })
+                        if (-not $base.Count -and $section -eq 'playable') { $base = @(Get-KnownClasses $section) }
+                        $keep = @($base | Where-Object { $match -notcontains $_ })
+                        if (-not $keep.Count) { throw 'That would leave no playable class' }
+                        $v = @(Edit-List $key 'set' $keep)
+                    }
+                }
+                'humans' {
+                    if ($section -ne 'playable') { throw 'Usage: IsleServer.ps1 Classes humans [on|off]' }
+                    if (-not $rest.Count) { Write-Host "Humans: $(C 'ENABLE_HUMANS' 'false')"; return }
+                    if (@('on', 'off') -notcontains $rest[0].ToLowerInvariant()) { throw 'Usage: IsleServer.ps1 Classes humans [on|off]' }
+                    $on = $rest[0].ToLowerInvariant() -eq 'on'
+                    Set-ConfigValue 'ENABLE_HUMANS' ($on.ToString().ToLowerInvariant()); Write-Ok "Humans $($rest[0])"
+                    $bit = '0'; if ($on) { $bit = '1' }
+                    Send-LiveRcon @('togglehumans', $bit); return
+                }
                 { $_ -in 'set', 'add', 'remove' } {
                     if ($rest.Count -eq 0) { throw "Usage: IsleServer.ps1 $label $sub <Class> [...]" }
                     Assert-ClassNames $section $rest
@@ -1388,6 +1697,12 @@ function Invoke-ConfigTool([string]$cmd) {
         { $_ -in 'Admins', 'Whitelist', 'Classes', 'AIClasses' } { Invoke-ListCommand $cmd; return $true }
         { $_ -in 'Profile', 'Preset' } { Invoke-OverlayCommand $cmd; return $true }
         'Maps' { Invoke-MapsCommand; return $true }
+        'Mutations' { Invoke-MutationsCommand; return $true }
+        'Admin' { Invoke-AdminCommand; return $true }
+        'Backup' {
+            if ($Items -and $Items.Count -and @('schedule', 'status', 'tick') -contains $Items[0].ToLowerInvariant()) { Invoke-BackupTool; return $true }
+            return $false
+        }
         'AI' { Invoke-AICommand; return $true }
         'Plugins' {
             $a = @('list'); if ($Items -and $Items.Count) { $a = $Items }
@@ -1418,8 +1733,9 @@ function Invoke-ConfigTool([string]$cmd) {
 }
 
 # ------------------------------------------------------------------ main ---
-if ($Command -eq 'Help') { Get-Help $MyInvocation.MyCommand.Path -Detailed; exit 0 }
-if ($Command -eq 'Version') { Write-Host "IsleServer.ps1 $ScriptVersion"; exit 0 }
+function Show-Credits { Write-Host "Project: $ProjectUrl"; Write-Host ("Made with " + [char]0x2665 + " by $Author ($AuthorUrl)") }
+if ($Command -eq 'Help') { Get-Help $MyInvocation.MyCommand.Path -Detailed; Show-Credits; exit 0 }
+if ($Command -eq 'Version') { Write-Host "IsleServer.ps1 $ScriptVersion"; Show-Credits; exit 0 }
 Import-ServerConfig
 if (@('Status', 'Info', 'Logs', 'Check', 'Version', 'Help', 'UI', 'UiToken') -notcontains $Command) {
     $script:LogToFile = $true

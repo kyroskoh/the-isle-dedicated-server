@@ -115,3 +115,7 @@ Installer options: `--data copy|move|fresh`, `--carry LIST`, `--overwrite`, `--f
 - Restore refuses to run while the server is running (or stops it with `--stop`). It also refuses archives
   with absolute paths, `..`, links or an unknown format version.
 - Restored files on a native Linux install belong to the service user.
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

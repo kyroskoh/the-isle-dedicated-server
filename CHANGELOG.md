@@ -6,6 +6,45 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-10
+
+Planned in [PRD.md](PRD.md) as milestone M17 (ROS-05 to ROS-07, MUT-01 to MUT-03, BAK-06 to BAK-09, ADM-01 to ADM-03,
+CRD-01).
+
+### Added
+- **Roster by type:** classes carry types (carnivore, herbivore, omnivore, flying, aquatic).
+  - `classes types|select|add-type|remove-type` and `classes humans on|off` on both OSes.
+  - API: `POST /api/v1/classes/select`, `PUT /api/v1/humans`; `GET /api/v1/classes` returns types and `humans`.
+  - UI: type filters (including human and egg) with Only / Add / Remove; humans are a live switch and eggs are
+    explained (no server setting).
+- **Mutations:** `config/mutations.txt` (42 mutations), `ENABLED_MUTATIONS` → `EnabledMutations` lines,
+  `mutations list|enable|disable|reset`, `GET/PUT /api/v1/mutations`, and a Mutations card on the Map & AI page.
+- **Scheduled backups, cron-style, with 3-2-1:** `BACKUP_SCHEDULE` (cron syntax, `@daily`, `off`) checked every minute
+  by a systemd timer or a Windows scheduled task (`backup tick`), including docker mode.
+  - `tools/isle_cron.py` parses and previews schedules in the server's time zone.
+  - `BACKUP_COPY_DIR` (second copy, retention, same-disk warning) and `BACKUP_OFFSITE_COMMAND` (`{file}`).
+  - `backup schedule show|set|off`, `backup status [--json]`.
+  - API: `GET /api/v1/backups`, `PUT /api/v1/backups/schedule`, `GET /api/v1/cron/preview`.
+  - UI: schedule editor with presets and a live next-runs preview, and a 3-2-1 check card.
+- **Admin commands:** `admin ...` / `IsleServer.ps1 Admin ...` (players, player data, DM, kick, ban, announce, save,
+  wipe corpses, pause, migrations, humans, chat, AI learning, network updates, growth multiplier, queue, playables,
+  details, custom), `POST /api/v1/admin/{action}` and a new **Admin** page. More RCON opcodes in `tools/isle_rcon.py`.
+  The CLI, API and UI explain that RCON cannot change a player's size, skin or mutations, or give god mode, teleport
+  or heal.
+- **Credits and project link:** "Made with ❤️ by Kyros Koh" with links to the author and to the repository in the
+  README (new header with badges and a Support section), every doc, the web UI (sidebar, sign-in page, API docs), the
+  CLI (`version`, `help`, `info`), the installers' summaries, the OpenAPI document and the Docker image labels.
+- **Screenshots:** new roster-by-type, mutations, backup schedule and admin screenshots; the README has a screenshot
+  gallery.
+
+### Changed
+- The backup timer no longer runs once a day at 05:00: it ticks every minute and follows `BACKUP_SCHEDULE`
+  (default `0 5 * * *`, the same time as before). Re-run the installer to switch an existing install.
+- Sidebar navigation is a little more compact so the footer fits on 800 px tall screens.
+
+### Fixed
+- Windows: `Classes` printed `System.String[]` after some edits (`Set-ListValues` returned a nested array).
+
 ## [1.11.0] - 2026-11-08
 
 Planned in [PRD.md](PRD.md) as milestone M16 (MAP-01 to MAP-03, AIX-01 to AIX-03, PLG-08 to PLG-09).
@@ -378,3 +417,7 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 [1.2.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kyroskoh/the-isle-dedicated-server/releases/tag/v1.0.0
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

@@ -59,5 +59,6 @@ ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/theisle-entrypoint"]
 CMD ["run"]
 
 LABEL org.opencontainers.image.title="The Isle (Evrima) dedicated server" \
+      org.opencontainers.image.authors="Kyros Koh (https://github.com/kyroskoh)" \
       org.opencontainers.image.source="https://github.com/kyroskoh/the-isle-dedicated-server" \
       org.opencontainers.image.licenses="MIT"

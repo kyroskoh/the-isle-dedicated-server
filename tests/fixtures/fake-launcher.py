@@ -42,6 +42,37 @@ if cmd == "status":
     if os.path.exists(running):
         print("[ OK ] Running (server PID 4242)"); sys.exit(0)
     print("[WARN] Not running"); sys.exit(3)
+if cmd == "backup" and rest[:1] in (["status"], ["schedule"]):
+    if rest[0] == "schedule":
+        if rest[1:2] == ["off"]:
+            put("BACKUP_SCHEDULE", "off")
+        elif rest[1:2] == ["set"]:
+            put("BACKUP_SCHEDULE", '"%s"' % rest[2])
+        print("[ OK ] Backup schedule: %s" % get("BACKUP_SCHEDULE")); sys.exit(0)
+    sched = get("BACKUP_SCHEDULE") or "0 5 * * *"
+    copy, off = get("BACKUP_COPY_DIR"), get("BACKUP_OFFSITE_COMMAND")
+    copies = 1 + (1 if copy else 0) + (1 if off else 0)
+    print(json.dumps({"schedule": sched, "describe": "every day at 05:00" if sched == "0 5 * * *" else sched,
+                      "zone": "UTC+00:00", "next": [] if sched == "off" else ["2026-11-09T05:00:00", "2026-11-10T05:00:00"],
+                      "last": {"file": "theisle-backup_20261108_050012.tar.gz", "age_seconds": 25200},
+                      "local": {"dir": "/home/theisle/theisle-backups", "count": 7},
+                      "copy": {"dir": copy, "count": 7 if copy else 0, "other_disk": bool(copy)},
+                      "offsite": {"configured": off, "last": "2026-11-08T05:01:40" if off else ""},
+                      "rule321": {"copies": copies, "media": 2 if copy else 1, "offsite": bool(off),
+                                  "ok": bool(copy and off)}}))
+    sys.exit(0)
+if cmd == "admin":
+    if os.environ.get("FAKE_FAIL") == "admin":
+        print("[FAIL] RCON connection refused (is the server running?)"); sys.exit(1)
+    if rest[:1] == ["players"]:
+        print("76561198000000001 Rex\n76561198000000002 Trike"); sys.exit(0)
+    print("[ OK ] admin %s" % " ".join(rest)); sys.exit(0)
+if cmd == "classes" and rest[:1] and rest[0] in ("select", "add-type", "remove-type", "humans"):
+    if rest[0] == "humans":
+        put("ENABLE_HUMANS", "true" if rest[1:2] == ["on"] else "false")
+    else:
+        put("ALLOWED_CLASSES", "Tyrannosaurus,Carnotaurus" if "carnivore" in rest else "Triceratops")
+    print("[ OK ] classes %s" % " ".join(rest)); sys.exit(0)
 if cmd in ("start", "stop", "restart", "update", "validate", "backup", "save"):
     print("[INFO] %s ..." % cmd, flush=True)
     time.sleep(float(os.environ.get("FAKE_DELAY", "0.3")))

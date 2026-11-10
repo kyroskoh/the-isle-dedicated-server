@@ -83,3 +83,7 @@ isle-server restore ~/theisle-backups/theisle-YYYYMMDD-HHMMSS.tar.gz
 isle-server validate
 isle-server start
 ```
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

@@ -188,7 +188,7 @@ Priority: **M** = must, **S** = should, **C** = could.
 | BAK-01 | M | `backup` archives `TheIsle/Saved` (minus Logs/Crashes) plus `server.conf` | Linux `.tar.gz`, Windows `.zip`. Timestamped name |
 | BAK-02 | M | RCON save before backing up a running server | |
 | BAK-03 | M | Retention | Keeps the newest `BACKUP_RETENTION` archives. `0` keeps all |
-| BAK-04 | M | Scheduled daily backup | systemd timer / scheduled task at 05:00 |
+| BAK-04 | M | Scheduled backup | systemd timer / scheduled task; since v1.12 a per-minute tick following `BACKUP_SCHEDULE` (BAK-06) |
 | BAK-05 | M | `restore` | Refuses while running. Moves current data to `Saved.pre-restore-<ts>` first |
 
 ### 6.8 RCON (RCN)
@@ -322,6 +322,25 @@ Priority: **M** = must, **S** = should, **C** = could.
 | PLG-08 | M | **Community resources** | `plugins/community.json` (checked links; third-party, not endorsed; note on mods), `plugins community`, `GET /api/v1/plugins/community`, UI card; links open in a new tab with `noopener` |
 | PLG-09 | M | **Catalog sources in the UI/API** | `GET/POST/DELETE /api/v1/plugins/sources` (https only), UI card with confirmation and the trust warning |
 
+### 6.18 Roster types, mutations, scheduled backups and admin commands (ROS, MUT, BAK, ADM)
+
+| ID | Pri | Requirement | Acceptance criteria |
+|---|---|---|---|
+| ROS-05 | M | **Select by type** | `classes types\|select\|add-type\|remove-type` on both OSes, `POST /api/v1/classes/select`; types from `config/classes.txt`; unknown types refused |
+| ROS-06 | M | **Humans and eggs** | `classes humans on\|off` / `PUT /api/v1/humans` (`ENABLE_HUMANS`, live via RCON); UI filters include human (a switch) and egg (explained: no server setting) |
+| ROS-07 | S | **UI type filter** | Roster filter chips per type with Only / Add / Remove; saved with Save |
+| MUT-01 | M | **Mutation catalog** | `config/mutations.txt` (name, default, fixed) |
+| MUT-02 | M | **Choose mutations** | `ENABLED_MUTATIONS` → `EnabledMutations=Name, value`; empty = all; `mutations list\|enable\|disable\|reset`; fixed ones only take 1; non-default values warn |
+| MUT-03 | S | **Mutations in API/UI** | `GET/PUT /api/v1/mutations`, Mutations card with search on the Map & AI page |
+| BAK-06 | M | **Cron-like schedule** | `BACKUP_SCHEDULE` (5 fields, names, steps, ranges, `@daily`..., `off`) in `TIMEZONE`; `tools/isle_cron.py`; validated by `check` and `backup schedule set` |
+| BAK-07 | M | **Per-minute tick** | systemd timer / scheduled task runs `backup tick`; runs once per due minute; catches up to 10 minutes |
+| BAK-08 | M | **3-2-1** | `BACKUP_COPY_DIR` second copy with retention and a same-disk warning; `BACKUP_OFFSITE_COMMAND` with `{file}` (1 h limit) or the offsite-backup plugin; `backup status [--json]` reports copies, media, off-site |
+| BAK-09 | S | **Backups in API/UI** | `GET /api/v1/backups`, `PUT /api/v1/backups/schedule`, `GET /api/v1/cron/preview`; schedule editor with presets and live preview, 3-2-1 card |
+| ADM-01 | M | **Live admin commands** | `admin players\|player\|dm\|kick\|ban\|announce\|save\|wipecorpses\|details\|queue\|playables\|pause\|migrations\|humans\|chat\|ai-learning\|netupdate\|growth\|custom` on both OSes |
+| ADM-02 | M | **Admin API/UI** | `POST /api/v1/admin/{action}` validates SteamID64, text (one line, ≤500) and on/off/number values; UI Admin page |
+| ADM-03 | M | **Honest limits** | CLI, API and UI state that RCON cannot change size, skin, mutations, god mode, teleport or heal |
+| CRD-01 | S | **Author credit and project link** | README header and every doc footer, UI sidebar/login/API docs, CLI `version`/`help`/`info`, installers, OpenAPI `contact`/`externalDocs`, image labels |
+
 ## 7. CLI contract
 
 | Command | Linux (`isle-server.sh`) | Windows (`IsleServer.ps1`) | Exit codes |
@@ -427,6 +446,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 | M12 Config tools & plugins (v1.7.0) | CFX-01 – CFX-09, PLG-01 – PLG-07 | ✅ Done (v1.7.0). Linux + PowerShell 7 verified locally, Windows PowerShell 5.1 by CI. Live RCON pushes and real Discord/NAS targets need a live server (M6) |
 | M13 Snapshots & mode-switch data choices (v1.8.0) | MIG-01 – MIG-08 | ✅ Done (v1.8.0). Linux cycle (92 checks), snapshot tests, PowerShell 7 suites locally; Windows PowerShell 5.1 and Windows Docker Desktop paths via CI/field test (M6) |
 | M16 Maps, AI options & community sources (v1.11.0) | MAP-01 – MAP-03, AIX-01 – AIX-03, PLG-08 – PLG-09 | ✅ Done (v1.11.0). Config tool suites (bash, PowerShell), API and UI tests; Isla Spiro branch needs a field check (M6) |
+| M17 Roster types, mutations, scheduled 3-2-1 backups & admin (v1.12.0) | ROS-05 – ROS-07, MUT-01 – MUT-03, BAK-06 – BAK-09, ADM-01 – ADM-03, CRD-01 | ✅ Done (v1.12.0). Config tool suites (bash, PowerShell), API, UI and layout tests; live RCON admin commands need a field check (M6) |
 | M15 Logs, time zone, date display, peek & responsive (v1.10.0) | LOG-01 – LOG-05, UI-06 – UI-08 | ✅ Done (v1.10.0). `tests/test_logs.py`, `tests/test_logs.ps1`, UI suites on Chromium/Firefox/WebKit in CI |
 | M14 API, web UI & Debian verification (v1.9.0) | API-01 – API-05, UI-01 – UI-05, DEB-01 | ✅ Done (v1.9.0). API and UI suites on Linux and in the Debian image, Playwright UI test in CI, native Debian install job. Systemd `theisle-ui` unit and the Windows `TheIsleServer-UI` task need a field test (M6) |
 
@@ -521,3 +541,7 @@ With `RUNTIME=docker` (or `--docker` / `-Runtime Docker`) the **same commands** 
 - Restart only when Steam reports a new build ID (S)
 - Discord webhook notifications for start, stop, crash and update (C)
 - Several instances per host: per-instance config, unit and task names (C)
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

@@ -33,3 +33,7 @@ Bug reports, distro fixes and new config keys are welcome.
 
 When you report a bug, include your OS and version, the command you ran, and the last 50 lines of
 the server log or console output. Remove any passwords first.
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

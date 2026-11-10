@@ -59,12 +59,13 @@ plain text.
 | Dashboard | State, Start/Stop/Restart/Save/Backup, Update/Verify game files, server details, recent jobs with their output |
 | Settings | Every `server.conf` key, grouped and searchable. Secrets are masked. Changes are checked with `check` and rolled back if invalid. Machine-specific keys (paths, runtime, UI address) are read-only here |
 | Players | Admins and whitelist (add, remove, on/off) |
-| Roster | Playable classes as tick boxes (with diets), plus roster presets |
-| Map & AI | Switch maps (with their Steam branch), AI spawning, density (live), spawn interval, AI presets, disabled AI classes with their roles |
+| Roster | Playable classes as tick boxes (with types), roster presets, a type filter (incl. human and egg) with Only / Add / Remove, and the humans switch |
+| Map & AI | Switch maps (with their Steam branch), AI spawning, density (live), spawn interval, AI presets, disabled AI classes with their roles, mutations |
 | Profiles & presets | Apply a profile, or several presets in order |
 | Plugins | Search, install, enable/disable, update, remove, configure, plugin presets, catalog sources, community resources |
-| Snapshots & backups | Create, restore (choose parts, overwrite, stop first) and delete snapshots; back up now |
+| Snapshots & backups | Create, restore (choose parts, overwrite, stop first) and delete snapshots; back up now; backup schedule (cron) with live preview; 3-2-1 check |
 | Logs | The game's log or any rotated `launcher_` / `server_` / `ui_` log file, last 100–2000 lines, with auto-refresh |
+| Admin | Live admin commands: players online, player data, DM, kick, ban, announce, live switches, growth multiplier, save, wipe corpses, custom |
 | RCON console | Send RCON commands to the running server |
 
 ### Date & time, cut-off text and screen sizes
@@ -113,12 +114,22 @@ Changed fields are highlighted until you save. Machine-specific keys sit read-on
 
 ![Roster page](docs/images/ui/roster.png)
 
+Filter by type (carnivore, herbivore, omnivore, flying, aquatic, human, egg), then **Only** / **Add** / **Remove** that
+type in one click. Humans are a live switch (`ENABLE_HUMANS`); eggs and hatchlings have no server setting, and the tile
+says so.
+
+![Roster filtered to carnivores](docs/images/ui/roster-types.png)
+
 **Map & AI.** Pick the map (its Steam branch switches with it), and set AI spawning, density, spawn interval, AI presets
 and disabled AI classes.
 
 | Map | AI creatures |
 |---|---|
 | ![Map & AI page](docs/images/ui/map-ai.png) | ![AI creatures](docs/images/ui/map-ai-creatures.png) |
+
+**Mutations.** Every mutation (the game default), or only the ticked ones with their values. "Fixed" mutations only take 1.
+
+![Mutations card](docs/images/ui/mutations.png)
 
 **Profiles & presets.** Profile cards show what they change. Presets can be applied together, in order.
 
@@ -136,6 +147,18 @@ list of community tools and guides.
 | Snapshots | Restore |
 |---|---|
 | ![Snapshots page](docs/images/ui/snapshots.png) | ![Restore dialog](docs/images/ui/snapshot-restore.png) |
+
+**Backup schedule and 3-2-1.** Pick a preset or type a cron expression; the next five runs show as you type (in the
+server's time zone). The 3-2-1 card checks copies, media and off-site.
+
+![Backup schedule and 3-2-1 check](docs/images/ui/backup-schedule.png)
+
+**Admin.** Live RCON commands: players online with data / message / kick / ban, announcements, moderation by SteamID64,
+live switches (pause, migrations, humans, global chat, AI learning, network updates), the growth multiplier, save, queue
+status, playable classes, server details, wipe corpses and an experimental custom command. A note explains what RCON
+cannot do (size, skin, mutations, god mode, teleport, heal).
+
+![Admin page](docs/images/ui/admin.png)
 
 **Logs and RCON console.**
 
@@ -217,3 +240,7 @@ How the API behaves:
 - CORS is off unless you allow one exact origin with `--cors`.
 
 See also [SECURITY.md](SECURITY.md).
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

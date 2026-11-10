@@ -47,14 +47,16 @@ sys.path.insert(0, TOOLS)
 import isle_rcon  # noqa: E402
 import isle_plugins  # noqa: E402
 import isle_logs  # noqa: E402
+import isle_cron  # noqa: E402
 
-API_VERSION = "1.0.0"
+API_VERSION = "1.1.0"
 MAX_BODY = 64 * 1024
 MASK = "********"
 SECRET_KEYS = {"RCON_PASSWORD", "SERVER_PASSWORD", "EOS_CLIENT_SECRET", "STEAM_BRANCH_PASSWORD"}
 # never editable through the API: change these with the installer (machine / runtime / paths)
 LOCKED_KEYS = {"RUNTIME", "DOCKER_BUILD", "DOCKER_IMAGE", "PUID", "PGID", "STEAMCMD_DIR", "SERVER_DIR",
-               "BACKUP_DIR", "INI_OVERRIDES_DIR", "UI_HOST", "UI_PORT", "LOG_DIR"}
+               "BACKUP_DIR", "INI_OVERRIDES_DIR", "UI_HOST", "UI_PORT", "LOG_DIR",
+               "BACKUP_COPY_DIR", "BACKUP_OFFSITE_COMMAND"}   # a shell command: never settable remotely
 ACCESS_LOG = {"log": None, "lock": threading.Lock()}
 STEAMID_RE = re.compile(r"^7656119\d{10}$")
 CLASS_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
@@ -66,7 +68,7 @@ PS_NAMES = {"start": "Start", "stop": "Stop", "restart": "Restart", "save": "Sav
             "update": "Update", "validate": "Validate", "status": "Status", "info": "Info", "check": "Check",
             "logs": "Logs", "admins": "Admins", "whitelist": "Whitelist", "classes": "Classes",
             "ai-classes": "AIClasses", "profile": "Profile", "preset": "Preset", "plugins": "Plugins",
-            "snapshot": "Snapshot", "version": "Version", "ai": "AI", "maps": "Maps"}
+            "snapshot": "Snapshot", "version": "Version", "ai": "AI", "maps": "Maps", "mutations": "Mutations", "admin": "Admin"}
 
 
 class ApiError(Exception):
@@ -249,7 +251,7 @@ def known_classes(section):
                 continue
             if on and t and not t.startswith("#"):
                 parts = t.split()
-                names.append({"name": parts[0], "diet": parts[1] if len(parts) > 1 else None})
+                names.append({"name": parts[0], "diet": parts[1] if len(parts) > 1 else None, "types": [x.lower() for x in parts[1:]]})
     return names
 
 
@@ -287,6 +289,38 @@ def number(value, default):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def mutation_catalog():
+    """config/mutations.txt -> [{name, default, fixed}]"""
+    path = os.path.join(REPO, "config", "mutations.txt")
+    out = []
+    if os.path.isfile(path):
+        for line in open(path, encoding="utf-8"):
+            if line.startswith("#") or not line.strip():
+                continue
+            f = line.rstrip("\n").split("\t")
+            out.append({"name": f[0], "default": f[1], "fixed": len(f) > 2 and f[2] == "fixed"})
+    return out
+
+
+def last_json(text):
+    for line in reversed(text.strip().splitlines()):
+        if line.strip().startswith("{"):
+            return json.loads(line)
+    raise ApiError(502, "Unexpected launcher output", text.strip()[-500:])
+
+
+ADMIN_ACTIONS = {
+    # action: (needs steam_id, text: None|"optional"|"required", value: None|"onoff"|"growth")
+    "players": (False, None, None), "player": (False, None, None), "details": (False, None, None),
+    "queue": (False, None, None), "playables": (False, None, None), "save": (False, None, None),
+    "wipecorpses": (False, None, None), "announce": (False, "required", None), "custom": (False, "required", None),
+    "dm": (True, "required", None), "kick": (True, "optional", None), "ban": (True, "optional", None),
+    "pause": (False, None, "onoff"), "migrations": (False, None, "onoff"), "humans": (False, None, "onoff"),
+    "chat": (False, None, "onoff"), "ai-learning": (False, None, "onoff"), "netupdate": (False, None, "onoff"),
+    "growth": (False, None, "growth"),
+}
 
 
 def snapshot_manifest(path):
@@ -518,6 +552,10 @@ class Api(object):
             updates[key] = value
         if not updates:
             return {"changed": [], "check": result(0, "nothing to change")}
+        return self._apply_conf(updates)
+
+    def _apply_conf(self, updates):
+        """write KEY=VALUE pairs, validate with the launcher's check, roll back on errors"""
         backup = self.env.conf + ".bak-api"
         with open(self.env.conf, "rb") as src, open(backup, "wb") as dst:
             dst.write(src.read())
@@ -582,9 +620,12 @@ class Api(object):
         return {"classes": list_value(self.env.values(), key), "known": known_classes(section)}
 
     @route("GET", "/api/v1/classes", "getClasses", "Roster", "Playable roster (empty = all) and known classes",
-           responses={"200": obj({"classes": STR_LIST, "known": {"type": "array", "items": obj({"name": STR, "diet": {"type": ["string", "null"]}})}})})
+           responses={"200": obj({"classes": STR_LIST, "humans": {"type": "boolean"},
+                                  "known": {"type": "array", "items": obj({"name": STR, "diet": {"type": ["string", "null"]}, "types": STR_LIST})}})})
     def classes_get(self, req):
-        return self._classes_get("ALLOWED_CLASSES", "playable")
+        out = self._classes_get("ALLOWED_CLASSES", "playable")
+        out["humans"] = (self.env.values().get("ENABLE_HUMANS") or "false").lower() in ("true", "1", "yes", "on")
+        return out
 
     @route("PUT", "/api/v1/classes", "setClasses", "Roster", "Set the playable roster (empty list = all classes)",
            body=CLASSES_BODY, responses={"200": OUTPUT})
@@ -599,6 +640,28 @@ class Api(object):
         if not NAME_RE.match(name) or not os.path.isfile(os.path.join(REPO, "config", "rosters", name + ".txt")):
             raise ApiError(404, "Unknown roster", name)
         return ensure_ok(*self.env.run("classes", ["preset", name]))
+
+    @route("POST", "/api/v1/classes/select", "selectClassesByType", "Roster",
+           "Only these types (select), add them (add) or remove them (remove): carnivore, herbivore, omnivore, flying, aquatic",
+           body=obj({"types": {"type": "array", "items": STR, "minItems": 1}, "mode": {"type": "string", "enum": ["select", "add", "remove"]}}, ["types"]),
+           responses={"200": OUTPUT})
+    def classes_select(self, req):
+        types = need(req.body, "types", "list")
+        mode = req.body.get("mode", "select")
+        known = {t for c in known_classes("playable") for t in c.get("types", [])}
+        bad = [t for t in types if t.lower() not in known]
+        if bad or not types:
+            raise ApiError(422, "Unknown type", "%s (known: %s)" % (", ".join(bad) or "none given", ", ".join(sorted(known))))
+        sub = {"select": "select", "add": "add-type", "remove": "remove-type"}.get(mode)
+        if not sub:
+            raise ApiError(422, "Validation failed", "mode: select, add or remove")
+        return ensure_ok(*self.env.run("classes", [sub] + [t.lower() for t in types]))
+
+    @route("PUT", "/api/v1/humans", "setHumans", "Roster", "Humans on or off (not a class: ENABLE_HUMANS, live via RCON)",
+           body=obj({"enabled": {"type": "boolean"}}, ["enabled"]), responses={"200": OUTPUT})
+    def humans(self, req):
+        on = need(req.body, "enabled", "bool")
+        return ensure_ok(*self.env.run("classes", ["humans", "on" if on else "off"]))
 
     @route("GET", "/api/v1/rosters", "listRosters", "Roster", "Roster presets",
            responses={"200": {"type": "array", "items": obj({"name": STR, "description": STR, "classes": STR_LIST})}})
@@ -721,6 +784,137 @@ class Api(object):
         if not name.startswith("ai-") or name not in [p["name"] for p in overlay_files("preset")]:
             raise ApiError(404, "Unknown AI preset", name)
         return ensure_ok(*self.env.run("ai", ["preset", name]))
+
+    # ------------------------------------------------------------- backups
+    @route("GET", "/api/v1/backups", "getBackups", "Backups",
+           "Backup schedule (next runs), last backup and the 3-2-1 check (copies, media, off-site)",
+           responses={"200": {"type": "object"}})
+    def backups(self, req):
+        code, out = self.env.run("backup", ["status", "--json"], timeout=60)
+        ensure_ok(code, out, status=502)
+        return last_json(out)
+
+    @route("PUT", "/api/v1/backups/schedule", "setBackupSchedule", "Backups",
+           "Set when backups run: cron syntax (minute hour day month weekday), @daily, ... or off",
+           body=obj({"schedule": {"type": "string", "maxLength": 100}}, ["schedule"]), responses={"200": OUTPUT})
+    def backup_schedule(self, req):
+        expr = need(req.body, "schedule", "str").strip()
+        if not expr:
+            raise ApiError(422, "Invalid schedule", "schedule: a cron expression, @daily, ... or off")
+        try:
+            cron = isle_cron.Cron(expr)
+        except isle_cron.CronError as exc:
+            raise ApiError(422, "Invalid schedule", str(exc))
+        if cron.never:
+            return ensure_ok(*self.env.run("backup", ["schedule", "off"]))
+        return ensure_ok(*self.env.run("backup", ["schedule", "set", expr]))
+
+    @route("GET", "/api/v1/cron/preview", "previewCron", "Backups", "Describe a cron expression and its next runs (in TIMEZONE)",
+           params=[{"name": "expr", "in": "query", "required": True, "schema": STR}],
+           responses={"200": obj({"describe": STR, "zone": STR, "next": STR_LIST})})
+    def cron_preview(self, req):
+        expr = (req.query.get("expr") or [""])[0]
+        try:
+            cron = isle_cron.Cron(expr)
+        except isle_cron.CronError as exc:
+            raise ApiError(422, "Invalid schedule", str(exc))
+        v = self.env.values()
+        return {"describe": cron.describe(), "zone": isle_logs.zone_label(v),
+                "next": [t.strftime("%Y-%m-%dT%H:%M:00") for t in cron.next_runs(isle_cron.now_for(v), 5)]}
+
+    # ----------------------------------------------------------- mutations
+    @route("GET", "/api/v1/mutations", "getMutations", "World",
+           "Mutations: every one available (game default) or only the listed ones with their values",
+           responses={"200": obj({"mode": {"type": "string", "enum": ["all", "custom"]}, "enabled_system": {"type": "boolean"},
+                                  "mutations": {"type": "array", "items": obj({"name": STR, "default": STR, "fixed": {"type": "boolean"},
+                                                                              "enabled": {"type": "boolean"}, "value": STR})}})})
+    def mutations(self, req):
+        v = self.env.values()
+        cur = {}
+        for entry in (v.get("ENABLED_MUTATIONS") or "").split(";"):
+            if ":" in entry:
+                name, val = entry.rsplit(":", 1)
+                cur[name.strip()] = val.strip()
+        items = []
+        for m in mutation_catalog():
+            on = not cur or m["name"] in cur
+            items.append(dict(m, enabled=on, value=cur.get(m["name"], m["default"]) if on else ""))
+        return {"mode": "custom" if cur else "all", "enabled_system": v.get("ENABLE_MUTATIONS", "true").lower() in ("true", "1", "yes", "on"),
+                "mutations": items}
+
+    @route("PUT", "/api/v1/mutations", "setMutations", "World",
+           "All mutations (mode=all), or only these with their values (mode=custom). Changed values may destabilise gameplay",
+           body=obj({"mode": {"type": "string", "enum": ["all", "custom"]}, "mutations": {"type": "object", "additionalProperties": STR}}, ["mode"]),
+           responses={"200": obj({"changed": STR_LIST, "check": OUTPUT})})
+    def mutations_set(self, req):
+        mode = need(req.body, "mode", "str")
+        if mode == "all":
+            return self._apply_conf({"ENABLED_MUTATIONS": ""})
+        if mode != "custom":
+            raise ApiError(422, "Validation failed", "mode: all or custom")
+        chosen = req.body.get("mutations")
+        if not isinstance(chosen, dict) or not chosen:
+            raise ApiError(422, "Validation failed", "custom needs at least one mutation (or set ENABLE_MUTATIONS=false)")
+        known = {m["name"]: m for m in mutation_catalog()}
+        parts = []
+        for name, val in chosen.items():
+            m = known.get(name)
+            if not m:
+                raise ApiError(422, "Unknown mutation", name)
+            val = str(val).strip()
+            if not re.match(r"^\d+(\.\d+)?$", val):
+                raise ApiError(422, "Validation failed", "%s: the value must be a number" % name)
+            if m["fixed"] and val != "1":
+                raise ApiError(422, "Validation failed", "%s only takes 1" % name)
+            parts.append("%s:%s" % (name, val))
+        order = [m["name"] for m in mutation_catalog()]
+        parts.sort(key=lambda p: order.index(p.rsplit(":", 1)[0]))
+        return self._apply_conf({"ENABLED_MUTATIONS": ";".join(parts)})
+
+    # --------------------------------------------------------------- admin
+    @route("POST", "/api/v1/admin/{action}", "adminCommand", "Admin",
+           "Live admin command over RCON (players, player data, dm, kick, ban, announce, save, wipecorpses, pause, migrations, "
+           "humans, chat, ai-learning, netupdate, growth, queue, playables, details, custom). Evrima's RCON cannot change a "
+           "player's size, skin or mutations, god mode, teleport or heal",
+           params=[{"name": "action", "in": "path", "required": True, "schema": {"type": "string", "enum": sorted(ADMIN_ACTIONS)}}],
+           body=obj({"steam_id": {"type": "string", "pattern": STEAMID_RE.pattern}, "text": {"type": "string", "maxLength": 500},
+                     "value": {"type": "string", "maxLength": 20}}),
+           responses={"200": OUTPUT, "502": {"$ref": "#/components/schemas/Problem"}})
+    def admin(self, req, action):
+        spec = ADMIN_ACTIONS.get(action)
+        if not spec:
+            raise ApiError(404, "Unknown admin action", "use one of: %s" % ", ".join(sorted(ADMIN_ACTIONS)))
+        body = req.body if isinstance(req.body, dict) else {}
+        needs_id, text_rule, value_rule = spec
+        args = [action]
+        if needs_id:
+            sid = body.get("steam_id", "")
+            if not isinstance(sid, str) or not STEAMID_RE.match(sid):
+                raise ApiError(422, "Invalid SteamID64", "steam_id: 17 digits starting with 7656119")
+            args.append(sid)
+        if action == "player" and body.get("steam_id"):
+            if not STEAMID_RE.match(str(body["steam_id"])):
+                raise ApiError(422, "Invalid SteamID64", "steam_id")
+            args.append(body["steam_id"])
+        text = body.get("text", "")
+        if text_rule:
+            if not isinstance(text, str) or len(text) > 500 or "\n" in text or "\r" in text:
+                raise ApiError(422, "Validation failed", "text: one line, at most 500 characters")
+            if text_rule == "required" and not text.strip():
+                raise ApiError(422, "Validation failed", "text is required")
+            if text.strip():
+                args.append(text.strip())
+        if value_rule:
+            value = str(body.get("value", "")).strip().lower()
+            if value_rule == "onoff" and value not in ("on", "off"):
+                raise ApiError(422, "Validation failed", "value: on or off")
+            if value_rule == "growth" and value not in ("on", "off") and not re.match(r"^\d+(\.\d+)?$", value):
+                raise ApiError(422, "Validation failed", "value: on, off or a multiplier such as 1.5")
+            args.append(value)
+        code, out = self.env.run("admin", args, timeout=30)
+        if code != 0:
+            raise ApiError(502, "Admin command failed", out.strip()[-1000:] or "is the server running with RCON enabled?")
+        return result(code, out)
 
     # --------------------------------------------------------------- plugins
     def _plugin_ctx(self):
@@ -907,10 +1101,12 @@ def build_spec():
                  "description": "Manage a The Isle (Evrima) dedicated server - natively or in Docker, on Linux or Windows. "
                                 "Every action goes through the same launcher as the command line. Authenticate with "
                                 "`Authorization: Bearer <token>` (see `isle-server ui-token`). Errors use RFC 7807 problem details.",
+                 "contact": {"name": "Kyros Koh", "url": "https://github.com/kyroskoh"},
                  "license": {"name": "MIT", "identifier": "MIT"}},
+        "externalDocs": {"description": "Project on GitHub (made with love by Kyros Koh)", "url": "https://github.com/kyroskoh/the-isle-dedicated-server"},
         "servers": [{"url": "/"}],
         "security": [{"bearerAuth": []}],
-        "tags": [{"name": t} for t in ("System", "Server", "Jobs", "Settings", "Players", "Roster", "World", "Profiles", "Plugins", "Snapshots")],
+        "tags": [{"name": t} for t in ("System", "Server", "Jobs", "Admin", "Settings", "Players", "Roster", "World", "Profiles", "Plugins", "Backups", "Snapshots")],
         "paths": paths,
         "components": {
             "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},

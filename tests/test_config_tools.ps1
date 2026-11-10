@@ -52,6 +52,22 @@ ck 'AI density/interval'     { run AI density 0.5 | Out-Null; run AI interval 25
 ck 'AI bad values refused'   { ((run AI density lots) -match 'Usage') -and ((run AI interval 0) -match 'Usage') }
 ck 'AI preset ai-* only'     { run AI preset ai-prey-only | Out-Null; ((conf DISABLED_AI_CLASSES) -eq 'Compsognathus,Pterodactylus') -and ((run AI preset casual) -match 'Usage') }
 ck 'AISpawnInterval rendered' { run Configure | Out-Null; (Get-Content (Join-Path $W 'srv/TheIsle/Saved/Config/WindowsServer/Game.ini')) -contains 'AISpawnInterval=25' }
+ck 'Classes types'           { (run Classes types) -match 'flying\s+Pteranodon' }
+ck 'Classes select flying'   { run Classes select flying | Out-Null; (conf ALLOWED_CLASSES) -eq 'Pteranodon' }
+ck 'Classes remove-type'     { run Classes add-type aquatic | Out-Null; run Classes remove-type flying | Out-Null; (conf ALLOWED_CLASSES) -eq 'Deinosuchus' }
+ck 'Unknown type refused'    { ((run Classes select egg) -match 'has type: egg') -and ((conf ALLOWED_CLASSES) -eq 'Deinosuchus') }
+ck 'Humans on'               { run Classes humans on | Out-Null; (conf ENABLE_HUMANS) -eq 'true' }
+run Classes reset | Out-Null; run Classes humans off | Out-Null
+ck 'Mutation enable value'   { run Mutations enable Hemomania 0.3 | Out-Null; (conf ENABLED_MUTATIONS) -match 'Hemomania:0.3' }
+ck 'Fixed mutation only 1'   { $o = run Mutations enable Reabsorption 2; ($o -match 'only takes 1') -and ("$(conf ENABLED_MUTATIONS)" -notmatch 'Reabsorption:2') }
+ck 'EnabledMutations in ini' { run Configure | Out-Null; (Get-Content (Join-Path $W 'srv/TheIsle/Saved/Config/WindowsServer/Game.ini')) -contains 'EnabledMutations=Hemomania, 0.3' }
+ck 'Mutations reset'         { run Mutations reset | Out-Null; [string]::IsNullOrEmpty((conf ENABLED_MUTATIONS)) }
+ck 'Backup schedule set'     { run Backup schedule set '30 */6 * * 1-5' | Out-Null; (conf BACKUP_SCHEDULE) -match '30 \*/6 \* \* 1-5' }
+ck 'Bad schedule refused'    { run Backup schedule set '61 * * * *' | Out-Null; (conf BACKUP_SCHEDULE) -match '30 \*/6' }
+ck 'Backup status json'      { $j = ((run Backup status --json) -split "`n" | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1) | ConvertFrom-Json; $j.rule321.copies -ge 1 }
+ck 'Admin kick needs id'     { (run Admin kick 123) -match 'SteamID64|Usage' }
+ck 'Admin notes limits'      { (run Admin) -match 'god mode' }
+ck 'Version shows credits'   { $v = & $m Version *>&1 | Out-String; ($v -match 'github.com/kyroskoh/the-isle-dedicated-server') -and ($v -match 'Kyros Koh') }
 Remove-Item $W -Recurse -Force -ErrorAction SilentlyContinue
 "RESULT: $fails failure(s)"
 if ($fails -gt 0) { exit 1 }

@@ -415,6 +415,84 @@ class ApiTest(unittest.TestCase):
             self.assertTrue(link["name"] and link["description"], link)
         self.assertIn("mods", community)
 
+    def test_backups(self):
+        code, body, _ = self.s.call("GET", "/api/v1/backups")
+        self.assertEqual(code, 200, body)
+        self.assertEqual(body["schedule"], "0 5 * * *")
+        self.assertFalse(body["rule321"]["ok"])
+        code, out, _ = self.s.call("PUT", "/api/v1/backups/schedule", {"schedule": "30 */6 * * 1-5"})
+        self.assertEqual(code, 200, out)
+        self.assertEqual(self.conf("BACKUP_SCHEDULE"), '"30 */6 * * 1-5"')
+        self.assertEqual(self.s.call("PUT", "/api/v1/backups/schedule", {"schedule": "off"})[0], 200)
+        self.assertEqual(self.conf("BACKUP_SCHEDULE"), "off")
+        self.assertEqual(self.s.calls()[-1], ["backup", "schedule", "off"])
+        for bad in ("61 * * * *", "* * *", "0 5 * * 8", "@sometimes", "0 5 * * *; rm -rf /", ""):
+            self.assertEqual(self.s.call("PUT", "/api/v1/backups/schedule", {"schedule": bad})[0], 422, bad)
+        self.s.call("PUT", "/api/v1/backups/schedule", {"schedule": "0 5 * * *"})
+
+    def test_cron_preview(self):
+        code, body, _ = self.s.call("GET", "/api/v1/cron/preview?expr=" + urllib.parse.quote("15 3 * * SUN"))
+        self.assertEqual(code, 200, body)
+        self.assertEqual(len(body["next"]), 5)
+        for t in body["next"]:
+            self.assertTrue(t.endswith("T03:15:00"), t)
+        self.assertTrue(body["describe"])
+        self.assertEqual(self.s.call("GET", "/api/v1/cron/preview?expr=nope")[0], 422)
+        self.assertEqual(self.s.call("GET", "/api/v1/cron/preview?expr=off")[1]["next"], [])
+
+    def test_mutations(self):
+        body = self.s.call("GET", "/api/v1/mutations")[1]
+        self.assertEqual(body["mode"], "all")
+        self.assertGreater(len(body["mutations"]), 30)
+        self.assertTrue(all(m["enabled"] for m in body["mutations"]))
+        fixed = [m["name"] for m in body["mutations"] if m["fixed"]]
+        free = [m["name"] for m in body["mutations"] if not m["fixed"]]
+        self.assertTrue(fixed and free)
+        code, out, _ = self.s.call("PUT", "/api/v1/mutations", {"mode": "custom", "mutations": {free[1]: "1.5", free[0]: "2"}})
+        self.assertEqual(code, 200, out)
+        self.assertEqual(self.conf("ENABLED_MUTATIONS"), "%s:2;%s:1.5" % (free[0], free[1]), "catalog order")
+        body = self.s.call("GET", "/api/v1/mutations")[1]
+        self.assertEqual(body["mode"], "custom")
+        self.assertEqual([m["name"] for m in body["mutations"] if m["enabled"]], free[:2])
+        for bad in ({"mode": "custom", "mutations": {fixed[0]: "2"}}, {"mode": "custom", "mutations": {"Wings": "1"}},
+                    {"mode": "custom", "mutations": {free[0]: "lots"}}, {"mode": "custom", "mutations": {}}, {"mode": "some"}):
+            self.assertEqual(self.s.call("PUT", "/api/v1/mutations", bad)[0], 422, bad)
+        self.assertEqual(self.s.call("PUT", "/api/v1/mutations", {"mode": "all"})[0], 200)
+        self.assertEqual(self.conf("ENABLED_MUTATIONS"), "")
+
+    def test_admin_commands(self):
+        code, out, _ = self.s.call("POST", "/api/v1/admin/players", {})
+        self.assertEqual(code, 200, out)
+        self.assertIn("Rex", out["output"])
+        self.assertEqual(self.s.call("POST", "/api/v1/admin/kick", {"steam_id": ADMIN, "text": "spam"})[0], 200)
+        self.assertEqual(self.s.calls()[-1], ["admin", "kick", ADMIN, "spam"])
+        self.assertEqual(self.s.call("POST", "/api/v1/admin/growth", {"value": "1.5"})[0], 200)
+        self.assertEqual(self.s.calls()[-1], ["admin", "growth", "1.5"])
+        self.assertEqual(self.s.call("POST", "/api/v1/admin/pause", {"value": "ON"})[0], 200)
+        self.assertEqual(self.s.calls()[-1], ["admin", "pause", "on"])
+        for path, bad in (("kick", {"steam_id": "123"}), ("dm", {"steam_id": ADMIN}), ("announce", {"text": " "}),
+                          ("announce", {"text": "a\nb"}), ("announce", {"text": "x" * 501}), ("pause", {"value": "maybe"}),
+                          ("growth", {"value": "fast"}), ("player", {"steam_id": "abc"})):
+            self.assertEqual(self.s.call("POST", "/api/v1/admin/" + path, bad)[0], 422, (path, bad))
+        self.assertEqual(self.s.call("POST", "/api/v1/admin/godmode", {})[0], 404)
+        self.assertIn(["admin", "players"], self.s.calls())
+
+    def test_roster_types_and_humans(self):
+        known = self.s.call("GET", "/api/v1/classes")[1]["known"]
+        rex = [k for k in known if k["name"] == "Tyrannosaurus"][0]
+        self.assertIn("carnivore", rex["types"])
+        self.assertEqual(self.s.call("POST", "/api/v1/classes/select", {"types": ["Carnivore"]})[0], 200)
+        self.assertEqual(self.s.calls()[-1], ["classes", "select", "carnivore"])
+        self.assertEqual(self.s.call("POST", "/api/v1/classes/select", {"types": ["flying"], "mode": "remove"})[0], 200)
+        self.assertEqual(self.s.calls()[-1], ["classes", "remove-type", "flying"])
+        for bad in ({"types": ["egg"]}, {"types": ["human"]}, {"types": []}, {"types": ["aquatic"], "mode": "toggle"}):
+            self.assertEqual(self.s.call("POST", "/api/v1/classes/select", bad)[0], 422, bad)
+        self.assertEqual(self.s.call("PUT", "/api/v1/humans", {"enabled": False})[0], 200)
+        self.assertEqual(self.conf("ENABLE_HUMANS"), "false")
+        self.assertEqual(self.s.call("PUT", "/api/v1/humans", {"enabled": "no"})[0], 422)
+        self.s.call("PUT", "/api/v1/humans", {"enabled": True})
+        self.s.call("PUT", "/api/v1/classes", {"classes": []})
+
     def test_rcon_validation(self):
         self.assertEqual(self.s.call("POST", "/api/v1/rcon", {"command": "rm -rf"})[0], 422)
         code, body, _ = self.s.call("POST", "/api/v1/rcon", {"command": "announce", "args": ["hi"]})

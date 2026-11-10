@@ -155,7 +155,7 @@ try {
 
   console.log("## pages");
   const pages = [["settings", "Settings"], ["players", "Players"], ["roster", "Roster"], ["world", "Map & AI"], ["profiles", "Profiles & presets"], ["plugins", "Plugins"],
-    ["snapshots", "Snapshots & backups"], ["logs", "Logs"], ["console", "RCON console"]];
+    ["snapshots", "Snapshots & backups"], ["logs", "Logs"], ["admin", "Admin"], ["console", "RCON console"]];
   for (const [route, title] of pages) {
     await page.click(`#nav a[href="#/${route}"]`);
     await ck(`${title} page`, async () => {
@@ -196,6 +196,20 @@ try {
   await page.click(".chip:has-text('Tyrannosaurus') >> nth=0");
   await page.click(".card-head button:has-text('Save') >> nth=0");
   await ck("roster saved", async () => { await page.waitForSelector(".toast:has-text('Playable roster saved')"); return conf_("ALLOWED_CLASSES") === "Tyrannosaurus"; });
+  await page.waitForSelector(".filter-btn[data-type='flying']");
+  await page.click(".filter-btn[data-type='flying']");
+  await ck("type filter shows only that type", async () => page.evaluate(() => {
+    const shown = [...document.querySelectorAll(".chips .chip")].filter((c) => !c.hidden).map((c) => c.textContent);
+    return shown.length >= 1 && shown.every((t) => /flying/.test(t)); }));
+  await page.click(".type-actions button:has-text('Only')");
+  await page.click(".card-head button:has-text('Save') >> nth=0");
+  await ck("Only <type> ticks just that type", async () => { await page.waitForSelector(".toast:has-text('Playable roster saved') >> nth=1"); return conf_("ALLOWED_CLASSES") === "Pteranodon"; });
+  await page.click(".filter-btn[data-type='human']");
+  await ck("human filter shows the humans switch", async () => (await page.isVisible("#humans-switch")) && (await page.isHidden(".chip:has-text('Tyrannosaurus')")));
+  await page.click("label:has(#humans-switch)");
+  await ck("humans switch writes ENABLE_HUMANS", async () => { await page.waitForSelector(".toast:has-text('Humans on')"); return conf_("ENABLE_HUMANS") === "true"; });
+  await page.click(".filter-btn[data-type='egg']");
+  await ck("egg filter explains there is no setting", async () => /no setting/.test(await page.textContent(".chip.disabled")));
 
   console.log("## map & AI, plugin sources");
   await page.click('#nav a[href="#/world"]');
@@ -213,6 +227,13 @@ try {
   await page.click("button:has-text('Save AI settings')");
   await ck("bad interval refused in the browser", async () => (await page.getAttribute("#ai-interval", "aria-invalid")) === "true" && conf_("AI_SPAWN_INTERVAL") === "30");
   await ck("disabled AI picker with roles", async () => (await page.locator(".chip .badge", { hasText: "aquatic" }).count()) === 1);
+  await page.waitForSelector("#mutations .mut-row");
+  await ck("mutations default to all, inputs locked", async () => page.isDisabled("#mutations .mut-row input[type=number] >> nth=0"));
+  await page.check("input[name='mut-mode'][value='custom']");
+  await page.evaluate(() => { const rows = [...document.querySelectorAll("#mutations .mut-row")]; rows.forEach((r, i) => { const cb = r.querySelector("input[type=checkbox]"); if (i > 1) { cb.checked = false; cb.dispatchEvent(new Event("change")); } }); });
+  await page.fill("#mutations .mut-row input[type=number] >> nth=0", "0.3");
+  await page.click("button:has-text('Save mutations')");
+  await ck("custom mutations saved", async () => { await page.waitForSelector(".toast:has-text('Mutations saved')"); return /^[A-Za-z ]+:0\.3;[A-Za-z ]+:[\d.]+$/.test(conf_("ENABLED_MUTATIONS") || ""); });
   await page.click('#nav a[href="#/plugins"]');
   await page.waitForSelector("input[aria-label='Catalog URL']");
   await page.fill("input[aria-label='Catalog URL']", "http://insecure.example/c.json");
@@ -225,6 +246,27 @@ try {
   await ck("community links open in a new tab", async () => { await page.waitForSelector("li.community a");
     return page.evaluate(() => [...document.querySelectorAll("li.community a")].every((a) => a.target === "_blank" && /noopener/.test(a.rel) && a.href.startsWith("https://"))); });
   await shot(page, "06-plugins-community");
+
+  console.log("## backups, admin");
+  await page.click('#nav a[href="#/snapshots"]');
+  await page.waitForSelector("#cron-expr");
+  await page.fill("#cron-expr", "61 * * * *");
+  await ck("bad cron flagged live", async () => { await page.waitForSelector("#cron-expr[aria-invalid=true]"); return true; });
+  await page.fill("#cron-expr", "15 3 * * 1-5");
+  await ck("cron preview lists next runs", async () => { await page.waitForSelector(".next-runs li"); return (await page.locator(".next-runs li").count()) === 5; });
+  await page.click("button:has-text('Save schedule')");
+  await ck("schedule saved", async () => { await page.waitForSelector(".toast:has-text('Backup schedule saved')"); return conf_("BACKUP_SCHEDULE") === '"15 3 * * 1-5"'; });
+  await ck("3-2-1 card shows the check", async () => /3-2-1/.test(await page.textContent("#backup-321")));
+  await page.click('#nav a[href="#/admin"]');
+  await ck("players listed with actions", async () => { await page.click(".card-head button:has-text('Refresh')"); await page.waitForSelector(".who strong"); return (await page.locator(".who strong").count()) === 2; });
+  await page.click("li:has-text('Global chat') button:has-text('Off')");
+  await ck("live switch sent", async () => { await page.waitForSelector("#admin-output:has-text('chat off')"); return true; });
+  await page.fill("#growth-value", "-1");
+  await page.click("form:has(#growth-value) button");
+  await ck("bad growth multiplier refused", async () => (await page.getAttribute("#growth-value", "aria-invalid")) === "true");
+  await ck("unsupported edits explained", async () => /god mode/.test(await page.textContent("#content .callout")));
+  await ck("credit and repo link", async () => page.evaluate(() => !!document.querySelector(".credit a[href='https://github.com/kyroskoh']") &&
+    document.querySelector("#repo-link").href === "https://github.com/kyroskoh/the-isle-dedicated-server"));
 
   console.log("## date & time preferences");
   await page.click('#nav a[href="#/"]');

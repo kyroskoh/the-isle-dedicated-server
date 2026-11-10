@@ -5,15 +5,16 @@
 #  Edit this file if a patch changes the list.
 # =============================================================================
 [playable]
+# NAME  DIET  [TRAITS...]   (types for "isle-server classes select <type>": carnivore herbivore omnivore flying aquatic)
 # Carnivores
 Allosaurus          carnivore
 Carnotaurus         carnivore
 Ceratosaurus        carnivore
-Deinosuchus         carnivore
+Deinosuchus         carnivore   aquatic
 Dilophosaurus       carnivore
 Herrerasaurus       carnivore
 Omniraptor          carnivore
-Pteranodon          carnivore
+Pteranodon          carnivore   flying
 Troodon             carnivore
 Tyrannosaurus       carnivore
 # Omnivores
@@ -37,3 +38,5 @@ Boar                prey
 Deer                prey
 Goat                prey
 Seaturtle           aquatic
+Rabbit              prey
+Crab                prey

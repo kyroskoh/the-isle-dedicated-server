@@ -35,7 +35,10 @@ writeFileSync(conf, readFileSync(join(REPO, "config", "server.conf.example"), "u
   .replace(/^ADMIN_STEAM_IDS=.*$/m, "ADMIN_STEAM_IDS=76561198012345678,76561198087654321")
   .replace(/^WHITELIST_IDS=.*$/m, "WHITELIST_IDS=76561198012345678,76561198011112222,76561198033334444")
   .replace(/^ALLOWED_CLASSES=.*$/m, "ALLOWED_CLASSES=Tyrannosaurus,Carnotaurus,Ceratosaurus,Deinosuchus,Dilophosaurus,Herrerasaurus,Omniraptor,Pteranodon,Troodon,Beipiaosaurus,Gallimimus,Diabloceratops,Dryosaurus,Hypsilophodon,Pachycephalosaurus,Stegosaurus,Tenontosaurus,Maiasaura,Triceratops")
-  .replace(/^DISABLED_AI_CLASSES=.*$/m, "DISABLED_AI_CLASSES=Compsognathus"));
+  .replace(/^DISABLED_AI_CLASSES=.*$/m, "DISABLED_AI_CLASSES=Compsognathus")
+  .replace(/^BACKUP_SCHEDULE=.*$/m, 'BACKUP_SCHEDULE="0 */6 * * *"')
+  .replace(/^BACKUP_COPY_DIR=.*$/m, "BACKUP_COPY_DIR=/mnt/nas/theisle-backups")
+  .replace(/^ENABLED_MUTATIONS=.*$/m, "ENABLED_MUTATIONS="));
 
 // realistic log for the Logs page
 const logLines = [];
@@ -133,15 +136,24 @@ try {
     await snap(page, "settings");
     await go(page, "players"); await snap(page, "players");
     await go(page, "roster"); await snap(page, "roster");
+    await page.click(".filter-btn[data-type='carnivore']");
+    await snap(page, "roster-types");
+    await page.click(".filter-btn[data-type='carnivore']");
     await go(page, "world"); await page.waitForSelector(".map h3"); await page.waitForSelector("#ai-density"); await snap(page, "map-ai");
     await page.evaluate(() => document.querySelector("#ai-density").closest(".card").scrollIntoView({ block: "start" }));
     await snap(page, "map-ai-creatures");
+    await page.check("input[name='mut-mode'][value='custom']");
+    await page.evaluate(() => { document.querySelectorAll(".mut-row input[type=checkbox]").forEach((cb, i) => { if (i % 3 === 2) { cb.checked = false; cb.dispatchEvent(new Event("change")); } }); });
+    await page.evaluate(() => { document.querySelector("#mutations").scrollIntoView({ block: "start" }); window.scrollBy(0, -90); });
+    await snap(page, "mutations");
     await go(page, "profiles"); await snap(page, "profiles");
     await go(page, "plugins"); await snap(page, "plugins");
     await page.waitForSelector("li.community a");
     await page.evaluate(() => document.querySelector("li.community").closest(".card").scrollIntoView({ block: "start" }));
     await snap(page, "plugins-community");
-    await go(page, "snapshots"); await snap(page, "snapshots");
+    await go(page, "snapshots"); await page.waitForSelector(".next-runs li"); await snap(page, "snapshots");
+    await page.evaluate(() => { document.querySelector("#backup-schedule").scrollIntoView({ block: "start" }); window.scrollBy(0, -90); });
+    await snap(page, "backup-schedule");
     await page.click("table button:has-text('Restore')");
     await page.waitForSelector("#confirm[open]");
     await snap(page, "snapshot-restore");
@@ -155,6 +167,11 @@ try {
     await page.waitForSelector("#modal[open] #date-format");
     await snap(page, "date-time");
     await page.click("#modal button:has-text('Cancel')");
+    await go(page, "admin");
+    await page.waitForSelector(".who strong");
+    await page.fill("#announce-text", "");
+    await page.click("li:has-text('Global chat') button:has-text('On')"); await sleep(300);
+    await snap(page, "admin");
     await go(page, "console");
     for (const [cmd, arg] of [["announce", "Restart in 30 minutes - find a safe spot!"], ["playerlist", ""], ["save", ""]]) {
       await page.selectOption("#rcon-cmd", cmd);

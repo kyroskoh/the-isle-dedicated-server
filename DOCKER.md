@@ -192,3 +192,7 @@ There's no cron inside the container. Use the host's:
 - **Slow first start:** that's the SteamCMD download. Follow it with `docker compose logs -f`.
 - **Windows / macOS (Docker Desktop):** works with Linux containers on x86_64 machines. Give Docker enough RAM
   (8 GB or more) in Docker Desktop settings.
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

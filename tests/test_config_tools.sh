@@ -116,6 +116,40 @@ ck "AI roles listed"              "grep -q '^Seaturtle *aquatic' $R/config/class
 ck "bad AI_SPAWN_INTERVAL rejected" "sed -i 's/^AI_SPAWN_INTERVAL=.*/AI_SPAWN_INTERVAL=often/' $ISLE_CONF && ! out check >/dev/null; sed -i 's/^AI_SPAWN_INTERVAL=.*/AI_SPAWN_INTERVAL=40/' $ISLE_CONF"
 ck "plugins community"            "out plugins community | grep -q isle-evrima-rcon"
 
+echo "## roster types, humans, mutations (ROS-05..07, MUT-01..03)"
+ck "types listed"                 "out classes types | grep -q '^  flying *Pteranodon'"
+ck "select keeps only that type"  "out classes select flying >/dev/null && [ \"\$(conf ALLOWED_CLASSES)\" = Pteranodon ]"
+ck "add-type adds a type"         "out classes add-type aquatic >/dev/null && [ \"\$(conf ALLOWED_CLASSES)\" = Pteranodon,Deinosuchus ] || [ \"\$(conf ALLOWED_CLASSES)\" = Deinosuchus,Pteranodon ]"
+ck "remove-type removes it"       "out classes remove-type flying >/dev/null && [ \"\$(conf ALLOWED_CLASSES)\" = Deinosuchus ]"
+ck "unknown type refused"         "! out classes select egg >/dev/null && ! out classes select human >/dev/null"
+ck "humans on/off"                "out classes humans on >/dev/null && [ \"\$(conf ENABLE_HUMANS)\" = true ] && out classes humans off >/dev/null && [ \"\$(conf ENABLE_HUMANS)\" = false ]"
+out classes reset >/dev/null
+ck "mutations list"               "[ \$(out mutations list | grep -c .) -ge 40 ]"
+ck "mutation enable with value"   "out mutations enable Hemomania 0.3 >/dev/null && conf ENABLED_MUTATIONS | grep -q 'Hemomania:0.3'"
+ck "fixed mutation only takes 1"  "! out mutations enable Reabsorption 2 >/dev/null"
+ck "unknown mutation refused"     "! out mutations enable Wings >/dev/null"
+ck "EnabledMutations in Game.ini" "out configure >/dev/null && grep -q '^EnabledMutations=Hemomania, 0.3' $GI"
+ck "mutations reset = all"        "out mutations reset >/dev/null && [ -z \"\$(conf ENABLED_MUTATIONS)\" ]"
+
+echo "## scheduled backups + 3-2-1 (BAK-06..09)"
+ck "schedule set"                 "out backup schedule set '30 */6 * * 1-5' >/dev/null && conf BACKUP_SCHEDULE | grep -q '30 \*/6 \* \* 1-5'"
+ck "invalid schedule refused"     "! out backup schedule set '61 * * * *' >/dev/null && conf BACKUP_SCHEDULE | grep -q '30 \*/6'"
+ck "schedule show lists runs"     "[ \$(out backup schedule show | grep -c ' 06:30 \\| 12:30 ') -ge 2 ]"
+ck "status json"                  "out backup status --json | tail -n1 | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"rule321\"][\"copies\"]>=1'"
+mkdir -p "$T/copy"
+sed -i "s|^BACKUP_COPY_DIR=.*|BACKUP_COPY_DIR=$T/copy|; s|^BACKUP_OFFSITE_COMMAND=.*|BACKUP_OFFSITE_COMMAND=cp {file} $T/offsite/|" "$ISLE_CONF"; mkdir -p "$T/offsite"
+ck "backup copies to 2nd dir + offsite" "out backup >/dev/null && ls $T/copy/theisle-*.tar.gz >/dev/null 2>&1 && ls $T/offsite/theisle-*.tar.gz >/dev/null 2>&1"
+while [ "$(date +%S | sed s/^0//)" -gt 45 ]; do sleep 1; done   # both ticks in the same minute
+ck "tick runs when due, once"     "rm -f $T/.backup-tick; out backup schedule set '* * * * *' >/dev/null && out backup tick | grep -q 'Scheduled backup' && ! out backup tick | grep -q 'Scheduled backup'"
+ck "off never runs"               "out backup schedule off >/dev/null && rm -f $T/.backup-tick && ! out backup tick | grep -q 'Scheduled backup'"
+sed -i 's|^BACKUP_COPY_DIR=.*|BACKUP_COPY_DIR=|; s|^BACKUP_OFFSITE_COMMAND=.*|BACKUP_OFFSITE_COMMAND=|' "$ISLE_CONF"; out backup schedule set '0 5 * * *' >/dev/null
+
+echo "## admin (ADM-01..03)"
+ck "admin usage notes the limits" "out admin | grep -q 'god mode'"
+ck "admin kick needs a SteamID64" "! out admin kick 123 >/dev/null"
+ck "admin growth must be a number" "! out admin growth fast >/dev/null"
+ck "version shows project + author" "out version | grep -q 'github.com/kyroskoh/the-isle-dedicated-server' && out version | grep -q 'Kyros Koh'"
+
 echo "## validation"
 sed -i 's|^NET_TICK_RATE=.*|NET_TICK_RATE=fast|' "$ISLE_CONF"
 ck "bad NET_TICK_RATE rejected"   "! out check >/dev/null"

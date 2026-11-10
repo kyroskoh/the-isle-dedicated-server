@@ -290,3 +290,7 @@ The installer keeps its state in `/etc/theisle-server/install.state` (Linux) or 
 
 - **Keep data (reinstall later):** `sudo ./linux/install.sh --uninstall` / `Install.ps1 -Uninstall`
 - **Remove everything:** `sudo ./linux/install.sh --uninstall --purge` / `Install.ps1 -Uninstall -Purge`
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

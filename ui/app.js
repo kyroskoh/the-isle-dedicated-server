@@ -428,7 +428,12 @@
         { head: wlHead, update: function (d) { sw.checked = d.enabled; } })));
   }
 
-  function classPicker(title, sub, path, allMeansEmpty, presets) {
+  var TYPE_ORDER = ["carnivore", "herbivore", "omnivore", "flying", "aquatic", "predator", "prey", "scavenger"];
+  var EXTRA_TYPES = {
+    human: { label: "human", peek: "Humans are not a dinosaur class: one switch (ENABLE_HUMANS) turns them on or off, live over RCON while the server runs." },
+    egg: { label: "egg", peek: "Eggs and hatchlings are not a class and the server has no setting for them: nesting is part of each species' life cycle in game." }
+  };
+  function classPicker(title, sub, path, allMeansEmpty, presets, extras) {
     var card = h("section", { class: "card" });
     section(card, function () { return api("GET", path); }, function (el, d, reload) {
       var chosen = {};
@@ -442,12 +447,70 @@
           : (n ? n + " AI classes disabled" : "No AI classes disabled");
       };
       d.known.forEach(function (k) {
-        var cb = h("input", { type: "checkbox", checked: chosen[k.name] });
+        var cb = h("input", { type: "checkbox", checked: chosen[k.name], "data-name": k.name });
         cb.addEventListener("change", function () { chosen[k.name] = cb.checked; cb.parentNode.classList.toggle("checked", cb.checked); paint(); });
-        grid.appendChild(h("label", { class: "chip" + (chosen[k.name] ? " checked" : "") }, cb, h("span", { text: k.name }),
-          k.diet ? h("span", { class: "badge diet " + ({ carnivore: "amber", herbivore: "green", prey: "green", flying: "", aquatic: "" }[k.diet] || ""), text: k.diet }) : null));
+        var types = k.types && k.types.length ? k.types : (k.diet ? [k.diet] : []);
+        grid.appendChild(h("label", { class: "chip" + (chosen[k.name] ? " checked" : ""), "data-types": " " + types.join(" ") + " " }, cb, h("span", { text: k.name }),
+          types.length ? h("span", { class: "badges" }, types.map(function (t) {
+            return h("span", { class: "badge diet " + ({ carnivore: "amber", predator: "amber", herbivore: "green", prey: "green" }[t] || ""), text: t });
+          })) : null));
       });
-      var setAll = function (v) { grid.querySelectorAll("input").forEach(function (cb, i) { cb.checked = v; cb.parentNode.classList.toggle("checked", v); chosen[d.known[i].name] = v; }); paint(); };
+      // humans and eggs are not classes: a live switch, and a note
+      var humanSw = null;
+      if (extras) {
+        humanSw = h("input", { type: "checkbox", role: "switch", checked: !!d.humans, id: "humans-switch" });
+        humanSw.addEventListener("change", function () {
+          humanSw.disabled = true;
+          api("PUT", "/humans", { enabled: humanSw.checked }).then(function () {
+            humanSw.parentNode.classList.toggle("checked", humanSw.checked);
+            toast("Humans " + (humanSw.checked ? "on" : "off"), "Applied live if the server is running, otherwise on the next start.");
+          }, function (e) { humanSw.checked = !humanSw.checked; fail(e); }).finally(function () { humanSw.disabled = false; });
+        });
+        grid.appendChild(h("label", { class: "chip special" + (d.humans ? " checked" : ""), "data-types": " human ", "data-peek": EXTRA_TYPES.human.peek },
+          humanSw, h("span", { text: "Humans" }), h("span", { class: "badges" }, h("span", { class: "badge", text: "human" }))));
+        grid.appendChild(h("div", { class: "chip special disabled", "data-types": " egg ", "data-peek": EXTRA_TYPES.egg.peek, tabindex: "0" },
+          h("span", { text: "Eggs & hatchlings" }), h("span", { class: "badges" }, h("span", { class: "badge", text: "no setting" }))));
+      }
+      var boxes = function (type) {
+        return Array.prototype.filter.call(grid.querySelectorAll("input[data-name]"), function (cb) {
+          return !type || cb.parentNode.getAttribute("data-types").indexOf(" " + type + " ") >= 0;
+        });
+      };
+      var tick = function (cb, v) { cb.checked = v; cb.parentNode.classList.toggle("checked", v); chosen[cb.getAttribute("data-name")] = v; };
+      var setAll = function (v) { boxes().forEach(function (cb) { tick(cb, v); }); paint(); };
+      // type filter: shows one type, and Only / Add / Remove tick that type in one go (saved with Save)
+      var types = [];
+      d.known.forEach(function (k) { (k.types || []).forEach(function (t) { if (types.indexOf(t) < 0) types.push(t); }); });
+      types.sort(function (a, b) { var ia = TYPE_ORDER.indexOf(a), ib = TYPE_ORDER.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || (a < b ? -1 : 1); });
+      if (extras) types = types.concat(["human", "egg"]);
+      var filterBar = null;
+      if (types.length > 1) {
+        var current = "";
+        var typeActions = h("div", { class: "row type-actions", hidden: true });
+        var onlyB = btn("Only", { kind: "sm" }), addB = btn("Add", { kind: "sm" }), remB = btn("Remove", { kind: "sm" });
+        onlyB.addEventListener("click", function () { boxes().forEach(function (cb) { tick(cb, boxes(current).indexOf(cb) >= 0); }); paint(); toast("Only " + current + " ticked", "Save to apply."); });
+        addB.addEventListener("click", function () { boxes(current).forEach(function (cb) { tick(cb, true); }); paint(); });
+        remB.addEventListener("click", function () { boxes(current).forEach(function (cb) { tick(cb, false); }); paint(); });
+        var actionLabel = h("span", { class: "muted small" });
+        add(typeActions, [actionLabel, onlyB, addB, remB]);
+        var filters = h("div", { class: "filters", role: "group", "aria-label": "Filter by type" });
+        var setFilter = function (t) {
+          current = t;
+          filters.querySelectorAll("button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-type") === t)); });
+          grid.querySelectorAll(".chip").forEach(function (chip) { chip.hidden = !!t && chip.getAttribute("data-types").indexOf(" " + t + " ") < 0; });
+          var real = t && !EXTRA_TYPES[t];
+          typeActions.hidden = !real;
+          if (real) actionLabel.textContent = boxes(t).length + " " + t + ":";
+        };
+        [""].concat(types).forEach(function (t) {
+          var b = h("button", { type: "button", class: "filter-btn", "data-type": t, "aria-pressed": "false", text: t || "all types" });
+          if (EXTRA_TYPES[t]) b.setAttribute("data-peek", EXTRA_TYPES[t].peek);
+          b.addEventListener("click", function () { setFilter(current === t ? "" : t); });
+          filters.appendChild(b);
+        });
+        filterBar = h("div", { class: "stack filter-bar" }, filters, typeActions);
+        setFilter("");
+      }
       var saveBtn = btn("Save", { kind: "primary" });
       saveBtn.addEventListener("click", function () {
         var names = d.known.map(function (k) { return k.name; }).filter(function (n) { return chosen[n]; });
@@ -461,6 +524,7 @@
         h("div", { class: "row" }, btn("All", { kind: "sm", onclick: function () { setAll(true); } }), btn("None", { kind: "sm", onclick: function () { setAll(false); } }), saveBtn));
       add(el, [head, h("p", { class: "muted small", text: sub })]);
       if (presets) el.appendChild(presets(reload));
+      if (filterBar) el.appendChild(filterBar);
       el.appendChild(d.known.length ? grid : h("p", { class: "empty", text: "No classes listed in config/classes.txt" }));
       paint();
     });
@@ -496,7 +560,7 @@
       return wrap;
     };
     add(c, h("div", { class: "grid" },
-      classPicker("Playable roster", "Ticked classes can be chosen. All ticked = every class.", "/classes", true, presetRow),
+      classPicker("Playable roster", "Ticked classes can be chosen. All ticked = every class. Filter by type to tick only carnivores, flyers, ...", "/classes", true, presetRow, true),
       h("p", { class: "muted small" }, "AI creatures (spawning, density, disabled classes) are on the ", h("a", { href: "#/world", text: "Map & AI" }), " page.")));
   }
 
@@ -736,6 +800,73 @@
     var dis = classPicker("Disabled AI", "Ticked AI creatures do not spawn (role in the badge).", "/ai-classes", false);
     dis.style.marginTop = "1rem";
     c.appendChild(dis);
+    var mut = mutationsCard();
+    mut.style.marginTop = "1rem";
+    c.appendChild(mut);
+  }
+
+  function mutationsCard() {
+    var card = h("section", { class: "card", id: "mutations" });
+    section(card, function () { return api("GET", "/mutations"); }, function (el, d, reload) {
+      var mode = d.mode;
+      var allR = h("input", { type: "radio", name: "mut-mode", value: "all", checked: mode === "all" });
+      var customR = h("input", { type: "radio", name: "mut-mode", value: "custom", checked: mode === "custom" });
+      var search = h("input", { type: "search", placeholder: "Filter mutations", "aria-label": "Filter mutations", spellcheck: "false" });
+      var list = h("div", { class: "mutations" });
+      var summary = h("span", { class: "muted small" });
+      var rows = d.mutations.map(function (m) {
+        var id = "mut-" + m.name.replace(/[^A-Za-z0-9]/g, "");
+        var cb = h("input", { type: "checkbox", checked: m.enabled, id: id, "data-name": m.name });
+        var val = h("input", { type: "number", min: "0", step: "0.05", value: m.enabled ? m.value : m["default"], readonly: m.fixed ? "readonly" : null,
+          "aria-label": m.name + " value", class: "num" });
+        if (m.fixed) val.title = "Only 1 works for this mutation";
+        var row = h("div", { class: "mut-row" + (m.enabled ? " checked" : ""), "data-name": m.name.toLowerCase() },
+          cb, h("label", { for: id, text: m.name, "data-peek": m.name + (m.fixed ? " - on/off only (value 1)" : " - default " + m["default"]) }),
+          m.fixed ? h("span", { class: "badge", text: "fixed" }) : null, val);
+        cb.addEventListener("change", function () { row.classList.toggle("checked", cb.checked); paint(); });
+        return { m: m, cb: cb, val: val, row: row };
+      });
+      rows.forEach(function (r) { list.appendChild(r.row); });
+      var paint = function () {
+        var custom = customR.checked;
+        list.classList.toggle("locked", !custom);
+        rows.forEach(function (r) { r.cb.disabled = !custom; r.val.disabled = !custom; });
+        var n = rows.filter(function (r) { return r.cb.checked; }).length;
+        summary.textContent = custom ? n + " of " + rows.length + " mutations enabled" : "All " + rows.length + " mutations available (game default)";
+      };
+      allR.addEventListener("change", paint); customR.addEventListener("change", paint);
+      search.addEventListener("input", function () {
+        var q = search.value.trim().toLowerCase();
+        rows.forEach(function (r) { r.row.hidden = !!q && r.row.getAttribute("data-name").indexOf(q) < 0; });
+      });
+      var save = btn("Save mutations", { kind: "primary" });
+      save.addEventListener("click", function () {
+        var body = { mode: customR.checked ? "custom" : "all" };
+        if (body.mode === "custom") {
+          body.mutations = {};
+          var bad = null;
+          rows.forEach(function (r) {
+            if (!r.cb.checked) return;
+            var v = r.val.value.trim();
+            if (!/^\d+(\.\d+)?$/.test(v) || (r.m.fixed && v !== "1")) { bad = bad || r; r.val.setAttribute("aria-invalid", "true"); }
+            else r.val.removeAttribute("aria-invalid");
+            body.mutations[r.m.name] = v;
+          });
+          if (bad) { toast(bad.m.name + ": " + (bad.m.fixed ? "only 1 works" : "the value must be a number"), "", "error"); bad.val.focus(); return; }
+          if (!Object.keys(body.mutations).length) { toast("Tick at least one mutation", "Or choose All mutations.", "warn"); return; }
+        }
+        busy(save, api("PUT", "/mutations", body).then(function () { toast("Mutations saved", "Applied on the next restart."); reload(); }, fail));
+      });
+      add(el, [
+        h("div", { class: "card-head" }, h("div", null, h("h2", { text: "Mutations" }), summary), save),
+        d.enabled_system ? null : h("p", { class: "callout", text: "The mutation system is off (ENABLE_MUTATIONS=false in Settings) - these choices apply once it is on." }),
+        h("fieldset", { class: "row plain" }, h("legend", { class: "sr-only", text: "Mutation mode" }),
+          h("label", { class: "check" }, allR, "All mutations (game default)"), h("label", { class: "check" }, customR, "Only the ticked ones, with these values")),
+        h("p", { class: "muted small", text: "Values other than the default change how strong a mutation is and can unbalance the game. \"fixed\" ones only switch on or off." }),
+        search, list]);
+      paint();
+    });
+    return card;
   }
 
   function configurePlugin(name, after) {
@@ -784,6 +915,15 @@
     add(c, h("div", { class: "grid cols-2" },
       h("section", { class: "card stack" }, h("h2", { text: "New snapshot" }), parts, h("p", { class: "muted small", text: "Saves the world first if the server is running. Snapshots contain server.conf with passwords - keep them private." }), h("div", { class: "row" }, createBtn)),
       h("section", { class: "card stack" }, h("h2", { text: "Backups" }), h("p", { class: "muted small", text: "Backups are taken automatically on stop and by the scheduled task. Take one now:" }), h("div", { class: "row" }, backupBtn))));
+    var sched = h("section", { class: "card", id: "backup-schedule" }), rule = h("section", { class: "card", id: "backup-321" });
+    var schedGrid = h("div", { class: "grid cols-2" }, sched, rule);
+    schedGrid.style.marginTop = "1rem";
+    c.appendChild(schedGrid);
+    var loadBackups = function () { return api("GET", "/backups"); };
+    var renderRule = section(rule, loadBackups, function (el, d) { backupRule(el, d); });
+    section(sched, loadBackups, function (el, d, reload) {
+      scheduleEditor(el, d, function () { reload(); clear(renderRule); loadBackups().then(function (b) { backupRule(renderRule, b); }); });
+    });
     var listCard = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Snapshots" }), btn("Refresh", { kind: "ghost sm", icon: "refresh", onclick: function () { load(); } })), list);
     listCard.style.marginTop = "1rem";
     c.appendChild(listCard);
@@ -818,6 +958,73 @@
       }, function (e) { clear(list).appendChild(errorCard(e, load)); });
     }
     load();
+  }
+
+  var CRON_PRESETS = [
+    ["0 5 * * *", "Daily at 05:00"], ["0 */6 * * *", "Every 6 hours"], ["0 * * * *", "Every hour"],
+    ["0 5,17 * * *", "Twice a day (05:00, 17:00)"], ["30 4 * * 1", "Weekly, Monday 04:30"], ["off", "Off (no scheduled backups)"]
+  ];
+  function scheduleEditor(el, d, saved) {
+    var expr = h("input", { type: "text", id: "cron-expr", value: d.schedule, spellcheck: "false", autocomplete: "off", "aria-describedby": "cron-help cron-preview",
+      placeholder: "minute hour day month weekday" });
+    var preset = h("select", { id: "cron-preset", "aria-label": "Schedule preset" }, h("option", { value: "", text: "Custom…" }),
+      CRON_PRESETS.map(function (p) { return h("option", { value: p[0], text: p[1], selected: p[0] === d.schedule }); }));
+    var preview = h("div", { class: "cron-preview", id: "cron-preview", "aria-live": "polite" });
+    var save = btn("Save schedule", { kind: "primary", type: "submit" });
+    var timer = null, seq = 0;
+    var show = function () {
+      var v = expr.value.trim(), mine = ++seq;
+      if (!v) { clear(preview).appendChild(h("p", { class: "muted small", text: "Enter a schedule." })); return; }
+      api("GET", "/cron/preview?expr=" + encodeURIComponent(v)).then(function (p) {
+        if (mine !== seq) return;
+        expr.removeAttribute("aria-invalid");
+        clear(preview);
+        add(preview, [h("p", null, h("strong", { text: p.describe }), h("span", { class: "muted small", text: " (" + p.zone + ")" })),
+          p.next.length ? h("ul", { class: "next-runs" }, p.next.map(function (t) { return h("li", null, timeEl(t)); }))
+            : h("p", { class: "muted small", text: "Scheduled backups are off - backups still run on stop and when you click Back up." })]);
+      }, function (e) {
+        if (mine !== seq) return;
+        expr.setAttribute("aria-invalid", "true");
+        clear(preview).appendChild(h("p", { class: "error-text small", text: e.message }));
+      });
+    };
+    expr.addEventListener("input", function () {
+      preset.value = CRON_PRESETS.some(function (p) { return p[0] === expr.value.trim(); }) ? expr.value.trim() : "";
+      clearTimeout(timer); timer = setTimeout(show, 250);
+    });
+    preset.addEventListener("change", function () { if (preset.value) { expr.value = preset.value; show(); } else expr.focus(); });
+    var form = h("form", { class: "stack" },
+      h("div", { class: "card-head" }, h("h2", { text: "Backup schedule" })),
+      h("div", { class: "field" }, h("label", { for: "cron-preset", text: "Preset" }), preset),
+      h("div", { class: "field" }, h("label", { for: "cron-expr", text: "Schedule (cron)" }), h("div", { class: "input-group" }, expr, save),
+        h("span", { class: "hint", id: "cron-help", text: "minute hour day-of-month month day-of-week, like cron: */15 = every 15, 1-5 = Mon-Fri, MON,THU, @daily, @hourly, or off. Times are in the server's time zone." })),
+      preview);
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      busy(save, api("PUT", "/backups/schedule", { schedule: expr.value.trim() }).then(function () { toast("Backup schedule saved", expr.value.trim()); saved(); }, fail));
+    });
+    el.appendChild(form);
+    show();
+  }
+  function backupRule(el, d) {
+    var r = d.rule321 || {};
+    var item = function (ok, title, text) {
+      return h("li", { class: ok ? "ok" : "bad" }, h("span", { class: "pill " + (ok ? "ok" : "warn"), text: ok ? "Yes" : "No" }),
+        h("div", null, h("strong", { text: title }), h("p", { class: "muted small" }, text)));
+    };
+    var last = d.last && d.last.file ? [h("code", { text: d.last.file })] : ["none yet"];
+    add(el, [
+      h("div", { class: "card-head" }, h("h2", { text: "3-2-1 check" }), h("span", { class: "pill " + (r.ok ? "ok" : "warn"), text: r.ok ? "3-2-1 met" : "Not 3-2-1 yet" })),
+      h("p", { class: "muted small", text: "3 copies of your world, on 2 different disks or media, 1 of them off-site." }),
+      h("ul", { class: "checks" },
+        item(r.copies >= 3, (r.copies || 0) + " of 3 copies", "Local backups (" + (d.local ? d.local.count : 0) + " in " + (d.local ? d.local.dir : "?") + ")" +
+          (d.copy && d.copy.dir ? ", a second copy in " + d.copy.dir : "") + (d.offsite && d.offsite.configured ? ", and off-site" : "") + "."),
+        item(r.media >= 2, (r.media || 0) + " of 2 media", d.copy && d.copy.dir ? (d.copy.other_disk ? "BACKUP_COPY_DIR is on another disk." : "BACKUP_COPY_DIR is on the same disk as the backups - use another drive or a network share.")
+          : "Set BACKUP_COPY_DIR in server.conf to a second drive or network share."),
+        item(!!r.offsite, "Off-site", d.offsite && d.offsite.configured ? "BACKUP_OFFSITE_COMMAND runs after every backup" + (d.offsite.last ? " (last " + d.offsite.last.replace("T", " ") + ")." : ".")
+          : "Set BACKUP_OFFSITE_COMMAND in server.conf (e.g. rclone copy {file} remote:isle), or enable the offsite-backup plugin.")),
+      h("p", { class: "muted small" }, "Last backup: ", last),
+      h("p", { class: "muted small", text: "The copy folder and off-site command are machine settings: edit them in config/server.conf on the server (they are not editable here)." })]);
   }
 
   function restoreDialog(s, after) {
@@ -901,6 +1108,142 @@
     });
   }
 
+  var TOGGLES = [
+    ["pause", "Pause the server", "Freezes the game for everyone."], ["migrations", "Migrations", "AI and players' migration zones."],
+    ["humans", "Humans", "Lets players spawn as humans."], ["chat", "Global chat", "Server-wide chat."],
+    ["ai-learning", "AI learning", "AI adapts to players."], ["netupdate", "Network update distance", "Experimental network optimisation."]
+  ];
+  function pageAdmin(c) {
+    c.appendChild(pageHead("Admin", "Live admin commands over RCON. The server must be running with RCON enabled."));
+    var out = h("pre", { class: "log", tabindex: "0", "aria-live": "polite", "aria-label": "Admin replies", id: "admin-output" });
+    var say = function (label, r) { out.textContent += (out.textContent ? "\n" : "") + "> " + label + "\n" + ((r && r.output) || "(ok)").trim(); out.scrollTop = out.scrollHeight; };
+    var run = function (b, action, body, label) {
+      return busy(b, api("POST", "/admin/" + action, body || {}).then(function (r) { say(label || action, r); return r; },
+        function (e) { say(label || action, { output: "! " + e.message }); fail(e); }));
+    };
+    var sid = function () { return h("input", { type: "text", inputmode: "numeric", spellcheck: "false", autocomplete: "off", placeholder: "SteamID64", "aria-label": "SteamID64" }); };
+    var needId = function (input) {
+      if (STEAMID.test(input.value.trim())) { input.removeAttribute("aria-invalid"); return input.value.trim(); }
+      input.setAttribute("aria-invalid", "true"); toast("Not a SteamID64", "17 digits starting with 7656119", "error"); input.focus(); return null;
+    };
+
+    // players
+    var players = h("div");
+    var refresh = btn("Refresh", { kind: "sm", icon: "refresh" });
+    var listPlayers = function () {
+      return run(refresh, "players", {}, "players").then(function (r) {
+        clear(players);
+        if (!r) return;
+        var ul = h("ul", { class: "list" });
+        (r.output || "").split("\n").forEach(function (line) {
+          var m = line.match(/7656119\d{10}/);
+          if (!m) return;
+          var id = m[0], name = line.replace(id, "").replace(/^[\s,:;|-]+|[\s,:;|-]+$/g, "") || "(unnamed)";
+          var acts = h("span", { class: "row" });
+          [["Data", "player", false], ["Message", "dm", "text"], ["Kick", "kick", "reason"], ["Ban", "ban", "reason"]].forEach(function (a) {
+            var b = btn(a[0], { kind: "sm" + (a[1] === "ban" ? " danger" : ""), aria: a[0] + " " + name });
+            b.addEventListener("click", function () { playerAction(b, a, id, name); });
+            acts.appendChild(b);
+          });
+          add(ul, h("li", null, h("span", { class: "who" }, h("strong", { text: name, "data-peek": name }), h("code", { class: "small", text: id })), acts));
+        });
+        players.appendChild(ul.childNodes.length ? ul : h("p", { class: "empty", text: "No players online." }));
+      });
+    };
+    var playerAction = function (b, a, id, name) {
+      if (!a[2]) { run(b, a[1], { steam_id: id }, a[1] + " " + name); return; }
+      var text = h("input", { type: "text", maxlength: "500", "aria-label": a[2] === "text" ? "Message" : "Reason", placeholder: a[2] === "text" ? "Message" : "Reason (optional)" });
+      confirmDialog({ title: a[0] + " " + name + "?", text: id, ok: a[0], danger: a[1] !== "dm", extra: h("div", { class: "field" }, text) }).then(function (yes) {
+        if (!yes) return;
+        if (a[2] === "text" && !text.value.trim()) { toast("Type a message", "", "warn"); return; }
+        run(b, a[1], { steam_id: id, text: text.value.trim() }, a[1] + " " + name).then(function () { if (a[1] !== "dm") listPlayers(); });
+      });
+    };
+    var playersCard = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Players online" }), refresh), players);
+    refresh.addEventListener("click", listPlayers);
+    players.appendChild(h("p", { class: "muted small", text: "Click Refresh to ask the server who is online." }));
+
+    // messages
+    var annText = h("input", { type: "text", maxlength: "500", id: "announce-text", placeholder: "Message to everyone" });
+    var annBtn = btn("Announce", { kind: "primary", type: "submit" });
+    var annForm = h("form", { class: "field" }, h("label", { for: "announce-text", text: "Announcement" }), h("div", { class: "input-group" }, annText, annBtn));
+    annForm.addEventListener("submit", function (ev) { ev.preventDefault(); if (annText.value.trim()) run(annBtn, "announce", { text: annText.value.trim() }, "announce").then(function () { annText.value = ""; }); });
+    var dmId = sid(), dmText = h("input", { type: "text", maxlength: "500", placeholder: "Private message", "aria-label": "Private message" }), dmBtn = btn("Send", { type: "submit" });
+    var dmForm = h("form", { class: "field" }, h("span", { class: "label-text", text: "Direct message / kick / ban by SteamID64" }),
+      h("div", { class: "input-group" }, dmId, dmText, dmBtn));
+    dmForm.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var id = needId(dmId);
+      if (id && dmText.value.trim()) run(dmBtn, "dm", { steam_id: id, text: dmText.value.trim() }, "dm " + id);
+    });
+    var byId = h("div", { class: "row" });
+    [["Kick", "kick"], ["Ban", "ban"], ["Player data", "player"]].forEach(function (a) {
+      var b = btn(a[0], { kind: "sm" + (a[1] === "ban" ? " danger" : "") });
+      b.addEventListener("click", function () {
+        var id = needId(dmId);
+        if (id) playerAction(b, [a[0], a[1], a[1] === "player" ? false : "reason"], id, id);
+      });
+      byId.appendChild(b);
+    });
+    var msgCard = h("section", { class: "card stack" }, h("h2", { text: "Messages & moderation" }), annForm, dmForm, byId);
+
+    // live switches
+    var toggles = h("ul", { class: "list toggles" });
+    TOGGLES.forEach(function (t) {
+      var on = btn("On", { kind: "sm", aria: t[1] + " on" }), off = btn("Off", { kind: "sm", aria: t[1] + " off" });
+      on.addEventListener("click", function () { run(on, t[0], { value: "on" }, t[0] + " on"); });
+      off.addEventListener("click", function () { run(off, t[0], { value: "off" }, t[0] + " off"); });
+      add(toggles, h("li", null, h("div", null, h("strong", { text: t[1] }), h("p", { class: "muted small", text: t[2] })), h("span", { class: "row" }, on, off)));
+    });
+    var growth = h("input", { type: "number", min: "0", step: "0.1", value: "1", id: "growth-value", class: "num" });
+    var gSet = btn("Set", { kind: "sm", type: "submit" }), gOn = btn("On", { kind: "sm", aria: "Growth multiplier on" }), gOff = btn("Off", { kind: "sm", aria: "Growth multiplier off" });
+    gOn.addEventListener("click", function () { run(gOn, "growth", { value: "on" }, "growth on"); });
+    gOff.addEventListener("click", function () { run(gOff, "growth", { value: "off" }, "growth off"); });
+    var gForm = h("form", { class: "row", novalidate: true }, h("label", { for: "growth-value", class: "small", text: "×" }), growth, gSet);
+    gForm.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      if (!/^\d+(\.\d+)?$/.test(growth.value.trim())) { growth.setAttribute("aria-invalid", "true"); toast("Multiplier must be a number", "", "error"); return; }
+      growth.removeAttribute("aria-invalid");
+      run(gSet, "growth", { value: growth.value.trim() }, "growth " + growth.value.trim());
+    });
+    add(toggles, h("li", null, h("div", null, h("strong", { text: "Growth multiplier" }), h("p", { class: "muted small", text: "Speeds up how fast dinosaurs grow." })),
+      h("span", { class: "row" }, gOn, gOff, gForm)));
+    var liveCard = h("section", { class: "card" }, h("h2", { text: "Live switches" }),
+      h("p", { class: "muted small", text: "The server does not report the current state of these; they reset to server.conf on restart." }), toggles);
+
+    // server
+    var srv = h("div", { class: "row" });
+    [["Save world", "save"], ["Queue status", "queue"], ["Playable classes", "playables"], ["Server details", "details"], ["Wipe corpses", "wipecorpses"]].forEach(function (a) {
+      var b = btn(a[0], { kind: "sm" });
+      b.addEventListener("click", function () {
+        if (a[1] !== "wipecorpses") { run(b, a[1], {}, a[1]); return; }
+        confirmDialog({ title: "Wipe all corpses?", text: "Removes every carcass on the map - carnivores lose that food.", ok: "Wipe corpses", danger: true })
+          .then(function (yes) { if (yes) run(b, "wipecorpses", {}, "wipecorpses"); });
+      });
+      srv.appendChild(b);
+    });
+    var custom = h("input", { type: "text", maxlength: "500", id: "custom-cmd", spellcheck: "false", autocomplete: "off", placeholder: "Experimental: raw command" });
+    var cBtn = btn("Send", { type: "submit" });
+    var cForm = h("form", { class: "field" }, h("label", { for: "custom-cmd", text: "Custom command" }), h("div", { class: "input-group" }, custom, cBtn),
+      h("span", { class: "hint", text: "Sent as-is with the experimental custom RCON opcode. Most builds ignore it." }));
+    cForm.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      if (!custom.value.trim()) return;
+      confirmDialog({ title: "Send a custom command?", text: custom.value.trim(), ok: "Send" }).then(function (yes) { if (yes) run(cBtn, "custom", { text: custom.value.trim() }, "custom " + custom.value.trim()); });
+    });
+    var srvCard = h("section", { class: "card stack" }, h("h2", { text: "Server" }), srv, cForm);
+
+    var note = h("div", { class: "callout", role: "note" }, h("strong", { text: "Not available over RCON: " }),
+      "Evrima's RCON has no commands to change a player's size/growth, skin, mutations, give god mode, teleport or heal. Admins listed on the ",
+      h("a", { href: "#/players", text: "Players" }), " page do those in game with the game's own admin panel. Mutations available on the server are set on ",
+      h("a", { href: "#/world", text: "Map & AI" }), ".");
+    var replies = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Replies" }),
+      btn("Clear", { kind: "ghost sm", onclick: function () { out.textContent = ""; } })), out);
+    add(c, [note, h("div", { class: "grid admin-grid gap-top" }, playersCard, msgCard, srvCard, liveCard), replies]);
+    replies.style.marginTop = "1rem";
+    if (state.status && state.status.running) listPlayers();
+  }
+
   // ----------------------------------------------------------- date & time
   function dateTimeDialog() {
     var T = window.IsleTime;
@@ -947,7 +1290,7 @@
     "/": ["Dashboard", pageDashboard], "/settings": ["Settings", pageSettings], "/players": ["Players", pagePlayers],
     "/roster": ["Roster", pageRoster], "/profiles": ["Profiles & presets", pageProfiles], "/plugins": ["Plugins", pagePlugins],
     "/snapshots": ["Snapshots & backups", pageSnapshots], "/logs": ["Logs", pageLogs], "/console": ["RCON console", pageConsole],
-    "/world": ["Map & AI", pageWorld]
+    "/world": ["Map & AI", pageWorld], "/admin": ["Admin", pageAdmin]
   };
   function navigate() {
     if (!state.token) return;

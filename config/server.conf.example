@@ -88,6 +88,9 @@ NIGHT_LENGTH_MINUTES=20
 GROWTH_MULTIPLIER=1
 CORPSE_DECAY_MULTIPLIER=1
 ENABLE_MUTATIONS=true
+# Which mutations are available, as Name:value;Name:value (see config/mutations.txt or
+# "isle-server mutations list"). Empty = every mutation (the game default).
+ENABLED_MUTATIONS=
 ENABLE_DIETS=true
 ENABLE_PATROL_ZONES=true
 ALLOW_RECORDING_REPLAY=true
@@ -150,8 +153,17 @@ EXTRA_ARGS=-log
 STOP_TIMEOUT=60
 # Automatically restart the server if it crashes (watchdog / service mode).
 AUTO_RESTART=true
-# Number of backups to keep (0 = keep all).
+# Number of backups to keep (0 = keep all). Also applies to BACKUP_COPY_DIR.
 BACKUP_RETENTION=10
+# When to back up, in cron syntax: minute hour day-of-month month day-of-week.
+# Examples: "0 5 * * *" (daily 05:00), "0 */6 * * *" (every 6 hours), "30 4 * * SUN",
+# @daily, @hourly, or off. Checked every minute by the scheduled task the installer adds.
+BACKUP_SCHEDULE="0 5 * * *"
+# 3-2-1: keep a second copy on ANOTHER disk ("2 media") ...
+BACKUP_COPY_DIR=
+# ... and one off-site: a command run after each backup, {file} = the archive, e.g.
+#   rclone copy {file} remote:theisle      (or enable the offsite-backup plugin instead)
+BACKUP_OFFSITE_COMMAND=
 # Send "save" via RCON before stopping / backing up (needs RCON + python3).
 SAVE_BEFORE_STOP=true
 

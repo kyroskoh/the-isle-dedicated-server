@@ -1,5 +1,13 @@
 # The Isle (Evrima) Dedicated Server Scripts
 
+[![lint](https://github.com/kyroskoh/the-isle-dedicated-server/actions/workflows/lint.yml/badge.svg)](https://github.com/kyroskoh/the-isle-dedicated-server/actions/workflows/lint.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
+[![Platforms](https://img.shields.io/badge/runs%20on-Windows%20%7C%20Linux%20%7C%20Docker-1b6a43)](INSTALL.md)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](DOCKER.md)
+[![Web UI + REST API](https://img.shields.io/badge/web%20UI-REST%20API%20%2B%20OpenAPI-6E56CF)](UI.md)
+
+**Version:** 1.12.0 · **Author:** [Kyros Koh](https://github.com/kyroskoh) · **Repository:** [kyroskoh/the-isle-dedicated-server](https://github.com/kyroskoh/the-isle-dedicated-server) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
+
 Scripts to install, configure, run, update and back up a **The Isle – Evrima**
 dedicated server on **Windows**, **Linux** and **Docker**, all driven from one shared config file.
 
@@ -19,7 +27,7 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/ui/dashboard-dark.png">
   <img src="docs/images/ui/dashboard-light.png" alt="The optional web UI: dashboard with server state, quick actions, server details and recent activity">
 </picture>
-<p align="center"><sub>The optional web UI (<code>isle-server ui</code> / <code>UI.bat</code>) follows your light or dark theme. More screenshots in <a href="UI.md">UI.md</a>.</sub></p>
+<p align="center"><sub>The optional web UI (<code>isle-server ui</code> / <code>UI.bat</code>) follows your light or dark theme. More in <a href="#screenshots">Screenshots</a> and <a href="UI.md">UI.md</a>.</sub></p>
 
 ## Features
 
@@ -31,12 +39,21 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
   archived Isla Spiro build). `isle-server ai density|interval|on|off|preset` tunes AI creatures, and the web UI has a
   **Map & AI** page for both.
 - **Admin, whitelist and roster commands** (`admins`, `whitelist`, `classes`, `ai-classes`) with SteamID and class validation. Whitelist and roster changes apply live over RCON.
+- **Roster by type.** `classes types`, `classes select carnivore`, `add-type flying`, `remove-type aquatic`, and
+  `classes humans on|off` (humans are a switch, not a class; eggs and hatchlings have no server setting). The UI filters
+  the roster by type, including human and egg.
+- **Mutations.** `mutations list|enable <Name> [value]|disable|reset` writes `EnabledMutations` lines; the UI has a
+  Mutations card with values and "fixed" ones locked to 1.
+- **Live admin commands** (`isle-server admin ...`, the **Admin** page): players online, player data, DM, kick, ban,
+  announce, save, wipe corpses, pause, migrations, humans, global chat, AI learning, growth multiplier, queue status
+  and more. Evrima's RCON cannot change a player's size, skin or mutations, or give god mode, teleport or heal; in-game
+  admins do those from the game's own admin panel.
 - **Plugin manager** with community catalog sources, a list of community tools (`plugins community`), search, install,
   update and presets (base, recommended, full). First-party plugins: scheduled restart countdown, Discord notifications, off-site backups, welcome announcement. Third-party catalogs must be SHA-256-pinned. See [PLUGINS.md](PLUGINS.md).
 - **Config validation.** `check` catches bad ports, typos in true/false values, a missing RCON password and malformed SteamIDs before the server launches.
 - **Installers with two modes, native or Docker** (you choose, or pick at the prompt). They set up dependencies, SteamCMD, the server (Steam app `412680`, branch `evrima`), firewall rules and a boot-time service, or a container. Re-run them to update or to switch modes. **Uninstall lets you choose** what to keep: everything (default), everything except the re-downloadable game files, no worlds, or nothing. A later reinstall in either mode picks it up again, importing it from the other mode if needed. `--purge` wipes everything.
 - **Optional web UI and REST API** (`isle-server ui`, `UI.bat`, or at boot with `install.sh --ui` / `Install.bat -UI`).
-  Dashboard, settings, players, roster, profiles, plugins, snapshots, logs and an RCON console, with light/dark/system
+  Dashboard, settings, players, roster, map & AI, mutations, admin, profiles, plugins, snapshots and backup schedule, logs and an RCON console, with light/dark/system
   themes. The OpenAPI 3.1 docs at `/docs` have a "Try it" form. It listens on localhost only and needs a token. See [UI.md](UI.md).
 - **Logs with rotation and a choice of clock.** Every log file is `KIND_yyyymmdd_hhmmss.log` (launcher, game console, web UI),
   rotated by size and pruned to a set count. `TIMEZONE=local|utc` sets the clock, and backups and snapshots carry the
@@ -45,9 +62,44 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 - **Watchdog** that restarts the server if it crashes. On Linux this is systemd `Restart=on-failure` or the built-in watchdog. On Windows it's a scheduled task plus a watchdog loop.
 - **Auto-update** through SteamCMD before each start (optional).
 - **Graceful stop.** The scripts save the world over RCON, then stop the server cleanly.
-- **Backups** run daily, keep a set number of copies, and can be restored.
+- **Scheduled backups with 3-2-1.** `BACKUP_SCHEDULE` takes cron syntax (`0 */6 * * *`, `30 4 * * MON-FRI`, `@daily`,
+  `off`), checked every minute by a systemd timer or a Windows scheduled task. `BACKUP_COPY_DIR` keeps a second copy on
+  another disk and `BACKUP_OFFSITE_COMMAND` (or the offsite-backup plugin) sends one off-site; `backup status` reports the
+  3-2-1 check. Backups keep a set number of copies and can be restored.
 - **RCON client** (`tools/isle_rcon.py`). It's pure Python and runs on both OSes: announce, kick, ban, save, playerlist, whitelist and more.
 - **Least privilege.** On Linux the server runs as a dedicated `theisle` user. On Windows it runs as `LOCAL SERVICE`.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><a href="docs/images/ui/roster-types.png"><img src="docs/images/ui/roster-types.png" alt="Roster filtered by type (carnivore), with Only / Add / Remove, humans and eggs"></a><br><sub>Roster filtered by type (carnivore), with Only / Add / Remove, humans and eggs</sub></td>
+    <td width="50%"><a href="docs/images/ui/mutations.png"><img src="docs/images/ui/mutations.png" alt="Mutations: all, or only chosen ones with their values"></a><br><sub>Mutations: all, or only chosen ones with their values</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/images/ui/admin.png"><img src="docs/images/ui/admin.png" alt="Admin: players online, kick/ban/DM, live switches, growth"></a><br><sub>Admin: players online, kick/ban/DM, live switches, growth</sub></td>
+    <td width="50%"><a href="docs/images/ui/backup-schedule.png"><img src="docs/images/ui/backup-schedule.png" alt="Cron-like backup schedule with live preview, and the 3-2-1 check"></a><br><sub>Cron-like backup schedule with live preview, and the 3-2-1 check</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/images/ui/map-ai.png"><img src="docs/images/ui/map-ai.png" alt="Map & AI: switch map and Steam branch"></a><br><sub>Map & AI: switch map and Steam branch</sub></td>
+    <td width="50%"><a href="docs/images/ui/plugins-community.png"><img src="docs/images/ui/plugins-community.png" alt="Plugins: catalog sources and community tools"></a><br><sub>Plugins: catalog sources and community tools</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/images/ui/settings.png"><img src="docs/images/ui/settings.png" alt="Settings with validation and an unsaved change"></a><br><sub>Settings with validation and an unsaved change</sub></td>
+    <td width="50%"><a href="docs/images/ui/logs.png"><img src="docs/images/ui/logs.png" alt="Logs: rotated KIND_yyyymmdd_hhmmss.log files"></a><br><sub>Logs: rotated KIND_yyyymmdd_hhmmss.log files</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/images/ui/snapshots.png"><img src="docs/images/ui/snapshots.png" alt="Snapshots & backups"></a><br><sub>Snapshots & backups</sub></td>
+    <td width="50%"><a href="docs/images/ui/console.png"><img src="docs/images/ui/console.png" alt="RCON console"></a><br><sub>RCON console</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/images/ui/phone-dashboard-dark.png"><img src="docs/images/ui/phone-dashboard-dark.png" alt="On a phone (dark theme)"></a><br><sub>On a phone (dark theme)</sub></td>
+    <td width="50%"><a href="docs/images/ui/api-docs.png"><img src="docs/images/ui/api-docs.png" alt="REST API docs (OpenAPI 3.1) with Try it"></a><br><sub>REST API docs (OpenAPI 3.1) with Try it</sub></td>
+  </tr>
+</table>
+
+All pages, in both themes and on phones and tablets: [UI.md](UI.md). The screenshots are regenerated by
+`node tests/ui_screenshots.mjs`.
 
 ## Quick start
 
@@ -164,9 +216,19 @@ docker-compose.yml           Compose service (ports, volume, env settings)
   [How to set up a The Isle Evrima dedicated server (XGamingServer)](https://xgamingserver.com/blog/how-to-set-up-a-the-isle-evrima-dedicated-server/).
 - [SteamCMD documentation (Valve Developer Wiki)](https://developer.valvesoftware.com/wiki/SteamCMD)
 
+## Support
+
+- 🐛 Issues: [GitHub Issues](https://github.com/kyroskoh/the-isle-dedicated-server/issues)
+- 💬 Discussions: [GitHub Discussions](https://github.com/kyroskoh/the-isle-dedicated-server/discussions)
+- 🔒 Security: see [SECURITY.md](SECURITY.md)
+
 ## Disclaimer
 
 This is a community project. It is not affiliated with or endorsed by Afterthought LLC
 (the developers of The Isle) or by Valve. "The Isle" is a trademark of its owners. Game
 settings change between Evrima updates. If a key stops working, check the official
 patch notes and adjust `server.conf` (or use `EXTRA_GAME_SESSION_SETTINGS`).
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

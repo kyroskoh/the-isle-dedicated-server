@@ -11,6 +11,9 @@
 #  Rocky/Alma (dnf/yum), Arch/Manjaro (pacman + [multilib]), openSUSE (zypper).
 #  Docker mode needs Docker Engine + the compose plugin on any x86_64 distro.
 #
+#  Project: https://github.com/kyroskoh/the-isle-dedicated-server
+#  Made with ♥ by Kyros Koh (https://github.com/kyroskoh)
+#
 #  Re-running is safe: it updates the scripts and keeps your settings and data.
 #  Re-running with the other mode switches modes: the old one is stopped and
 #  disabled (its data is kept) and your settings carry over.
@@ -295,6 +298,36 @@ firewall_rules() {  # add | remove  (uses $CONF for the ports)
 
 # ---------------------------------------------------------------- web UI ----
 has_systemd() { command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; }
+install_backup_timer() {  # MODE USER HOME SCRIPTS_DIR - per-minute tick that runs BACKUP_SCHEDULE (cron syntax)
+  local mode="$1" user="$2" home="$3" dir="$4"
+  cat > "/etc/systemd/system/$SERVICE-backup.service" <<EOF
+[Unit]
+Description=Scheduled backup of The Isle server (BACKUP_SCHEDULE in server.conf)
+
+[Service]
+Type=oneshot
+User=$user
+Environment=HOME=$home
+Environment=ISLE_CONF=$dir/config/server.conf
+Environment=ISLE_RUNTIME=$mode
+Environment=ISLE_NO_SYSTEMD=1
+ExecStart=$dir/linux/isle-server.sh backup tick
+EOF
+  cat > "/etc/systemd/system/$SERVICE-backup.timer" <<EOF
+[Unit]
+Description=Checks BACKUP_SCHEDULE every minute (isle-server backup schedule show)
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "$SERVICE-backup.timer" >/dev/null 2>&1
+  ok "Enabled $SERVICE-backup.timer: backups follow BACKUP_SCHEDULE ($(conf_get BACKUP_SCHEDULE)); change it with: isle-server backup schedule set \"<cron>\""
+}
 remove_ui() {
   [[ -f "$UI_UNIT" ]] || return 0
   systemctl disable --now "$UI_SERVICE.service" >/dev/null 2>&1 || true
@@ -383,6 +416,10 @@ retire_native() {
 retire_docker() {
   step "Stopping and removing the container (the $VOLUME volume is kept)"
   remove_ui
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl disable --now "$SERVICE-backup.timer" >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/system/$SERVICE-backup.service" "/etc/systemd/system/$SERVICE-backup.timer"
+  fi
   if have_docker_cli; then
     docker stop -t 90 "$CONTAINER" >/dev/null 2>&1 || true
     docker rm "$CONTAINER" >/dev/null 2>&1 || true
@@ -855,6 +892,8 @@ if [[ "$MODE" == docker ]]; then
 
   if (( DO_START || was_running )); then step "Starting the container"; "$launcher" --docker start; fi
   write_state docker "$DOCKER_SCRIPTS_DIR"
+  if has_systemd; then install_backup_timer docker root /root "$DOCKER_SCRIPTS_DIR"
+  else warn "systemd not detected - for scheduled backups add to root's crontab: * * * * * $DOCKER_SCRIPTS_DIR/linux/isle-server.sh backup tick"; fi
   setup_ui docker "$DOCKER_SCRIPTS_DIR"
 
   cat <<EOF
@@ -870,6 +909,9 @@ ${UI_LINE:+  $UI_LINE
 }
   Docker publishes ports through its own iptables rules (no ufw/firewalld rules needed).
   Remember to forward the game and queue ports on your router / cloud firewall.
+
+  Project     : https://github.com/kyroskoh/the-isle-dedicated-server  (docs, issues, updates)
+  Made with ♥ by Kyros Koh (https://github.com/kyroskoh)
 EOF
   if [[ -n "$MIGRATE_HINT" ]]; then printf '\n  %s\n' "$MIGRATE_HINT"; fi
   exit 0
@@ -987,35 +1029,10 @@ PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 EOF
-    cat > "/etc/systemd/system/$SERVICE-backup.service" <<EOF
-[Unit]
-Description=Backup The Isle server save data
-
-[Service]
-Type=oneshot
-User=$SVC_USER
-Environment=HOME=$SVC_HOME
-Environment=ISLE_CONF=$CONF
-Environment=ISLE_RUNTIME=native
-Environment=ISLE_NO_SYSTEMD=1
-ExecStart=$NATIVE_SCRIPTS_DIR/linux/isle-server.sh backup
-EOF
-    cat > "/etc/systemd/system/$SERVICE-backup.timer" <<EOF
-[Unit]
-Description=Daily backup of The Isle server
-
-[Timer]
-OnCalendar=*-*-* 05:00:00
-RandomizedDelaySec=15min
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
+    install_backup_timer native "$SVC_USER" "$SVC_HOME" "$NATIVE_SCRIPTS_DIR"
     systemctl daemon-reload
     systemctl enable "$SERVICE.service" >/dev/null 2>&1
-    systemctl enable --now "$SERVICE-backup.timer" >/dev/null 2>&1
-    ok "Enabled $SERVICE.service (starts on boot) and $SERVICE-backup.timer (daily 05:00)"
+    ok "Enabled $SERVICE.service (starts on boot)"
 
     if (( DO_SUDOERS )) && [[ -d /etc/sudoers.d ]]; then
       sc="$(command -v systemctl)"
@@ -1030,6 +1047,7 @@ EOF
     fi
   else
     warn "systemd not detected - skipping service. Use 'isle-server.sh start' (background watchdog) instead."
+    warn "For scheduled backups add to 's crontab: * * * * * /linux/isle-server.sh backup tick"
     DO_SERVICE=0
   fi
 fi
@@ -1060,5 +1078,8 @@ cat <<EOF
 ${UI_LINE:+  $UI_LINE
 }
   Remember to forward the game and queue ports on your router / cloud firewall.
+
+  Project     : https://github.com/kyroskoh/the-isle-dedicated-server  (docs, issues, updates)
+  Made with ♥ by Kyros Koh (https://github.com/kyroskoh)
 EOF
 if [[ -n "$MIGRATE_HINT" ]]; then printf '\n  %s\n' "$MIGRATE_HINT"; fi
