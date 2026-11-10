@@ -194,6 +194,10 @@ try {
   await ck("admin added", async () => { await page.waitForSelector("code:text('76561198000000042')"); return conf_("ADMIN_STEAM_IDS") === "76561198000000042"; });
   await ck("Steam name resolved after adding", async () => { await page.waitForSelector(".toast:has-text('Added NewAdmin (76561198000000042)')");
     await page.waitForSelector(".steam-name:text('NewAdmin')"); return true; });
+  await ck("name and SteamID64 open the Steam profile in a new tab", async () => page.evaluate(() => {
+    const a = document.querySelector("a.steam-link");
+    return a && a.href === "https://steamcommunity.com/profiles/76561198000000042" && a.target === "_blank" && /noopener/.test(a.rel) && /noreferrer/.test(a.rel)
+      && a.contains(a.querySelector(".steam-name")) && /76561198000000042/.test(a.textContent) && /new tab/.test(a.textContent); }));
   await page.fill('input[aria-label="SteamID64 to add"] >> nth=1', "76561198000000002");
   await page.click("form.input-group button >> nth=1");
   await ck("names are text, never markup", async () => { await page.waitForSelector(".steam-name:has-text('Ptera <Pal> & Co')");

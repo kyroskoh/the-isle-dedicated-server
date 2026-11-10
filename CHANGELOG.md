@@ -37,6 +37,8 @@ PLY-01 to PLY-03, CRD-01).
     is set, and caches them in `config/.steam-names.json` (`STEAM_NAME_CACHE_DAYS`, default 7).
   - `STEAM_NAME_LOOKUP=false` turns lookups off. A lookup never fails a command.
   - CLI: `admins|whitelist list [--refresh]`, `steam names <id...>` (Windows: `Steam names`).
+  - UI: the name and SteamID64 are one link that opens the Steam profile in a new tab (Players page and the Admin
+    page's players online).
   - API: names in `GET /api/v1/admins` and `/whitelist`, plus `GET /api/v1/steam/names?ids=`. The server does the
     lookup, so the browser never contacts Steam.
 - **Credits and project link:** "Made with ❤️ by Kyros Koh" with links to the author and to the repository in the

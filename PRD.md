@@ -341,7 +341,7 @@ Priority: **M** = must, **S** = should, **C** = could.
 | ADM-03 | M | **Honest limits** | CLI, API and UI state that RCON cannot change size, skin, mutations, god mode, teleport or heal |
 | PLY-01 | M | **Steam names** | `tools/isle_steam.py` resolves SteamID64s (public profile XML, or the Web API with `STEAM_WEB_API_KEY`, 100 per call); cached in `config/.steam-names.json` (mode 600, `STEAM_NAME_CACHE_DAYS`); network errors keep the last name; never fails a command; `STEAM_NAME_LOOKUP=false` makes no requests |
 | PLY-02 | M | **Names in the CLI** | `admins list`, `whitelist list` (`--refresh`) and `add` show "SteamID64  name" on both OSes; `steam names <id...>` |
-| PLY-03 | M | **Names in the API/UI** | `GET /api/v1/admins` and `/whitelist` include cached names; `GET /api/v1/steam/names?ids=` looks up the rest (≤100, validated); the Players page fills names in, the add toast names the player; names are text only; the browser never calls Steam |
+| PLY-03 | M | **Names in the API/UI** | `GET /api/v1/admins` and `/whitelist` include cached names; `GET /api/v1/steam/names?ids=` looks up the rest (≤100, validated); the Players page fills names in, the add toast names the player; name and SteamID64 link to the Steam profile in a new tab (`noopener noreferrer`); names are text only; the browser never calls Steam |
 | CRD-01 | S | **Author credit and project link** | README header and every doc footer, UI sidebar/login/API docs, CLI `version`/`help`/`info`, installers, OpenAPI `contact`/`externalDocs`, image labels |
 
 ## 7. CLI contract

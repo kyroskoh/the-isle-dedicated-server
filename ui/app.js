@@ -402,8 +402,7 @@
               if (yes) busy(rm, api("DELETE", path + "/" + id).then(function () { toast("Removed " + who); load(); }, fail));
             });
           });
-          add(ul, h("li", null, h("span", { class: "who" }, nameEl, h("code", { class: "small", text: id })), h("span", { class: "row" },
-            h("a", { href: "https://steamcommunity.com/profiles/" + id, target: "_blank", rel: "noopener noreferrer", class: "small", text: "Profile" }), rm)));
+          add(ul, h("li", null, steamLink(id, nameEl), h("span", { class: "row" }, rm)));
         });
         list.appendChild(ul);
         var missing = d.ids.filter(function (id) { return !known[id]; });
@@ -433,6 +432,13 @@
 
   /* Steam names: the API looks them up on Steam (cached on the server); the browser never calls Steam itself */
   function steamNames(ids) { return api("GET", "/steam/names?ids=" + encodeURIComponent(ids.join(","))); }
+  /* name + SteamID64 as one link to the Steam profile, in a new tab */
+  function steamLink(id, nameEl) {
+    var a = h("a", { class: "who steam-link", href: "https://steamcommunity.com/profiles/" + id, target: "_blank", rel: "noopener noreferrer",
+      title: "Open the Steam profile in a new tab" }, nameEl, h("span", { class: "steam-id" }, h("code", { class: "small", text: id }), icon("external"),
+      h("span", { class: "sr-only", text: " (Steam profile, opens in a new tab)" })));
+    return a;
+  }
   function showName(el, name, stateName) {
     el.classList.toggle("muted", !name);
     el.textContent = name || { pending: "Looking up Steam name…", off: "Name lookups off", error: "Name unavailable", done: "Name unknown" }[stateName];
@@ -1172,7 +1178,7 @@
             b.addEventListener("click", function () { playerAction(b, a, id, name); });
             acts.appendChild(b);
           });
-          add(ul, h("li", null, h("span", { class: "who" }, h("strong", { text: name, "data-peek": name }), h("code", { class: "small", text: id })), acts));
+          add(ul, h("li", null, steamLink(id, h("strong", { class: "steam-name", text: name, "data-peek": name })), acts));
         });
         players.appendChild(ul.childNodes.length ? ul : h("p", { class: "empty", text: "No players online." }));
       });

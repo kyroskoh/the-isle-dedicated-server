@@ -107,7 +107,7 @@ Changed fields are highlighted until you save. Machine-specific keys sit read-on
 | ![Settings with an unsaved change](docs/images/ui/settings.png) | ![Settings, dark theme](docs/images/ui/settings-dark.png) |
 
 **Players.** Admins and the whitelist, with SteamID64 validation in the browser, each player's Steam name (shown
-as soon as you add them) and links to Steam profiles. The server looks names up and caches them; the browser never
+as soon as you add them). Click a name or SteamID64 to open the Steam profile in a new tab. The server looks names up and caches them; the browser never
 contacts Steam. See [Steam names](CONFIGURATION.md#steam-names-for-steamid64s).
 
 ![Players page](docs/images/ui/players.png)

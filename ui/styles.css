@@ -465,3 +465,10 @@ input.num { width: 5.5rem; flex: none; min-width: 0; }
 .admin-grid .input-group input { min-width: 0; flex: 1 1 8rem; }
 .checks .pill { min-width: 3.75rem; justify-content: center; }
 .steam-name.muted { font-weight: 400; font-style: italic; }
+.steam-link { color: inherit; text-decoration: none; border-radius: var(--radius-sm); }
+.steam-link .steam-name { color: var(--primary); }
+.steam-link:hover .steam-name, .steam-link:focus-visible .steam-name { text-decoration: underline; text-underline-offset: 2px; }
+.steam-link:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.steam-link .steam-id { display: inline-flex; align-items: center; gap: .3rem; min-width: 0; color: var(--muted); }
+.steam-link .steam-id svg { width: 12px; height: 12px; flex: none; }
+.steam-link .steam-name.muted { color: var(--muted); }
