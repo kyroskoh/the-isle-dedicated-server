@@ -955,7 +955,7 @@
     var loadBackups = function () { return api("GET", "/backups"); };
     var renderRule = section(rule, loadBackups, function (el, d) { backupRule(el, d); });
     section(sched, loadBackups, function (el, d, reload) {
-      scheduleEditor(el, d, function () { reload(); clear(renderRule); loadBackups().then(function (b) { backupRule(renderRule, b); }); });
+      scheduleEditor(el, d, function () { reload(); loadBackups().then(function (b) { backupRule(clear(renderRule), b); }); });
     });
     var listCard = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Snapshots" }), btn("Refresh", { kind: "ghost sm", icon: "refresh", onclick: function () { load(); } })), list);
     listCard.style.marginTop = "1rem";

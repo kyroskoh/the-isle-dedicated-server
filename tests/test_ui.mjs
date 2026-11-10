@@ -271,7 +271,7 @@ try {
   await ck("cron preview lists next runs", async () => { await page.waitForSelector(".next-runs li"); return (await page.locator(".next-runs li").count()) === 5; });
   await page.click("button:has-text('Save schedule')");
   await ck("schedule saved", async () => { await page.waitForSelector(".toast:has-text('Backup schedule saved')"); return conf_("BACKUP_SCHEDULE") === '"15 3 * * 1-5"'; });
-  await ck("3-2-1 card shows the check", async () => /3-2-1/.test(await page.textContent("#backup-321")));
+  await ck("3-2-1 card shows the check", async () => { await page.waitForSelector("#backup-321 .checks li"); return /3-2-1/.test(await page.textContent("#backup-321")); });
   await page.click('#nav a[href="#/admin"]');
   await ck("players listed with actions", async () => { await page.click(".card-head button:has-text('Refresh')"); await page.waitForSelector(".who strong"); return (await page.locator(".who strong").count()) === 2; });
   await page.click("li:has-text('Global chat') button:has-text('Off')");

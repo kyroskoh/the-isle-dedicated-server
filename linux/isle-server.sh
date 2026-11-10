@@ -1111,7 +1111,7 @@ class_types() {  # SECTION -> "type: names" lines
 # ----------------------------------------------------------------- admin ---
 rcon_now() {  # COMMAND [ARGS] - live RCON; the server must be running
   command -v python3 >/dev/null 2>&1 || die "python3 is required for RCON"
-  is_true "$(cfg RCON_ENABLED)" && [[ -n "$(cfg RCON_PASSWORD)" ]] || die "RCON is disabled or has no password (RCON_ENABLED, RCON_PASSWORD)"
+  if ! is_true "$(cfg RCON_ENABLED)" || [[ -z "$(cfg RCON_PASSWORD)" ]]; then die "RCON is disabled or has no password (RCON_ENABLED, RCON_PASSWORD)"; fi
   if [[ "${RUNTIME:-native}" == docker ]]; then
     docker_running 2>/dev/null || die "The server is not running"
     dc exec -T theisle isle-server rcon "$@"

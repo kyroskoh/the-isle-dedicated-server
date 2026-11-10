@@ -27,7 +27,7 @@ $env:ISLE_STEAM_API_URL = $env:ISLE_STEAM_COMMUNITY_URL
 $fails = 0
 function ck($label, [scriptblock]$b) { $r = $false; try { $r = [bool](& $b) } catch { Write-Host "    error: $_" }; if ($r) { "  PASS $label" } else { "  FAIL $label"; $script:fails++ } }
 function conf($k) { ((Get-Content $Conf) | Where-Object { $_ -match "^$k=" } | Select-Object -Last 1) -replace "^$k=", '' }
-function run { & $m @args -ConfigPath $Conf *>&1 | Out-String }
+function run { & $m @args -ConfigPath $Conf *>&1 | Out-String -Width 8192 }   # PS 5.1 wraps captured output at the console width
 ck 'Profile list'            { (run Profile list) -match 'realism' }
 ck 'Profile show'            { (run Profile show realism) -match 'GROWTH_MULTIPLIER\s+1 -> 0.75' }
 ck 'Profile apply'           { run Profile apply realism | Out-Null; (conf GROWTH_MULTIPLIER) -eq '0.75' }
