@@ -177,7 +177,7 @@ const report = (label, found) => {
 };
 const MOTION = ENGINE === "firefox" ? {} : { reducedMotion: "reduce" };   // Firefox: emulation not needed for the audit
 /* navigate; on a timeout, say whether the API still answers (server vs browser problem) and retry on a fresh page */
-async function open(ctx, page, url) {
+async function open(ctx, page, url, withToken) {
   try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }); return page; } catch (e) {
     let alive = "no";
     try { const r = await fetch(BASE + "/api/v1/health", { signal: AbortSignal.timeout(5000) }); alive = "HTTP " + r.status; } catch (x) { alive = String(x); }
@@ -188,6 +188,7 @@ async function open(ctx, page, url) {
     try { await fresh.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }); return fresh; } catch (e2) {
       console.log("  note: a new page did not load either - trying a new browser context");
       const ctx2 = await newCtx({ viewport: page.viewportSize ? page.viewportSize() : undefined });
+      if (withToken) await ctx2.addInitScript((t) => { try { sessionStorage.setItem("isle-token", t); } catch (x) { /* storage blocked */ } }, TOKEN);
       const p2 = await ctx2.newPage();
       await p2.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
       return p2;
@@ -320,10 +321,12 @@ try {
   for (const [label, w, hgt] of DEVICES) await pass(label, async (mk) => {
     const touch = w < 1300;
     const ctx = await mk({ viewport: { width: w, height: hgt }, hasTouch: touch, isMobile: touch && MOBILE, ...MOTION });
+    // the token is in place before the first load, so there is no reload: WebKit's mobile emulation crashed the
+    // tab on reload at 568x320 (an engine crash, not the app - the same page loads fine)
+    await ctx.addInitScript((t) => { try { sessionStorage.setItem("isle-token", t); } catch (e) { /* storage blocked */ } }, TOKEN);
     let page = watch(await ctx.newPage());
-    page = await open(ctx, page, BASE + "/");
-    await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
-    page = await reloadPage(ctx, page);
+    page = await open(ctx, page, BASE + "/", true);
+    await page.waitForSelector("#content h1", { timeout: 20000 });
     for (const route of ROUTES) {
       await page.evaluate((r) => { location.hash = "#/" + r; }, route);
       try { await page.waitForSelector("#content h1", { timeout: 20000 }); } catch (e) { dump(page, `${label} ${route || "dashboard"} did not render`); throw e; }
