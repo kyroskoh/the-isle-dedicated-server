@@ -330,7 +330,7 @@ try {
   console.log("## guided tour");
   await page.click("#tour-start");
   await ck("tour opens as a dialog with focus", async () => { await page.waitForSelector(".tour-pop[role=dialog]");
-    await page.waitForFunction(() => document.activeElement && document.activeElement.id === "tour-title", null, { timeout: 3000 }); return true; });
+    return waitUntil(page, () => document.activeElement && document.activeElement.id === "tour-title", 3000); });
   await page.keyboard.press("ArrowRight"); await page.keyboard.press("ArrowRight"); await sleep(700);
   await ck("arrow keys move and the target is highlighted", async () => /Step 3 of/.test(await page.textContent(".tour-count")) && (await page.isVisible(".tour-spot")));
   await page.keyboard.press("Tab"); await page.keyboard.press("Tab"); await page.keyboard.press("Tab"); await page.keyboard.press("Tab");
