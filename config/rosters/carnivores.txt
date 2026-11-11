@@ -1,0 +1,14 @@
+# Roster: carnivores - carnivores and omnivores only
+# One class per line. An empty roster means: all classes allowed (game default).
+Allosaurus
+Carnotaurus
+Ceratosaurus
+Deinosuchus
+Dilophosaurus
+Herrerasaurus
+Omniraptor
+Pteranodon
+Troodon
+Tyrannosaurus
+Beipiaosaurus
+Gallimimus

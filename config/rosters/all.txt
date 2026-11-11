@@ -1,0 +1,3 @@
+# Roster: all - every class allowed (clears ALLOWED_CLASSES)
+# One class per line. An empty roster means: all classes allowed (game default).
+

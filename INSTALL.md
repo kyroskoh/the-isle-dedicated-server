@@ -1,5 +1,16 @@
 # Installation Guide
 
+Both installers support **two modes**:
+
+| Mode | What you get | Choose it with |
+|---|---|---|
+| **native** | SteamCMD and the server on this machine, plus a systemd service (Linux) or boot-time scheduled task (Windows) | `--native` / `-Native`, or answer **1** |
+| **docker** | The server in a Docker container. Nothing else is installed on the host | `--docker` / `-Docker`, or answer **2** |
+
+With no flag, the installer asks. If it can't ask (no terminal, for example in CI), it uses the previous mode, or
+native on a first install. Afterwards the **same launcher commands** work in both modes.
+See [Switching, uninstalling and reinstalling](#switching-uninstalling-and-reinstalling).
+
 This guide covers automated and manual installation on Windows and Linux.
 Read [CONFIGURATION.md](CONFIGURATION.md) afterwards to tune the server.
 
@@ -44,7 +55,10 @@ cd <repo>\windows
 .\Install.ps1 -NoFirewall -NoPython
 .\Install.ps1 -ServiceAccount System      # run the task as SYSTEM instead of LOCAL SERVICE
 .\Install.ps1 -Branch ''                  # install the public (Legacy) branch instead of evrima
-.\Install.ps1 -Uninstall                  # remove tasks + firewall rules (keeps files)
+.\Install.ps1 -Native                     # skip the mode prompt (or -Docker)
+.\Install.ps1 -UI                         # also run the web UI + API at boot (task TheIsleServer-UI; UI.md)
+.\Install.ps1 -Uninstall                  # remove tasks + firewall rules (keeps files, reinstall any time)
+.\Install.ps1 -Uninstall -Purge          # ALSO delete C:\TheIsle and the Docker volume (asks first)
 ```
 
 > **Windows Server Core:** everything works from `powershell.exe`. `winget` is usually
@@ -118,10 +132,18 @@ sudo ./linux/install.sh --start              # start when done
 sudo ./linux/install.sh --user isle --home /srv/isle
 sudo ./linux/install.sh --branch ""          # public/Legacy branch
 sudo ./linux/install.sh --no-firewall --no-service --no-sudoers --no-deps
-sudo ./linux/install.sh --uninstall          # remove units/sudoers/firewall rules (keeps files)
+sudo ./linux/install.sh --native             # skip the mode prompt (or --docker)
+sudo ./linux/install.sh --ui                 # also run the web UI + API at boot (theisle-ui, 127.0.0.1:8090; UI.md)
+sudo ./linux/install.sh --uninstall          # remove units/sudoers/firewall rules (keeps files, reinstall any time)
+sudo ./linux/install.sh --uninstall --purge  # ALSO delete the user, server files, backups (asks first; --yes skips)
 ```
 
 Re-running the installer is safe. It keeps your `server.conf` and updates the scripts.
+
+With `--ui` (Windows: `-UI`) the [web UI](UI.md) starts at boot on `http://127.0.0.1:8090/`. Sign in with the token
+from `sudo -u theisle isle-server ui-token`:
+
+<p align="center"><img src="docs/images/ui/login.png" alt="Web UI sign-in page" width="560"></p>
 
 ### Manual install (Linux, any glibc distro)
 
@@ -131,7 +153,8 @@ Re-running the installer is safe. It keeps your `server.conf` and updates the sc
 git clone https://github.com/kyroskoh/the-isle-dedicated-server.git ~/theisle-scripts
 cd ~/theisle-scripts
 cp config/server.conf.example config/server.conf && nano config/server.conf
-./linux/isle-server.sh install     # SteamCMD + server + ini files
+./linux/isle-server.sh check       # validate server.conf
+./linux/isle-server.sh install     # SteamCMD + server + ini files (generates an RCON password if empty)
 ./linux/isle-server.sh start       # background watchdog (no systemd needed)
 ./linux/isle-server.sh logs -f
 ```
@@ -163,13 +186,111 @@ Cloud providers (AWS, GCP, Azure, Oracle, Hetzner and others) also need matching
 
 ---
 
+---
+
+## Docker (Linux or Windows)
+
+Both installers have a docker mode. It doesn't install SteamCMD, create a service user, or add a
+systemd unit or scheduled task. It sets `RUNTIME=docker` in `config/server.conf`, builds the image and
+creates the container. After that the same launcher commands manage the container.
+
+```bash
+sudo ./linux/install.sh --docker --start        # Linux: needs Docker Engine + compose plugin
+sudo ./linux/install.sh --docker --uninstall    # removes the container, keeps the data volume
+```
+
+```powershell
+.\windows\Install.ps1 -Docker -Start            # Windows: needs Docker Desktop (Linux containers)
+```
+
+Details: [DOCKER.md](DOCKER.md).
+
 ## Updating
 
 - **Game:** the server updates itself on every start when `UPDATE_ON_START=true`, so a restart is enough.
   To update by hand: stop, then `update` (or `Update.bat`), then start.
 - **These scripts:** `git pull` in your clone, then re-run the installer. Your `server.conf` is kept.
 
+## Switching, uninstalling and reinstalling
+
+Run the installer again at any time. It's safe:
+
+| You run | What happens |
+|---|---|
+| The same mode again | Scripts are updated. `server.conf`, the world and backups are kept. A running server is stopped, updated and started again |
+| The **other** mode | The old mode is stopped and disabled (its data is kept). `server.conf` carries over with `RUNTIME` switched. A backup of the old world is made so you can move it (the installer prints the exact `restore` command) |
+| `--uninstall` / `-Uninstall` | Removes the service, scheduled tasks, firewall rules and container. **Keeps** world data (including the `theisle-data` Docker volume), settings and backups. It remembers the mode, so running the installer again (no flag needed) reinstalls the same way, with the same world |
+| `--uninstall --remove-game-files` (or menu option 2) | Also deletes re-downloadable files: server install, SteamCMD, Docker image. Worlds, backups and settings stay. A reinstall downloads the game again and finds your world |
+| `--uninstall --remove-worlds` (or menu option 3 with game files) | Deletes worlds. If backups are kept, a final `theisle-final-*.tar.gz` backup is taken first |
+| `--uninstall --remove-backups` / `--remove-settings` | Deletes backups, or `server.conf` plus the scripts copy |
+| `--uninstall --purge` / `-Uninstall -Purge` | Also deletes server files, worlds, backups, settings, the `theisle-data` Docker volume and (Linux) the `theisle` user. Asks you to type `yes` (`--yes` / `-Yes` skips the prompt). A later install starts from scratch |
+
+**Choosing what to keep.** Run `--uninstall` / `-Uninstall` in a terminal without a data flag and it asks:
+
+```
+What should happen to the server data?
+  1) Keep everything                 - a reinstall picks it up again (default)
+  2) Remove game files only          - frees disk space; worlds, backups and settings are kept
+  3) Remove game files and worlds    - backups and settings are kept (a final backup is taken)
+  4) Delete everything (purge)       - game files, worlds, backups, settings, service user, Docker volume
+  5) Choose each item
+```
+
+Or pass the flags directly. They can be combined:
+
+| Linux | Windows | Deletes |
+|---|---|---|
+| `--keep-data` | `-KeepData` | nothing (the default when there is no terminal) |
+| `--remove-game-files` | `-RemoveGameFiles` | server install, SteamCMD, Docker image (re-downloadable) |
+| `--remove-worlds` | `-RemoveWorlds` | `TheIsle/Saved` (final backup first if backups are kept) |
+| `--remove-backups` | `-RemoveBackups` | the backups folder / `/data/backups` |
+| `--remove-settings` | `-RemoveSettings` | `server.conf` and the scripts copy |
+| `--purge` | `-Purge` | all of the above, plus the service user and the Docker volume |
+
+Deleting worlds, backups or settings asks you to type `yes`. `--yes` / `-Yes` skips that prompt. Without a
+terminal it refuses. Folders taken from `server.conf` are only deleted if they're clearly not system or home
+folders. In docker mode, the parts are removed from inside the `theisle-data` volume. The volume itself is only
+deleted when everything goes.
+
+`--uninstall` with no mode removes whatever is installed (both modes, if both are present). Add `--native` or
+`--docker` to remove only one.
+
+**Reinstalling with retained data.** A reinstall always uses the world that was kept:
+
+| Reinstall as | Retained data | Result |
+|---|---|---|
+| docker | `theisle-data` volume has a world | Reused as is ("Reusing the world kept in Docker volume theisle-data") |
+| docker | Volume empty or missing, native world kept | Native world is archived and imported into the volume |
+| native | Native world kept | Reused as is |
+| native | No native world, `theisle-data` has a world (container or not) | Volume world is exported to the native backups folder and restored |
+| either | Both sides have a world | Nothing is overwritten. The installer says where the other world is and how to restore it |
+
+Turn the import off with `--no-import` / `-NoImport`. The archives it creates stay in `/var/tmp` or the backups
+folder, so you can restore them again later. A "world" is anything in `TheIsle/Saved` besides `Config`, `Logs`
+and `Crashes`.
+
+**Switching with data choices, and moving to another machine:** the installers take `--data copy|move|fresh`,
+`--carry LIST`, `--overwrite`, `--from-snapshot FILE` and `--image REF` (Windows: `-Data`, `-Carry`, `-Overwrite`,
+`-FromSnapshot`, `-Image`). See [MIGRATION.md](MIGRATION.md).
+
+**Moving a world between modes.** Backups are portable. `restore` accepts `.tar.gz` (Linux/Docker) and `.zip`
+(native Windows) in either mode, and in docker mode a file on the host is copied into the container for you:
+
+```bash
+sudo isle-server restore /home/theisle/theisle-backups/theisle-20261107-120000.tar.gz   # Linux, into Docker
+```
+```powershell
+Restore.bat -Path "C:\TheIsle\backups\theisle-20261107-120000.zip"                     # Windows, either mode
+```
+
+The installer keeps its state in `/etc/theisle-server/install.state` (Linux) or `<InstallRoot>\install-state.txt`
+(Windows). It holds the mode, the scripts folder and whether the server is currently installed.
+
 ## Uninstalling
 
-- **Windows:** `Install.ps1 -Uninstall`, then delete `C:\TheIsle`.
-- **Linux:** `sudo ./linux/install.sh --uninstall`, then `sudo userdel -r theisle` and `sudo rm /usr/local/bin/isle-server`.
+- **Keep data (reinstall later):** `sudo ./linux/install.sh --uninstall` / `Install.ps1 -Uninstall`
+- **Remove everything:** `sudo ./linux/install.sh --uninstall --purge` / `Install.ps1 -Uninstall -Purge`
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)

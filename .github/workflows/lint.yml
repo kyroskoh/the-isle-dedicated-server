@@ -10,12 +10,42 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # a hung step fails the job instead of running for hours
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck
-        run: shellcheck -x linux/*.sh
+        run: shellcheck -x linux/*.sh tests/*.sh
       - name: Python syntax
-        run: python3 -m py_compile tools/isle_rcon.py
+        run: python3 -m py_compile tools/*.py plugins/available/*/plugin.py tests/*.py tests/fixtures/*.py
+      - name: JSON catalogs and manifests
+        run: for f in plugins/catalog.json plugins/available/*/plugin.json; do python3 -m json.tool "$f" >/dev/null || exit 1; done
+      - name: Config tools (overrides, profiles, presets, admins, whitelist, roster)
+        run: bash tests/test_config_tools.sh
+      - name: Plugin manager tests
+        run: python3 -m unittest -v tests/test_plugins.py
+      - name: Snapshot engine tests
+        run: python3 -m unittest -v tests/test_snapshot.py
+      - name: REST API tests (API-01..05)
+        run: python3 -m unittest -v tests/test_api.py
+      - name: Logs, rotation and time zone (LOG-01..05)
+        run: python3 -m unittest -v tests/test_logs.py
+      - name: Steam names (PLY-01..03)
+        run: python3 -m unittest -v tests/test_steam.py
+      - name: Web UI via the real launcher (UI-04)
+        run: |
+          set -e
+          tmp="$(mktemp -d)"; mkdir -p "$tmp/config"
+          sed -e "s|^SERVER_DIR=|SERVER_DIR=$tmp/srv|" -e 's|^RCON_PASSWORD=|RCON_PASSWORD=ci-pw|' config/server.conf.example > "$tmp/config/server.conf"
+          export ISLE_CONF="$tmp/config/server.conf" ISLE_NO_SYSTEMD=1
+          token="$(linux/isle-server.sh ui-token)"
+          [ "$(stat -c %a "$tmp/config/ui-token")" = 600 ]
+          linux/isle-server.sh ui --port 8095 & pid=$!
+          for i in $(seq 1 50); do curl -fsS http://127.0.0.1:8095/api/v1/health && break; sleep 0.2; done
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8095/api/v1/status)" = 401 ]
+          curl -fsS -H "Authorization: Bearer $token" http://127.0.0.1:8095/api/v1/status | grep -q '"running": false'
+          curl -fsS http://127.0.0.1:8095/openapi.json | python3 -c 'import json,sys; assert json.load(sys.stdin)["openapi"] == "3.1.0"'
+          curl -fsS http://127.0.0.1:8095/docs | grep -q docs.js
+          kill $pid
       - name: Render config with a fake server
         run: |
           set -e
@@ -25,19 +55,151 @@ jobs:
           chmod +x "$tmp/srv/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping"
           sed -e "s|^SERVER_DIR=|SERVER_DIR=$tmp/srv|" -e "s|^BACKUP_DIR=|BACKUP_DIR=$tmp/bk|" \
               -e 's|^UPDATE_ON_START=true|UPDATE_ON_START=false|' -e 's|^SAVE_BEFORE_STOP=true|SAVE_BEFORE_STOP=false|' \
+              -e 's|^RCON_PASSWORD=|RCON_PASSWORD=ci-test-password|' \
               config/server.conf.example > "$tmp/server.conf"
           export ISLE_CONF="$tmp/server.conf" ISLE_NO_SYSTEMD=1
+          linux/isle-server.sh version | grep -q "$(cat VERSION)"
+          linux/isle-server.sh check
+          # negative test: an invalid port must be rejected (PRD CFG-05)
+          sed 's|^GAME_PORT=.*|GAME_PORT=99999|' "$tmp/server.conf" > "$tmp/bad.conf"
+          if ISLE_CONF="$tmp/bad.conf" linux/isle-server.sh check; then echo "check accepted a bad port"; exit 1; fi
           linux/isle-server.sh configure
           grep -q '^\[/Script/TheIsle.TIGameSession\]' "$tmp/srv/TheIsle/Saved/Config/LinuxServer/Game.ini"
           grep -q '^DedicatedServerClientId=' "$tmp/srv/TheIsle/Saved/Config/LinuxServer/Engine.ini"
           linux/isle-server.sh start
           linux/isle-server.sh status
+          # update must refuse while running (PRD UPD-03)
+          if linux/isle-server.sh update; then echo "update ran while server was running"; exit 1; fi
           linux/isle-server.sh stop
           linux/isle-server.sh backup
           ls "$tmp/bk"/theisle-*.tar.gz
 
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45   # a hung step fails the job instead of running for hours
+    steps:
+      - uses: actions/checkout@v4
+      - name: hadolint
+        run: docker run --rm -i hadolint/hadolint:v2.12.0 < docker/Dockerfile
+      - name: ShellCheck container scripts
+        run: shellcheck -x docker/entrypoint.sh docker/isle-server
+      - name: Validate compose file
+        run: docker compose config -q
+      - name: Build image
+        run: docker build -f docker/Dockerfile -t theisle-server:ci .
+      - name: Image size under 500 MB (DKR-01)
+        run: |
+          size=$(docker image inspect theisle-server:ci --format '{{.Size}}')
+          echo "image size: $((size / 1024 / 1024)) MB"
+          test "$size" -lt $((500 * 1024 * 1024))
+      - name: Smoke test with a fake server binary
+        run: |
+          set -eux
+          docker volume create isle-ci
+          # Fake server: logs its uid, exits cleanly on SIGTERM.
+          docker run --rm --entrypoint bash -v isle-ci:/data theisle-server:ci -c '
+            mkdir -p /data/server/TheIsle/Binaries/Linux
+            printf "%s\n" "#!/bin/bash" "echo FAKE uid=\$(id -u)" "trap \"echo FAKE got TERM; exit 0\" TERM" "while :; do sleep 1; done" \
+              > /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping
+            chmod +x /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping'
+          run() { docker run -d --name isle-ci -v isle-ci:/data -e UPDATE_ON_START=false -e PUID=1234 -e PGID=1234 \
+                    --health-interval=2s --health-start-period=5s "$@" theisle-server:ci; }
+
+          # DKR-03: env override reaches Game.ini; RCON password generated
+          run -e SERVER_NAME="CI Server"
+          for i in $(seq 1 30); do [ "$(docker inspect -f '{{.State.Health.Status}}' isle-ci)" = healthy ] && break; sleep 2; done
+          docker logs isle-ci
+          test "$(docker inspect -f '{{.State.Health.Status}}' isle-ci)" = healthy                      # DKR-06
+          docker exec isle-ci grep -q '^ServerName=CI Server$' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini
+          docker exec isle-ci grep -qE '^RconPassword=.{24}$' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini
+          docker logs isle-ci 2>&1 | grep -q 'FAKE uid=1234'                                              # DKR-04
+          docker exec isle-ci isle-server status                                                          # DKR-07
+          docker exec isle-ci isle-server backup
+          docker exec isle-ci sh -c 'ls /data/backups/theisle-*.tar.gz'                                   # DKR-09
+
+          # DKR-05: graceful stop
+          docker stop -t 90 isle-ci
+          test "$(docker inspect -f '{{.State.ExitCode}}' isle-ci)" = 0
+          docker logs isle-ci 2>&1 | grep -q 'FAKE got TERM'
+          docker rm isle-ci
+
+          # DKR-02: a new container keeps the config
+          run
+          sleep 8
+          docker exec isle-ci grep -q '^ServerName=CI Server$' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini
+          docker rm -f isle-ci
+
+          # CFG-05 in Docker: a bad env value makes the container fail
+          if docker run --rm -v isle-ci:/data -e UPDATE_ON_START=false -e GAME_PORT=99999 theisle-server:ci; then
+            echo "container accepted GAME_PORT=99999"; exit 1
+          fi
+      - name: Unit suites inside the Debian image (DEB-01)
+        run: |
+          docker run --rm -v "$PWD":/src:ro --entrypoint sh theisle-server:ci -c \
+            'cp -a /src /repo && cd /repo && ISLE_ALLOW_ROOT=1 bash tests/test_config_tools.sh && python3 -m unittest -v tests/test_plugins.py tests/test_snapshot.py tests/test_api.py tests/test_logs.py tests/test_steam.py'
+      - name: End-to-end through the launcher with an RCON-speaking fake server
+        run: ISLE_TEST_I_UNDERSTAND=1 IMAGE=theisle-server:ci bash tests/test_container_e2e.sh
+      - name: Launcher in docker mode (LCH-01..08)
+        run: |
+          set -eux
+          conf="$RUNNER_TEMP/launcher.conf"
+          sed -e 's/^RUNTIME=native/RUNTIME=docker/' -e 's/^DOCKER_BUILD=true/DOCKER_BUILD=false/' \
+              -e 's/^DOCKER_IMAGE=.*/DOCKER_IMAGE=theisle-server:ci/' -e 's/^UPDATE_ON_START=true/UPDATE_ON_START=false/' \
+              -e 's/^SERVER_NAME=.*/SERVER_NAME="Launcher CI"/' config/server.conf.example > "$conf"
+          export ISLE_CONF="$conf"
+          L=linux/isle-server.sh
+          $L info | grep -q 'Runtime *: docker'
+          $L install                                            # generates RCON password on the host
+          grep -qE '^RCON_PASSWORD=.{24}$' "$conf"
+          ISLE_CONF_FILE="$conf" docker compose --env-file "$conf" run --rm --entrypoint bash theisle -c '
+            mkdir -p /data/server/TheIsle/Binaries/Linux
+            printf "%s\n" "#!/bin/bash" "trap \"exit 0\" TERM" "while :; do sleep 1; done" \
+              > /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping
+            chmod +x /data/server/TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping'
+          $L start
+          for i in $(seq 1 20); do $L status && break; sleep 2; done
+          $L status
+          docker exec theisle grep -q '^ServerName=Launcher CI$' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini
+          test "$(grep '^RCON_PASSWORD=' "$conf" | cut -d= -f2)" = \
+               "$(docker exec theisle grep '^RconPassword=' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini | cut -d= -f2)"
+          $L rcon serverdetails || true                         # no real RCON server behind the fake binary
+          $L backup
+          if $L update; then echo "update ran while the container was running"; exit 1; fi
+          sed -i 's/^SERVER_NAME=.*/SERVER_NAME="Launcher CI 2"/' "$conf"
+          $L restart
+          sleep 5
+          docker exec theisle grep -q '^ServerName=Launcher CI 2$' /data/server/TheIsle/Saved/Config/LinuxServer/Game.ini
+          $L logs | tail -5
+          $L stop
+          rc=0; $L status || rc=$?; test "$rc" = 3
+          backup="$(docker run --rm -v theisle-data:/data theisle-server:ci bash -c 'ls /data/backups/*.tar.gz | head -1')"
+          $L restore "$(basename "$backup")"
+          $L --native info | grep -q 'Runtime *: native'
+          if ISLE_RUNTIME=podman $L status; then echo "accepted RUNTIME=podman"; exit 1; fi
+
+  debian-native:
+    # Native install on Debian with the real apt dependencies (PRD DEB-01)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30   # a hung step fails the job instead of running for hours
+    container: debian:bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native install / admin tools / plugins / snapshot cycle on Debian 12
+        run: ISLE_TEST_I_UNDERSTAND=1 bash tests/test_native_debian.sh
+
+  installer-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30   # a hung step fails the job instead of running for hours
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck test script
+        run: shellcheck -x tests/installer-cycle.sh
+      - name: Install / uninstall / reinstall / switch / purge cycle (INS-13..18)
+        run: sudo ISLE_TEST_I_UNDERSTAND=1 bash tests/installer-cycle.sh
+
   windows:
     runs-on: windows-latest
+    timeout-minutes: 30   # a hung step fails the job instead of running for hours
     steps:
       - uses: actions/checkout@v4
       - name: Parse PowerShell (Windows PowerShell 5.1)
@@ -65,10 +227,190 @@ jobs:
           New-Item -ItemType Directory -Force -Path $tmp | Out-Null
           (Get-Content config\server.conf.example) `
             -replace '^SERVER_DIR=$', "SERVER_DIR=$tmp\srv" `
-            -replace '^BACKUP_DIR=$', "BACKUP_DIR=$tmp\bk" | Set-Content $conf
+            -replace '^BACKUP_DIR=$', "BACKUP_DIR=$tmp\bk" `
+            -replace '^RCON_PASSWORD=$', 'RCON_PASSWORD=ci-test-password' | Set-Content $conf
+          .\windows\IsleServer.ps1 Version
+          .\windows\IsleServer.ps1 Check -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # negative test: an invalid port must be rejected (PRD CFG-05)
+          $bad = Join-Path $tmp 'bad.conf'
+          (Get-Content $conf) -replace '^GAME_PORT=.*$', 'GAME_PORT=99999' | Set-Content $bad
+          .\windows\IsleServer.ps1 Check -ConfigPath $bad
+          if ($LASTEXITCODE -ne 1) { Write-Host 'Check accepted a bad port'; exit 1 }
           .\windows\IsleServer.ps1 Configure -ConfigPath $conf
           if ($LASTEXITCODE -ne 0) { exit 1 }
           if (-not (Select-String -Path "$tmp\srv\TheIsle\Saved\Config\WindowsServer\Game.ini" -Pattern 'TIGameSession' -Quiet)) { exit 1 }
           .\windows\IsleServer.ps1 Info -ConfigPath $conf
           .\windows\IsleServer.ps1 Backup -ConfigPath $conf
           if (-not (Get-ChildItem "$tmp\bk\theisle-*.zip")) { exit 1 }
+      - name: Docker runtime mode (LCH-02/06)
+        shell: powershell
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP 'isle-docker'
+          $conf = Join-Path $tmp 'server.conf'
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          (Get-Content config\server.conf.example) -replace '^RCON_PASSWORD=$', 'RCON_PASSWORD=ci-test-password' | Set-Content $conf
+          $info = .\windows\IsleServer.ps1 Info -Runtime Docker -ConfigPath $conf 6>&1 | Out-String
+          Write-Host $info
+          if ($info -notmatch 'Runtime\s+: docker') { Write-Host 'Info did not report docker runtime'; exit 1 }
+          .\windows\IsleServer.ps1 Check -Runtime Docker -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # The hosted runner only has Windows containers: Status must fail with a clear message.
+          $out = .\windows\IsleServer.ps1 Status -Runtime Docker -ConfigPath $conf 6>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 1 -or $out -notmatch 'Linux containers|Docker') { Write-Host 'expected a clear docker error'; exit 1 }
+          $env:ISLE_RUNTIME = 'podman'
+          .\windows\IsleServer.ps1 Status -ConfigPath $conf
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted RUNTIME=podman'; exit 1 }
+          # The step otherwise exits with the (intentionally non-zero) last exit code.
+          exit 0
+      - name: Config tools (PowerShell 5.1)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests\test_config_tools.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Plugin manager tests (Windows Python)
+        shell: powershell
+        run: |
+          python -m unittest -v tests\test_plugins.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Snapshot engine tests (Windows Python)
+        shell: powershell
+        run: |
+          python -m unittest -v tests\test_snapshot.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Logs, rotation and time zone (PowerShell 5.1)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests\test_logs.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: REST API tests (Windows Python)
+        shell: powershell
+        run: |
+          python -m unittest -v tests\test_api.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Web UI via IsleServer.ps1 (UI-04)
+        shell: powershell
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'uiconf'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $conf = Join-Path $dir 'server.conf'
+          (Get-Content config\server.conf.example) -replace '^RCON_PASSWORD=$', 'RCON_PASSWORD=ci-pw' | Set-Content $conf
+          $token = (powershell -NoProfile -ExecutionPolicy Bypass -File windows\IsleServer.ps1 UiToken -ConfigPath $conf | Select-Object -Last 1).Trim()
+          if ($token.Length -lt 32) { Write-Host "no token: $token"; exit 1 }
+          $p = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'windows\IsleServer.ps1', 'UI', '--port', '8096', '-ConfigPath', $conf
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) { try { Invoke-RestMethod http://127.0.0.1:8096/api/v1/health | Out-Null; $ok = $true; break } catch { Start-Sleep -Milliseconds 500 } }
+          if (-not $ok) { Write-Host 'UI did not start'; exit 1 }
+          $s = Invoke-RestMethod http://127.0.0.1:8096/api/v1/status -Headers @{ Authorization = "Bearer $token" }
+          if ($s.running) { Write-Host 'expected a stopped server'; exit 1 }
+          $a = Invoke-RestMethod http://127.0.0.1:8096/api/v1/admins -Method Post -ContentType 'application/json' -Body '{"ids":["76561198000000001"]}' -Headers @{ Authorization = "Bearer $token" }
+          if (-not $a.ok) { Write-Host 'admins add failed'; exit 1 }
+          if (-not (Select-String -Path $conf -Pattern '^ADMIN_STEAM_IDS=76561198000000001$' -Quiet)) { Write-Host 'admin not written'; exit 1 }
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*isle_api.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          exit 0
+      - name: Snapshots via IsleServer.ps1 (incl. a Linux-made snapshot)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests\test_snapshot.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Plugins via IsleServer.ps1
+        shell: powershell
+        run: |
+          $conf = Join-Path $env:RUNNER_TEMP 'plugins.conf'
+          (Get-Content config\server.conf.example) -replace '^RCON_PASSWORD=$', 'RCON_PASSWORD=x' | Set-Content $conf
+          .\windows\IsleServer.ps1 Plugins list -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\windows\IsleServer.ps1 Plugins install offsite-backup -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\windows\IsleServer.ps1 Plugins info offsite-backup -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Restore accepts .zip and .tar.gz (native)
+        shell: powershell
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP 'isle-restore'
+          $conf = Join-Path $tmp 'server.conf'
+          New-Item -ItemType Directory -Force -Path "$tmp\src\Saved" | Out-Null
+          Set-Content "$tmp\src\Saved\marker.txt" 'from-tar'
+          (Get-Content config\server.conf.example) -replace '^SERVER_DIR=$', "SERVER_DIR=$tmp\srv" `
+            -replace '^RCON_PASSWORD=$', 'RCON_PASSWORD=x' | Set-Content $conf
+          tar -czf "$tmp\b.tar.gz" -C "$tmp\src" Saved
+          .\windows\IsleServer.ps1 Restore -Runtime Native -Path "$tmp\b.tar.gz" -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0 -or (Get-Content "$tmp\srv\TheIsle\Saved\marker.txt") -ne 'from-tar') { exit 1 }
+          Compress-Archive -Path "$tmp\src\Saved" -DestinationPath "$tmp\b.zip"
+          .\windows\IsleServer.ps1 Restore -Runtime Native -Path "$tmp\b.zip" -ConfigPath $conf
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Installer argument and uninstall handling (INS-13/16/17)
+        shell: powershell
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'isle-install'
+          .\windows\Install.ps1 -Native -Docker -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -Native -Docker'; exit 1 }
+          .\windows\Install.ps1 -Purge -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -Purge without -Uninstall'; exit 1 }
+          .\windows\Install.ps1 -Carry nonsense -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -Carry nonsense'; exit 1 }
+          .\windows\Install.ps1 -FromSnapshot C:\nope\missing.tar.gz -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted a missing -FromSnapshot file'; exit 1 }
+          .\windows\Install.ps1 -Uninstall -InstallRoot $root
+          if ($LASTEXITCODE -ne 0) { Write-Host 'uninstall on a clean machine failed'; exit 1 }
+          .\windows\Install.ps1 -KeepData -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -KeepData without -Uninstall'; exit 1 }
+          .\windows\Install.ps1 -Uninstall -KeepData -RemoveWorlds -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'accepted -KeepData with -RemoveWorlds'; exit 1 }
+          # Non-interactive: deleting worlds must be refused without -Yes (INS-20)
+          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\Install.ps1 -Uninstall -RemoveWorlds -InstallRoot $root
+          if ($LASTEXITCODE -ne 1) { Write-Host 'deleted worlds without confirmation'; exit 1 }
+          # Game files only needs no confirmation and keeps everything else
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Set-Content "$root\install-state.txt" "MODE=native`nSTATUS=installed"
+          New-Item -ItemType Directory -Force -Path "$root\server\TheIsle\Saved\SaveGames", "$root\server\TheIsle\Binaries", "$root\steamcmd" | Out-Null
+          Set-Content "$root\server\TheIsle\Saved\SaveGames\w.txt" 'world'
+          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\Install.ps1 -Uninstall -Native -RemoveGameFiles -InstallRoot $root
+          if ($LASTEXITCODE -ne 0) { Write-Host 'remove game files failed'; exit 1 }
+          if ((Test-Path "$root\server\TheIsle\Binaries") -or (Test-Path "$root\steamcmd")) { Write-Host 'game files not removed'; exit 1 }
+          if (-not (Test-Path "$root\server\TheIsle\Saved\SaveGames\w.txt")) { Write-Host 'world was removed'; exit 1 }
+          # Worlds with -Yes and backups kept: final backup first
+          .\windows\Install.ps1 -Uninstall -Native -RemoveWorlds -Yes -InstallRoot $root
+          if ($LASTEXITCODE -ne 0 -or (Test-Path "$root\server\TheIsle\Saved")) { Write-Host 'worlds not removed'; exit 1 }
+          if (-not (Get-ChildItem "$root\backups\theisle-final_*.tar.gz")) { Write-Host 'no final backup'; exit 1 }
+          New-Item -ItemType Directory -Force -Path "$root\scripts\windows" | Out-Null
+          Set-Content "$root\install-state.txt" "MODE=native`nSTATUS=uninstalled"
+          # stdin redirected => non-interactive: purge must refuse without -Yes
+          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\Install.ps1 -Uninstall -Purge -InstallRoot $root
+          if ($LASTEXITCODE -ne 1 -or -not (Test-Path $root)) { Write-Host 'purge ran without confirmation'; exit 1 }
+          .\windows\Install.ps1 -Uninstall -Purge -Yes -InstallRoot $root
+          if ($LASTEXITCODE -ne 0 -or (Test-Path $root)) { Write-Host 'purge -Yes did not remove the folder'; exit 1 }
+          exit 0
+
+  web-ui:
+    # Chromium (Chrome/Edge/Opera), Firefox (Gecko) and WebKit (Safari) - desktop, tablet and phone shapes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30   # a hung step fails the job instead of running for hours
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    env:
+      BROWSER: ${{ matrix.browser }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright + ${{ matrix.browser }}
+        run: |
+          npm install --no-save --no-package-lock playwright@1.48.2
+          npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Web UI in a browser (UI-01..05)
+        run: UI_SCREENSHOTS="$RUNNER_TEMP/ui-shots" node tests/test_ui.mjs
+      - name: Layout edge cases - long text, 320-1920 px, phones/tablets in both orientations (UI-02)
+        run: node tests/test_ui_overflow.mjs
+      - name: Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots-${{ matrix.browser }}
+          path: ${{ runner.temp }}/ui-shots
+          if-no-files-found: ignore

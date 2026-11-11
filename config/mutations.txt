@@ -1,0 +1,52 @@
+# =============================================================================
+#  The Isle (Evrima) mutations - used by "isle-server mutations" and the web UI.
+#  Columns (tab-separated): NAME  DEFAULT_VALUE  [fixed]
+#  Source: the Evrima Game.ini template of CubeCoders AMP (community-documented).
+#  Game.ini: EnabledMutations=<Name>, <value> - one line per mutation.
+#    - no EnabledMutations lines at all = every mutation is available (default);
+#    - as soon as one line is written, ONLY the listed mutations are available;
+#    - "fixed" mutations take 1 (or are left out to disable them);
+#    - changing default values may produce unstable gameplay.
+# =============================================================================
+Hemomania	0.05	
+Hematophagy	0.25	
+Accelerated Prey Drive	0.1	
+Xerocole Adaptation	0.2	
+Hypervigilance	0.5	
+Truculency	0.2	
+Osteophagic	0.15	
+Photosynthetic Regeneration	0.1	
+Cellular Regeneration	0.15	
+Advanced Gestation	0.5	
+Sustained Hydration	0.2	
+Enlarged meniscus	0.15	
+Efficient Digestion	0.2	
+Featherweight	0.5	
+Osteosclerosis	0.2	
+Wader	0.25	
+Epidermal Fibrosis	0.15	
+Congenital Hypoalgesia	0.15	
+Photosynthetic Tissue	0.05	
+Nocturnal	0.05	
+Hydroregenerative	0.25	
+Increased Inspiratory Capacity	0.15	
+Hydrodynamic	0.15	
+Submerged Optical Retention	0.05	
+Infrasound Communication	0.5	
+Augmented Tapetum	0.5	
+Hypermetabolic Inanition	0.15	
+Tactile Endurance	0.5	
+Gastronomic Regeneration	0.1	
+Heightened Ghrelin	0.25	
+Prolific Reproduction	0.1	
+Enhanced Digestion	0.1	
+Reinforced Tendons	0.1	
+Multichambered Lungs	0.05	
+Reabsorption	1	fixed
+Pit Organ	1	fixed
+Cannibalistic	1	fixed
+Barometric Sensitivity	1	fixed
+Social Behavior	1	fixed
+Traumatic Thrombosis	1	fixed
+Reniculate Kidneys	1	fixed
+Paratrepsis	1	fixed

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>The Isle Server</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/theme.js"></script>
+  <script src="/assets/datetime.js" defer></script>
+  <script src="/assets/peek.js" defer></script>
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+<svg width="0" height="0" class="sr-only" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></symbol>
+    <symbol id="i-paw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20c2-6 6-10 12-11 2 0 4 0 5 1-2 0-3 1-4 2 2 1 3 2 3 4-2-1-4-1-5 0 0 2-1 3-3 4z"/><circle cx="16.5" cy="11" r=".6" fill="currentColor"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0zM12 18v4"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v12a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8M10 12h4"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-5-6-5M12 19h8"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/><path d="M4 19.5V21h16v-4"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-github" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  </defs>
+</svg>
+
+<a class="skip" href="#content">Skip to content</a>
+
+<!-- login (shown when there is no valid token) -->
+<main class="login" id="login" hidden>
+  <div class="card">
+    <a class="brand" href="#/"><img src="/assets/favicon.svg" alt=""><span><strong>The Isle Server</strong><span>Evrima dedicated server</span></span></a>
+    <h1>Sign in</h1>
+    <p class="muted">Paste the access token. Show it on the server with <code>isle-server ui-token</code> (Windows: <code>IsleServer.ps1 UiToken</code>).</p>
+    <form id="login-form" class="stack" autocomplete="off">
+      <div class="field">
+        <label for="token">Access token</label>
+        <div class="input-group">
+          <input id="token" type="password" required minlength="16" spellcheck="false" autocomplete="current-password">
+          <button type="button" class="btn" id="token-show" aria-pressed="false">Show</button>
+        </div>
+        <span class="hint">Kept only in this browser tab (session storage) and sent as a Bearer token.</span>
+      </div>
+      <p class="callout" id="login-error" role="alert" hidden></p>
+      <button class="btn primary" type="submit">Sign in</button>
+    </form>
+    <p class="credit">Made with <span class="heart" aria-hidden="true">♥</span><span class="sr-only">love</span> by <a href="https://github.com/kyroskoh" target="_blank" rel="noopener">Kyros Koh</a> · <a href="https://github.com/kyroskoh/the-isle-dedicated-server" target="_blank" rel="noopener">GitHub</a></p>
+  </div>
+</main>
+
+<div class="app" id="app" hidden>
+  <aside class="sidebar" id="sidebar" aria-label="Main">
+    <a class="brand" href="#/"><img src="/assets/favicon.svg" alt=""><span><strong>The Isle Server</strong><span id="brand-sub">Evrima</span></span></a>
+    <nav class="nav" id="nav">
+      <a href="#/"><svg aria-hidden="true"><use href="#i-home"/></svg>Dashboard</a>
+      <a href="#/settings"><svg aria-hidden="true"><use href="#i-sliders"/></svg>Settings</a>
+      <a href="#/players"><svg aria-hidden="true"><use href="#i-users"/></svg>Players</a>
+      <a href="#/roster"><svg aria-hidden="true"><use href="#i-paw"/></svg>Roster</a>
+      <a href="#/world"><svg aria-hidden="true"><use href="#i-map"/></svg>Map &amp; AI</a>
+      <a href="#/profiles"><svg aria-hidden="true"><use href="#i-layers"/></svg>Profiles &amp; presets</a>
+      <a href="#/plugins"><svg aria-hidden="true"><use href="#i-plug"/></svg>Plugins</a>
+      <a href="#/snapshots"><svg aria-hidden="true"><use href="#i-archive"/></svg>Snapshots &amp; backups</a>
+      <a href="#/logs"><svg aria-hidden="true"><use href="#i-file"/></svg>Logs</a>
+      <a href="#/admin"><svg aria-hidden="true"><use href="#i-shield"/></svg>Admin</a>
+      <a href="#/console"><svg aria-hidden="true"><use href="#i-terminal"/></svg>RCON console</a>
+      <div class="sep" role="presentation"></div>
+      <a href="/docs" target="_blank" rel="noopener"><svg aria-hidden="true"><use href="#i-book"/></svg>API docs</a>
+      <a href="https://github.com/kyroskoh/the-isle-dedicated-server" target="_blank" rel="noopener" id="repo-link"><svg aria-hidden="true"><use href="#i-github"/></svg>Project on GitHub</a>
+    </nav>
+    <div class="foot">
+      <div class="row">
+        <div class="segmented" role="radiogroup" aria-label="Color theme" id="theme-switch">
+          <label title="Light"><input type="radio" name="theme" value="light" aria-label="Light theme"><svg aria-hidden="true"><use href="#i-sun"/></svg></label>
+          <label title="System"><input type="radio" name="theme" value="system" aria-label="System theme"><svg aria-hidden="true"><use href="#i-monitor"/></svg></label>
+          <label title="Dark"><input type="radio" name="theme" value="dark" aria-label="Dark theme"><svg aria-hidden="true"><use href="#i-moon"/></svg></label>
+        </div>
+        <button class="btn ghost sm" id="datetime" type="button"><svg aria-hidden="true"><use href="#i-clock"/></svg>Date &amp; time</button>
+        <button class="btn ghost sm" id="logout" type="button"><svg aria-hidden="true"><use href="#i-logout"/></svg>Sign out</button>
+      </div>
+      <span class="muted small" id="version"></span>
+      <p class="credit">Made with <span class="heart" aria-hidden="true">♥</span><span class="sr-only">love</span> by <a href="https://github.com/kyroskoh" target="_blank" rel="noopener">Kyros Koh</a> · <a href="https://github.com/kyroskoh/the-isle-dedicated-server" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <button class="btn ghost sm menu-btn" id="menu" type="button" aria-controls="sidebar" aria-expanded="false"><svg aria-hidden="true"><use href="#i-menu"/></svg><span class="sr-only">Menu</span></button>
+      <span class="title" id="server-name">The Isle</span>
+      <span class="pill" id="status-pill" role="status" aria-live="polite">Checking…</span>
+      <span class="spacer"></span>
+      <span class="badge" id="runtime-badge" title="Runtime"></span>
+    </header>
+    <main class="content" id="content" tabindex="-1"></main>
+  </div>
+</div>
+
+<div class="jobs-panel" id="jobs-panel" hidden aria-live="polite"></div>
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<dialog id="confirm" aria-labelledby="confirm-title">
+  <form method="dialog">
+    <h2 id="confirm-title">Are you sure?</h2>
+    <p id="confirm-text"></p>
+    <div id="confirm-extra"></div>
+    <div class="actions">
+      <button class="btn" value="cancel" type="submit">Cancel</button>
+      <button class="btn primary" value="ok" type="submit" id="confirm-ok">Confirm</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="modal" class="wide" aria-labelledby="modal-title">
+  <div class="body">
+    <div class="card-head"><h2 id="modal-title"></h2><button class="btn ghost sm" type="button" id="modal-close"><svg aria-hidden="true"><use href="#i-x"/></svg><span class="sr-only">Close</span></button></div>
+    <div id="modal-body"></div>
+  </div>
+</dialog>
+</body>
+</html>

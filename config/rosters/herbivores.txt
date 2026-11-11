@@ -1,0 +1,12 @@
+# Roster: herbivores - herbivores and omnivores only
+# One class per line. An empty roster means: all classes allowed (game default).
+Diabloceratops
+Dryosaurus
+Hypsilophodon
+Maiasaura
+Pachycephalosaurus
+Stegosaurus
+Tenontosaurus
+Triceratops
+Beipiaosaurus
+Gallimimus

@@ -1,0 +1,359 @@
+// tests/test_ui_overflow.mjs - layout edge cases of the web UI (PRD UI-02).
+// Seeds deliberately long data (server name, class names, plugin names and descriptions,
+// snapshot names, unbroken setting values, log lines, RCON replies) into a throw-away copy
+// of the repo, then visits every page, dialog and state at widths from 1440 px down to 320 px,
+// in light and dark, and fails on:
+//   - an element that spills outside its box (card, chip, button, badge, list row, cell, dialog ...)
+//   - text that overflows its element, or is clipped without an ellipsis
+//   - text truncated with an ellipsis but no tooltip (title) to read it in full
+//   - horizontal scrolling of the page
+//   node tests/test_ui_overflow.mjs
+import { spawn } from "node:child_process";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import net from "node:net";
+
+const require = createRequire(import.meta.url);
+let pw;
+try { pw = require("playwright"); } catch { pw = await import("playwright"); }
+// BROWSER=chromium (default) | firefox | webkit - CI runs all three engines
+const ENGINE = process.env.BROWSER || "chromium";
+const chromium = pw[ENGINE];
+if (!chromium) throw new Error("unknown BROWSER " + ENGINE);
+const MOBILE = ENGINE !== "firefox";   // Firefox has no isMobile emulation (touch still works)
+console.log("## engine: " + ENGINE);
+
+const SRC = dirname(dirname(fileURLToPath(import.meta.url)));
+const PY = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
+const TOKEN = "overflow-token-0123456789abcdef";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const freePort = () => new Promise((res) => { const s = net.createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); }); });
+
+// --------------------------------------------- a repo copy with long data
+const dir = mkdtempSync(join(tmpdir(), "isle-overflow-"));
+const REPO = join(dir, "repo");
+for (const part of ["VERSION", "config", "plugins", "tools", "ui", "tests/fixtures"]) cpSync(join(SRC, part), join(REPO, part), { recursive: true });
+const LONG = "Supercalifragilisticexpialidociousosaurus";
+const classes = readFileSync(join(REPO, "config", "classes.txt"), "utf8")
+  .replace("# Carnivores\n", `# Carnivores\n${LONG}Rex     carnivore\nVeryLongNameWithoutAnySpacesAtAllForTesting   omnivore\n`);
+writeFileSync(join(REPO, "config", "classes.txt"), classes);
+writeFileSync(join(REPO, "config", "rosters", "an-extremely-long-roster-preset-name.txt"),
+  "# Roster: an-extremely-long-roster-preset-name - " + "a description that keeps going and going ".repeat(4) + "\nTyrannosaurus\n");
+writeFileSync(join(REPO, "config", "profiles", "an-extremely-long-profile-name-for-layout-testing.conf"),
+  "# Profile: an-extremely-long-profile-name-for-layout-testing - " + "long description ".repeat(12) + "\n" +
+  "EXTRA_GAME_SESSION_SETTINGS=" + "bSomeVeryLongUnrealSettingName=true|".repeat(6) + "\nGROWTH_MULTIPLIER=1\n");
+const cat = JSON.parse(readFileSync(join(REPO, "plugins", "catalog.json"), "utf8"));
+cat.plugins.push({ name: "an-extraordinarily-long-plugin-name-that-never-ends", source: "builtin:none", version: "10.20.300-beta.4",
+  description: "A".repeat(90) + " and then " + "words ".repeat(30), tags: ["averyveryverylongtagwithoutspaces", "x"] });
+cat.presets["an-extremely-long-plugin-preset-name"] = ["restart-countdown"];
+writeFileSync(join(REPO, "plugins", "catalog.json"), JSON.stringify(cat, null, 1));
+
+mkdirSync(join(dir, "config"));
+const conf = join(dir, "config", "server.conf");
+writeFileSync(conf, readFileSync(join(REPO, "config", "server.conf.example"), "utf8")
+  .replace(/^RCON_PASSWORD=.*$/m, "RCON_PASSWORD=pw-overflow")
+  .replace(/^SERVER_NAME=.*$/m, 'SERVER_NAME="Gondwa Survival | Realism | Weekly wipes | discord.gg/an-incredibly-long-invite-code | EU-West-Frankfurt"')
+  .replace(/^EXTRA_ARGS=.*$/m, "EXTRA_ARGS=-log" + "-AVeryLongArgumentWithoutSpaces".repeat(6))
+  .replace(/^SERVER_DIR=.*$/m, "SERVER_DIR=/srv/games/the-isle/an/unusually/deep/folder/structure/that/goes/on/and/on/theisle-server")
+  .replace(/^ADMIN_STEAM_IDS=.*$/m, "ADMIN_STEAM_IDS=" + Array.from({ length: 12 }, (_, i) => "765611980000000" + String(10 + i)).join(","))
+  .replace(/^ALLOWED_CLASSES=.*$/m, `ALLOWED_CLASSES=${LONG}Rex,Tyrannosaurus`));
+const logFile = join(dir, "server.log");
+writeFileSync(logFile, Array.from({ length: 50 }, (_, i) => i % 7 ? `[2026.11.08-12.00.${String(i).padStart(2, "0")}] LogTheIsle: line ${i}` :
+  "X".repeat(400)).join("\n") + "\n");
+
+const port = await freePort();
+// fake Steam (tests/fixtures/fake-steam.py): Steam names for SteamID64s without touching the internet
+const steamProc = spawn(PY, [join(REPO, "tests", "fixtures", "fake-steam.py"), "0"], { stdio: ["ignore", "pipe", "ignore"] });
+const steamUrl = await new Promise((res) => steamProc.stdout.once("data", (b) => res("http://127.0.0.1:" + String(b).trim().split(/\s+/)[1])));
+const env = { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.1",
+  FAKE_LOG_FILE: logFile };
+const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
+  "--port", String(port), "--snapshot-dir", join(dir, "snapshots")], { env, stdio: ["ignore", "pipe", "pipe"] });
+const apiLog = [];
+for (const stream of [api.stdout, api.stderr]) stream.on("data", (b) => { apiLog.push(String(b)); if (apiLog.length > 200) apiLog.shift(); });
+const BASE = `http://127.0.0.1:${port}`;
+for (let i = 0; i < 100; i++) { try { if ((await fetch(BASE + "/api/v1/health")).ok) break; } catch { /* starting */ } await sleep(100); }
+const call = async (method, path, body) => (await fetch(BASE + "/api/v1" + path, { method,
+  headers: { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined })).json();
+const job = await call("POST", "/snapshots", { include: ["worlds", "settings", "overrides", "plugins", "backups"] });
+for (let i = 0; i < 50 && (await call("GET", "/jobs/" + job.id)).state === "running"; i++) await sleep(100);
+const snaps = (await call("GET", "/snapshots"));
+if (snaps.length) cpSync(join(dir, "snapshots", snaps[0].name), join(dir, "snapshots", "theisle-snapshot_20261108_120000_before-the-big-migration-to-the-new-dedicated-box.tar.gz"));
+await call("POST", "/server/start");
+await sleep(800);
+
+// ----------------------------------------------------------------- audit
+function audit() {
+  const BOX = ".card,.chip,.btn,.pill,.badge,.list li,.toast,dialog,.sticky-bar,.topbar,.op,.segmented,.input-group,.hero,td,th,.nav a,.brand,.kv,.row,.page-head";
+  const desc = (e) => e.tagName.toLowerCase() + (e.id ? "#" + e.id : "") + (e.className && typeof e.className === "string" ? "." + e.className.trim().split(/\s+/).join(".") : "")
+    + (e.textContent ? ` "${e.textContent.trim().slice(0, 40)}"` : "");
+  const shown = (e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none" && !e.closest("[hidden]"); };
+  const exempt = (e) => e.closest("pre, .table-wrap, textarea, select, option, input, svg, .sr-only, .progress, .switch .track");
+  const out = new Set();
+  for (const el of document.querySelectorAll("body *")) {
+    if (!shown(el) || exempt(el)) continue;
+    const box = el.parentElement && el.parentElement.closest(BOX);
+    if (box && shown(box)) {
+      const r = el.getBoundingClientRect(), b = box.getBoundingClientRect();
+      const over = Math.max(r.right - b.right, b.left - r.left);
+      if (over > 1) out.add(`${desc(el)} spills out of ${desc(box)} by ${Math.round(over)}px`);
+    }
+    const cs = getComputedStyle(el);
+    if (el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1 && !["auto", "scroll"].includes(cs.overflowX)) {
+      if (cs.overflowX === "visible") out.add(`${desc(el)}: content overflows (${el.scrollWidth} > ${el.clientWidth})`);
+      else if (cs.textOverflow !== "ellipsis") out.add(`${desc(el)}: clipped without an ellipsis`);
+      else if (!el.closest("[title], [data-peek]") && !(window.IslePeek && window.IslePeek.isTruncated(el))) out.add(`${desc(el)}: truncated text has no peek / tooltip`);
+    }
+  }
+  // tables must fit: on wide screens the columns wrap their data, on phones rows stack
+  for (const t of document.querySelectorAll(".table-wrap")) {
+    if (shown(t) && t.scrollWidth > t.clientWidth + 1) out.add(`${desc(t).slice(0, 60)}: table needs sideways scrolling (${t.scrollWidth} > ${t.clientWidth})`);
+  }
+  // a normal-length word split across lines ("Outp/ut", "N/a/t/i/v/e") means its box got too narrow
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const el = node.parentElement;
+    if (!el || !node.textContent.trim() || exempt(el) || !shown(el)) continue;
+    const re = /[^\s\-/\\|]+/g; let m;  // hyphens, slashes, backslashes and bars are normal break points
+    while ((m = re.exec(node.textContent))) {
+      if (m[0].length < 2 || m[0].length > 20) continue;  // very long tokens (IDs, paths) may wrap
+      const range = document.createRange();
+      range.setStart(node, m.index); range.setEnd(node, m.index + m[0].length);
+      const tops = new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top)));
+      if (tops.size > 1) { out.add(`${desc(el)}: the word "${m[0]}" breaks across lines`); break; }
+    }
+  }
+  if (document.documentElement.scrollWidth > window.innerWidth + 1) {
+    const wide = [...document.querySelectorAll("body *")].filter((e) => shown(e) && e.getBoundingClientRect().right > window.innerWidth + 1 && !e.closest(".table-wrap, pre"))
+      .map((e) => desc(e).slice(0, 60)).slice(-3);
+    out.add(`page scrolls horizontally (${document.documentElement.scrollWidth} > ${window.innerWidth}): ${wide.join(" | ")}`);
+  }
+  return [...out];
+}
+
+const browser = await chromium.launch();
+/* Firefox and WebKit wear out over hundreds of pages in one process (a stuck first navigation, a crashed tab),
+   so they get a fresh browser per context; Chromium shares one. */
+const owned = new WeakMap();
+async function newCtx(opts) {
+  if (ENGINE === "chromium") return browser.newContext(opts);
+  const b = await chromium.launch();
+  const ctx = await b.newContext(opts);
+  owned.set(ctx, b);
+  return ctx;
+}
+async function closeCtx(ctx) {
+  try { await ctx.close(); } catch { /* crashed */ }
+  const b = owned.get(ctx);
+  if (b) await b.close().catch(() => {});
+}
+/* One viewport/device pass with a time limit. Playwright's page.evaluate has no timeout, so a frozen tab
+   (seen now and then in WebKit on CI) would hang the job for hours: the pass is closed and retried once in
+   a fresh browser instead, and a second freeze fails the run with a clear message. */
+async function pass(label, fn, ms = 240000) {
+  for (let attempt = 1; ; attempt++) {
+    const ctxs = [];
+    const mk = async (opts) => { const c = await newCtx(opts); ctxs.push(c); return c; };
+    let timer;
+    const limit = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label}: no progress for ${ms / 1000} s`)), ms); });
+    const run = fn(mk);
+    run.catch(() => {});   // a pass abandoned on timeout fails later, when its context is closed
+    try { await Promise.race([run, limit]); return; } catch (e) {
+      if (attempt >= 2 || !/no progress/.test(e.message)) throw e;
+      console.log(`  note: ${e.message} - closing it and retrying once in a fresh browser`);
+    } finally {
+      clearTimeout(timer);
+      for (const c of ctxs) await Promise.race([closeCtx(c), sleep(15000)]);
+    }
+  }
+}
+let fails = 0;
+const report = (label, found) => {
+  if (found.length) { fails++; console.log(`  FAIL ${label}`); found.slice(0, 8).forEach((f) => console.log("       " + f)); if (found.length > 8) console.log(`       ... ${found.length - 8} more`); }
+  else console.log(`  PASS ${label}`);
+};
+const MOTION = ENGINE === "firefox" ? {} : { reducedMotion: "reduce" };   // Firefox: emulation not needed for the audit
+/* navigate; on a timeout, say whether the API still answers (server vs browser problem) and retry on a fresh page */
+async function open(ctx, page, url, withToken) {
+  try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }); return page; } catch (e) {
+    let alive = "no";
+    try { const r = await fetch(BASE + "/api/v1/health", { signal: AbortSignal.timeout(5000) }); alive = "HTTP " + r.status; } catch (x) { alive = String(x); }
+    console.log(`  note: ${url} did not load (${e.message.split("\n")[0]}); API health from Node: ${alive}`);
+    console.log("  note: last API requests:\n    " + apiLog.join("").trim().split("\n").slice(-8).join("\n    "));
+    try { await page.close(); } catch { /* already gone */ }
+    const fresh = await ctx.newPage();
+    try { await fresh.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }); return fresh; } catch (e2) {
+      console.log("  note: a new page did not load either - trying a new browser context");
+      const ctx2 = await newCtx({ viewport: page.viewportSize ? page.viewportSize() : undefined });
+      if (withToken) await ctx2.addInitScript((t) => { try { sessionStorage.setItem("isle-token", t); } catch (x) { /* storage blocked */ } }, TOKEN);
+      const p2 = await ctx2.newPage();
+      await p2.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      return p2;
+    }
+  }
+}
+/* page events (errors, crashes) per page, printed when a step fails, to tell app bugs from engine/emulation issues */
+const events = new WeakMap();
+function watch(page) {
+  const list = [];
+  events.set(page, list);
+  page.on("console", (m) => { if (m.type() === "error" || m.type() === "warning") list.push(`console.${m.type()}: ${m.text().slice(0, 200)}`); });
+  page.on("pageerror", (e) => list.push("pageerror: " + e.message.slice(0, 200)));
+  page.on("crash", () => list.push("crash"));
+  return page;
+}
+function dump(page, why) {
+  const list = events.get(page) || [];
+  console.log(`  note: ${why}; page events: ${list.length ? "\n    " + list.slice(-12).join("\n    ") : "none"}`);
+}
+/* reload; a crashed tab or a stuck reload is retried once on a new page (a crash our page caused would repeat) */
+async function reloadPage(ctx, page) {
+  try { await page.reload({ waitUntil: "domcontentloaded", timeout: 20000 }); return page; } catch (e) {
+    dump(page, `reload failed (${e.message.split("\n")[0]}) - retrying on a new page`);
+    const url = page.url();
+    try { await page.close(); } catch { /* crashed */ }
+    const fresh = watch(await ctx.newPage());
+    await fresh.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // sessionStorage is per tab: a new page needs the token again
+    await fresh.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
+    const u = new URL(url);
+    u.search = "?retry=" + Date.now();   // a real load (a hash change would not re-run the app with the token)
+    await fresh.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
+    return fresh;
+  }
+}
+const settle = async (page) => {
+  for (let i = 0; i < 80; i++) { if (await page.evaluate(() => !document.querySelector("#content [role=status]"))) break; await sleep(100); }
+  await sleep(150);
+};
+const ROUTES = ["", "settings", "players", "roster", "world", "profiles", "plugins", "snapshots", "logs", "admin", "console"];
+const WIDTHS = [1440, 1280, 1024, 820, 600, 390, 320];
+try {
+  for (const scheme of ["light", "dark"]) {
+    for (const width of WIDTHS) await pass(`${scheme} @${width}`, async (mk) => {
+      const ctx = await mk({ viewport: { width, height: 900 }, colorScheme: scheme, ...MOTION });
+      let page = watch(await ctx.newPage());
+      page = await open(ctx, page, BASE + "/");
+      if (scheme === "light" && width === WIDTHS[0]) {
+        report(`login @${width}`, await page.evaluate(audit));
+        // the audit must catch a known-bad layout, or every PASS below means nothing
+        await page.evaluate(() => {
+          const card = document.createElement("div"); card.className = "card"; card.id = "audit-probe"; card.style.width = "120px";
+          card.innerHTML = '<div class="chip">x<span class="badge">carnivore-carnivore</span></div>';
+          card.querySelector(".chip").style.width = "60px";
+          card.querySelector(".badge").style.whiteSpace = "nowrap";
+          document.body.appendChild(card);
+        });
+        const caught = (await page.evaluate(audit)).some((f) => /spills out of div\.chip/.test(f));
+        await page.evaluate(() => document.querySelector("#audit-probe").remove());
+        if (caught) console.log("  PASS audit self-check catches a spilling badge"); else { fails++; console.log("  FAIL audit self-check: a spilling badge was not reported"); }
+      }
+      await page.evaluate((t) => sessionStorage.setItem("isle-token", t), TOKEN);
+      page = await reloadPage(ctx, page);
+      const nav = async (route) => { await page.evaluate((r) => { location.hash = "#/" + r + (location.hash === "#/" + r ? "?" : ""); }, route); await page.waitForSelector("#content h1"); };
+      for (const route of ROUTES) {
+        await nav(route);
+        await page.waitForSelector("#content h1");
+        await settle(page);
+        if (route === "settings") await page.evaluate(() => { const d = document.querySelector("details.settings-group"); if (d) d.open = true; });
+        report(`${scheme} ${route || "dashboard"} @${width}`, await page.evaluate(audit));
+        if (route === "roster" && scheme === "light") {
+          // instant peek: the cut-off class name shows in full at once, inside the viewport
+          const chip = page.locator(".chip", { hasText: "Supercalifragilistic" }).first();
+          const t0 = Date.now();
+          await chip.hover();
+          await page.waitForSelector("#peek:not([hidden])", { timeout: 2000 });
+          const ms = Date.now() - t0;
+          const peek = await page.evaluate(() => { const r = document.querySelector("#peek").getBoundingClientRect();
+            return { text: document.querySelector("#peek").textContent, left: r.left, right: r.right, top: r.top, bottom: r.bottom, vw: innerWidth, vh: innerHeight }; });
+          const okPeek = peek.text.includes("SupercalifragilisticexpialidociousosaurusRex") && peek.left >= 0 && peek.right <= peek.vw && peek.top >= 0 && peek.bottom <= peek.vh && ms < 1000;
+          report(`peek on hover @${width} (${ms} ms)`, okPeek ? [] : [JSON.stringify(peek)]);
+          await page.mouse.move(1, 1);
+          const hidden = await page.evaluate(() => document.querySelector("#peek").hidden);
+          report(`peek hides on leave @${width}`, hidden ? [] : ["peek still visible"]);
+          await chip.locator("input").focus();
+          const focused = await page.evaluate(() => !document.querySelector("#peek").hidden && document.querySelector("#peek").textContent);
+          report(`peek on keyboard focus @${width}`, focused && focused.includes("Supercalifragilistic") ? [] : ["no peek on focus: " + focused]);
+          await page.keyboard.press("Escape");
+        }
+        if (process.env.OVERFLOW_SHOTS && scheme === "light" && (width === 1280 || width === 320)) {
+          mkdirSync(process.env.OVERFLOW_SHOTS, { recursive: true });
+          await page.screenshot({ path: join(process.env.OVERFLOW_SHOTS, `${route || "dashboard"}-${width}.png`), fullPage: true, caret: "initial", animations: "allow" });
+        }
+      }
+      if (width === 1280 || width === 390) {
+        // dialogs and transient UI
+        await nav(""); await page.waitForSelector(".list strong"); await settle(page);
+        await page.click(".list button:has-text('Output')");
+        report(`${scheme} job output dialog @${width}`, await page.evaluate(audit));
+        await page.keyboard.press("Escape");
+        await page.click(".hero button:has-text('Stop')");
+        report(`${scheme} confirm dialog @${width}`, await page.evaluate(audit));
+        await page.keyboard.press("Escape");
+        await nav("snapshots"); await page.waitForSelector("table button:has-text('Restore')"); await settle(page);
+        await page.click("table button:has-text('Restore') >> nth=0");
+        report(`${scheme} restore dialog @${width}`, await page.evaluate(audit));
+        await page.keyboard.press("Escape");
+        await nav("settings"); await page.waitForSelector("#set-MAX_PLAYERS"); await settle(page);
+        await page.fill("#set-MAX_PLAYERS", "not-a-number-" + "x".repeat(60));
+        await page.click(".sticky-bar button:has-text('Save changes')");
+        await page.waitForSelector(".toast.error");
+        report(`${scheme} error toast @${width}`, await page.evaluate(audit));
+        if (width === 390) {
+          await page.click("#menu"); await sleep(300);
+          report(`${scheme} phone menu @${width}`, await page.evaluate(audit));
+        }
+      }
+    });
+  }
+  // real device shapes: phones and tablets in both orientations, touch, mobile viewport
+  const DEVICES = [
+    ["phone 320x568 portrait", 320, 568], ["phone 568x320 landscape", 568, 320],
+    ["phone 390x844 portrait", 390, 844], ["phone 844x390 landscape", 844, 390],
+    ["phone 412x915 portrait", 412, 915], ["phone 915x412 landscape", 915, 412],
+    ["tablet 768x1024 portrait", 768, 1024], ["tablet 1024x768 landscape", 1024, 768],
+    ["tablet 820x1180 portrait", 820, 1180], ["tablet 1180x820 landscape", 1180, 820],
+    ["desktop 1920x1080", 1920, 1080]
+  ];
+  for (const [label, w, hgt] of DEVICES) await pass(label, async (mk) => {
+    const touch = w < 1300;
+    const ctx = await mk({ viewport: { width: w, height: hgt }, hasTouch: touch, isMobile: touch && MOBILE, ...MOTION });
+    // the token is in place before the first load, so there is no reload: WebKit's mobile emulation crashed the
+    // tab on reload at 568x320 (an engine crash, not the app - the same page loads fine)
+    await ctx.addInitScript((t) => { try { sessionStorage.setItem("isle-token", t); } catch (e) { /* storage blocked */ } }, TOKEN);
+    let page = watch(await ctx.newPage());
+    page = await open(ctx, page, BASE + "/", true);
+    await page.waitForSelector("#content h1", { timeout: 20000 });
+    for (const route of ROUTES) {
+      await page.evaluate((r) => { location.hash = "#/" + r; }, route);
+      try { await page.waitForSelector("#content h1", { timeout: 20000 }); } catch (e) { dump(page, `${label} ${route || "dashboard"} did not render`); throw e; }
+      await settle(page);
+      report(`${label} ${route || "dashboard"}`, await page.evaluate(audit));
+    }
+    if (touch) {   // menu, dialogs and the date & time dialog on touch devices
+      await page.evaluate(() => { location.hash = "#/"; });
+      await page.waitForSelector(".list strong"); await settle(page);
+      if (await page.isVisible("#menu")) { await page.click("#menu"); await sleep(250); report(`${label} menu open`, await page.evaluate(audit)); await page.keyboard.press("Escape"); }
+      await page.evaluate(() => document.querySelector("#datetime").click());
+      await page.waitForSelector("#modal[open]");
+      report(`${label} date & time dialog`, await page.evaluate(audit));
+    }
+  });
+  for (const width of [1280, 390]) await pass(`docs @${width}`, async (mk) => {
+    const ctx = await mk({ viewport: { width, height: 900 } });
+    const page = await ctx.newPage();
+    await page.goto(BASE + "/docs", { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".op");
+    await page.click("#patchConfig > summary");
+    report(`docs @${width}`, await page.evaluate(audit));
+  });
+} finally {
+  await browser.close();
+  api.kill(); steamProc.kill();
+  try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows lock */ }
+}
+console.log(`RESULT: ${fails} failure(s)`);
+process.exit(fails ? 1 : 0);

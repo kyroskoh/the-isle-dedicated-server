@@ -11,8 +11,23 @@
 #    Lists use commas, e.g. ADMIN_STEAM_IDS=7656119xxxxxxxxx1,7656119xxxxxxxxx2
 # =============================================================================
 
+# ---------------------------------------------------------------- Runtime ----
+# How the launcher (isle-server.sh / IsleServer.ps1 / *.bat) runs the server:
+#   native = directly on this machine (SteamCMD + service/scheduled task)
+#   docker = in a container via "docker compose" (see DOCKER.md)
+# Override per command: isle-server.sh --docker|--native <cmd>,
+# IsleServer.ps1 -Runtime Docker|Native, or env ISLE_RUNTIME.
+RUNTIME=native
+# Docker only: build the image from this repo (true) or use DOCKER_IMAGE as is.
+DOCKER_BUILD=true
+DOCKER_IMAGE=theisle-server:latest
+# Docker only: uid/gid the server runs as inside the container.
+PUID=1000
+PGID=1000
+
 # ---------------------------------------------------------------- Install ----
-# Where SteamCMD and the server files live. Leave empty for the defaults:
+# Where SteamCMD and the server files live (native only; Docker always uses
+# the /data volume). Leave empty for the defaults:
 #   Linux  : <home of the service user>/steamcmd  and  .../theisle-server
 #   Windows: C:\TheIsle\steamcmd                  and  C:\TheIsle\server
 STEAMCMD_DIR=
@@ -44,7 +59,8 @@ FIREWALL_OPEN_RCON=false
 
 # ------------------------------------------------------------ Server info ----
 SERVER_NAME="My Evrima Server"
-# Map name. "Gateway" is the current Evrima map.
+# Map name (MapName=, case-sensitive). "Gateway" is the current Evrima map.
+# See config/maps.txt or "isle-server maps list"; "isle-server maps set <name>" also switches STEAM_BRANCH.
 MAP_NAME=Gateway
 MAX_PLAYERS=100
 # Leave empty for a public server.
@@ -54,6 +70,13 @@ ADMIN_STEAM_IDS=
 # Whitelist (only listed SteamID64s can join).
 WHITELIST_ENABLED=false
 WHITELIST_IDS=
+# Show Steam names next to SteamID64s (CLI lists, web UI). Names are looked up on Steam's public profiles
+# and cached. false = no lookups (cached names still show).
+STEAM_NAME_LOOKUP=true
+# Optional Steam Web API key: one batched lookup per 100 players (see CONFIGURATION.md). Kept secret.
+STEAM_WEB_API_KEY=
+# Days a Steam name stays cached (config/.steam-names.json).
+STEAM_NAME_CACHE_DAYS=7
 
 # ---------------------------------------------------------------- Queue ------
 QUEUE_ENABLED=true
@@ -72,15 +95,21 @@ NIGHT_LENGTH_MINUTES=20
 GROWTH_MULTIPLIER=1
 CORPSE_DECAY_MULTIPLIER=1
 ENABLE_MUTATIONS=true
+# Which mutations are available, as Name:value;Name:value (see config/mutations.txt or
+# "isle-server mutations list"). Empty = every mutation (the game default).
+ENABLED_MUTATIONS=
 ENABLE_DIETS=true
 ENABLE_PATROL_ZONES=true
 ALLOW_RECORDING_REPLAY=true
 # Spawn plants / food and their density multiplier.
 SPAWN_PLANTS=true
 PLANT_SPAWN_MULTIPLIER=1
-# AI creatures.
+# AI creatures (see also "isle-server ai" and the Map & AI page of the web UI).
 SPAWN_AI=true
+# AI density multiplier: 0.5 = half as many AI, 2 = twice as many (0-2 recommended; live via RCON).
 AI_DENSITY=1
+# Seconds between AI spawn checks (AISpawnInterval). Lower = AI comes back faster.
+AI_SPAWN_INTERVAL=40
 # Comma separated list of AI classes to disable, e.g. Compsognathus,Pterodactylus
 DISABLED_AI_CLASSES=
 # Migration zones.
@@ -90,10 +119,25 @@ ENABLE_MASS_MIGRATION=true
 MASS_MIGRATION_TIME=43200
 MASS_MIGRATION_DISABLE_TIME=7200
 # Comma separated list of playable classes. Empty = game default (all).
+# Manage with: isle-server classes list|set|add|remove|preset <roster>
 # Example: Dryosaurus,Hypsilophodon,Pachycephalosaurus,Stegosaurus,Tenontosaurus,
 #          Carnotaurus,Ceratosaurus,Deinosuchus,Omniraptor,Pteranodon,Troodon,
 #          Beipiaosaurus,Gallimimus,Dilophosaurus,Herrerasaurus,Maiasaura,Triceratops,Tyrannosaurus
 ALLOWED_CLASSES=
+
+# ---------------------------------------------- Optional / advanced --------
+# Written to the ini files only when set (see config/reference/*.md).
+# Community-documented keys - names may change between game patches.
+REGION_SPAWNING=
+REGION_SPAWN_COOLDOWN=
+REGION_SPAWN_COOLDOWN_SECONDS=
+WEATHER_MIN_INTERVAL=
+WEATHER_MAX_INTERVAL=
+# Server tick rate in Hz (Engine.ini NetServerMaxTickRate). Empty = engine default.
+NET_TICK_RATE=
+# Folder with Game.ini / Engine.ini overrides merged into the generated files.
+# Empty = config/overrides next to this file. Docker always uses the mounted folder.
+INI_OVERRIDES_DIR=
 
 # -------------------------------------------------- Epic Online Services -----
 # Evrima servers authenticate through EOS. These are the publicly documented
@@ -116,7 +160,35 @@ EXTRA_ARGS=-log
 STOP_TIMEOUT=60
 # Automatically restart the server if it crashes (watchdog / service mode).
 AUTO_RESTART=true
-# Number of backups to keep (0 = keep all).
+# Number of backups to keep (0 = keep all). Also applies to BACKUP_COPY_DIR.
 BACKUP_RETENTION=10
+# When to back up, in cron syntax: minute hour day-of-month month day-of-week.
+# Examples: "0 5 * * *" (daily 05:00), "0 */6 * * *" (every 6 hours), "30 4 * * SUN",
+# @daily, @hourly, or off. Checked every minute by the scheduled task the installer adds.
+BACKUP_SCHEDULE="0 5 * * *"
+# 3-2-1: keep a second copy on ANOTHER disk ("2 media") ...
+BACKUP_COPY_DIR=
+# ... and one off-site: a command run after each backup, {file} = the archive, e.g.
+#   rclone copy {file} remote:theisle      (or enable the offsite-backup plugin instead)
+BACKUP_OFFSITE_COMMAND=
 # Send "save" via RCON before stopping / backing up (needs RCON + python3).
 SAVE_BEFORE_STOP=true
+
+# ------------------------------------------------------------ Logs and time --
+# Clock for timestamps in logs and in dated file names: local or utc.
+# Every log file is KIND_yyyymmdd_hhmmss.log (launcher, server, ui); backups and
+# snapshots end with _yyyymmdd_hhmmss too (e.g. theisle-backup_20261108_143000.tar.gz).
+TIMEZONE=local
+# Folder for the log files (empty = <scripts>/logs; Docker: /data/logs).
+LOG_DIR=
+# Log files kept per kind - also applies to the game's TheIsle-backup-*.log (0 = keep all).
+LOG_RETENTION=14
+# Start a new log file once the current one is bigger than this, in MB (0 = no limit).
+LOG_MAX_SIZE_MB=20
+
+# ----------------------------------------------------------------- Web UI ----
+# Web UI + REST API ("isle-server ui", Windows: "IsleServer.ps1 UI"; see UI.md).
+# 127.0.0.1 = this machine only (recommended; reach it remotely through an SSH
+# tunnel or a TLS reverse proxy). 0.0.0.0 = every interface - use with TLS only.
+UI_HOST=127.0.0.1
+UI_PORT=8090

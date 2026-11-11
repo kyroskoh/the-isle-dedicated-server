@@ -1,0 +1,17 @@
+{
+  "name": "discord-notify",
+  "version": "1.0.0",
+  "description": "Post server start/stop/backup/update events to a Discord webhook",
+  "author": "the-isle-dedicated-server",
+  "hooks": {"post-start": "plugin.py", "pre-stop": "plugin.py", "post-stop": "plugin.py",
+            "post-backup": "plugin.py", "post-update": "plugin.py"},
+  "commands": {"test": "plugin.py"},
+  "settings": {
+    "DISCORD_WEBHOOK_URL": {"default": "", "required": true, "secret": true,
+                            "description": "Discord channel webhook URL (Channel settings > Integrations > Webhooks)"},
+    "EVENTS": {"default": "post-start,post-stop,post-backup,post-update", "description": "Events to post (comma separated)"},
+    "USERNAME": {"default": "The Isle Server", "description": "Name shown for the webhook messages"}
+  },
+  "usage": ["isle-server plugins config discord-notify DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...",
+            "isle-server plugins run discord-notify test"]
+}

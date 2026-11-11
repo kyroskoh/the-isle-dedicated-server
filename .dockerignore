@@ -1,0 +1,9 @@
+.git
+.github
+windows
+data
+*.md
+!README.md
+config/server.conf
+config/*.bak
+**/__pycache__

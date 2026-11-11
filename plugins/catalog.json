@@ -1,0 +1,23 @@
+{
+  "catalog": "builtin",
+  "description": "First-party plugins shipped with the scripts. Add third-party catalogs with: isle-server plugins sources add <url>",
+  "plugins": [
+    {"name": "restart-countdown", "source": "builtin:restart-countdown", "version": "1.0.0",
+     "description": "Announce a restart in-game (e.g. 15/10/5/1 min), save, then restart",
+     "tags": ["restart", "schedule", "rcon", "announce"]},
+    {"name": "discord-notify", "source": "builtin:discord-notify", "version": "1.0.0",
+     "description": "Post server start/stop/backup/update events to a Discord webhook",
+     "tags": ["discord", "webhook", "notify", "alerts"]},
+    {"name": "offsite-backup", "source": "builtin:offsite-backup", "version": "1.0.0",
+     "description": "Copy every new backup to another folder/NAS (or run a command such as rclone), with retention",
+     "tags": ["backup", "nas", "rclone", "offsite"]},
+    {"name": "welcome-announcer", "source": "builtin:welcome-announcer", "version": "1.0.0",
+     "description": "Send an RCON announcement a few minutes after the server starts",
+     "tags": ["rcon", "announce", "motd"]}
+  ],
+  "presets": {
+    "base": ["restart-countdown"],
+    "recommended": ["restart-countdown", "discord-notify", "offsite-backup"],
+    "full": ["restart-countdown", "discord-notify", "offsite-backup", "welcome-announcer"]
+  }
+}

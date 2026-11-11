@@ -1,0 +1,42 @@
+# =============================================================================
+#  Known The Isle (Evrima) class names - used to validate rosters.
+#  Community-documented; the developers add and rename species over time.
+#  Unknown names only produce a warning, so new species keep working.
+#  Edit this file if a patch changes the list.
+# =============================================================================
+[playable]
+# NAME  DIET  [TRAITS...]   (types for "isle-server classes select <type>": carnivore herbivore omnivore flying aquatic)
+# Carnivores
+Allosaurus          carnivore
+Carnotaurus         carnivore
+Ceratosaurus        carnivore
+Deinosuchus         carnivore   aquatic
+Dilophosaurus       carnivore
+Herrerasaurus       carnivore
+Omniraptor          carnivore
+Pteranodon          carnivore   flying
+Troodon             carnivore
+Tyrannosaurus       carnivore
+# Omnivores
+Beipiaosaurus       omnivore
+Gallimimus          omnivore
+# Herbivores
+Diabloceratops      herbivore
+Dryosaurus          herbivore
+Hypsilophodon       herbivore
+Maiasaura           herbivore
+Pachycephalosaurus  herbivore
+Stegosaurus         herbivore
+Tenontosaurus       herbivore
+Triceratops         herbivore
+
+[ai]
+# AI creatures (DisallowedAIClasses / "isle-server ai-classes"); second column = role
+Compsognathus       carnivore
+Pterodactylus       flying
+Boar                prey
+Deer                prey
+Goat                prey
+Seaturtle           aquatic
+Rabbit              prey
+Crab                prey

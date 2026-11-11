@@ -1,0 +1,15 @@
+{
+  "name": "offsite-backup",
+  "version": "1.0.0",
+  "description": "Copy every new backup to another folder/NAS (or run a command such as rclone), with retention",
+  "author": "the-isle-dedicated-server",
+  "hooks": {"post-backup": "plugin.py"},
+  "commands": {"run": "plugin.py"},
+  "settings": {
+    "DEST_DIR": {"default": "", "description": "Folder to copy backups into (e.g. /mnt/nas/theisle or \\\\NAS\\backups)"},
+    "KEEP": {"default": "14", "description": "Backups to keep in DEST_DIR (0 = keep all)"},
+    "COMMAND": {"default": "", "description": "Optional command run per backup, {file} is the backup path (e.g. rclone copy {file} remote:theisle)"}
+  },
+  "usage": ["isle-server plugins config offsite-backup DEST_DIR=/mnt/nas/theisle KEEP=30",
+            "isle-server plugins run offsite-backup      # copy the newest backup now"]
+}

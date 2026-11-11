@@ -1,0 +1,11 @@
+# =============================================================================
+#  The Isle (Evrima) maps - used by "isle-server maps", the web UI and check.
+#  Columns: MAP_NAME  STEAM_BRANCH  STATUS  description
+#    MAP_NAME     the value written to Game.ini (MapName=, case-sensitive)
+#    STEAM_BRANCH the Steam beta branch that contains this map ("-" = keep the current one)
+#    STATUS       current | archived (an older build that receives no updates)
+#  Community-documented (no official map list is published). The developers add
+#  maps over time: add a line here, or set MAP_NAME by hand (unknown names only warn).
+# =============================================================================
+Gateway      evrima            current   The current Evrima map (default), on the evrima beta branch
+Isla_Spiro   spiro0.11.59.04   archived  Isla Spiro, Evrima's earlier map, on an archived build (branch name as published by community hosting templates - verify it on first install; no updates or new species)

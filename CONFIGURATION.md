@@ -17,6 +17,249 @@ every start and keep the previous copy as `*.bak`:
 If you prefer to edit the `.ini` files by hand, set `MANAGE_INI_FILES=false`. The scripts
 then generate them only if they don't exist yet.
 
+You can also change settings in the optional [web UI](UI.md). Every key is shown with its description, and
+changes are checked before they are saved:
+
+![Settings page of the web UI](docs/images/ui/settings.png)
+
+## Profiles and presets
+
+![Profiles and presets in the web UI](docs/images/ui/profiles.png)
+
+**Profiles** are complete play styles. **Presets** are small changes you can stack. Applying either writes
+its keys into `server.conf`, keeps a timestamped backup, validates, and rolls back if the result is invalid.
+Restart the server afterwards.
+
+| Profile | Style |
+|---|---|
+| `vanilla` | The standard Evrima defaults |
+| `realism` | Slow growth, long days and nights, no global chat |
+| `casual` | Fast growth, short nights, more food |
+| `hardcore-pvp` | Slow growth, fast corpse decay, 150 players, no global chat |
+| `friends-private` | 20 players, whitelist on, no queue |
+| `sandbox` | Very fast growth, humans on, no diets or migration |
+| `performance` | Fewer AI, plants and players, 30 Hz tick |
+
+Presets: `ai-off`, `ai-low`, `ai-high`, `fast-growth`, `very-fast-growth`, `slow-growth`, `humans-on`,
+`humans-off`, `no-migration`, `short-nights`, `long-days`, `static-weather`, `whitelist-on`, `whitelist-off`,
+`global-chat-off`, `global-chat-on`, `mutations-off`, `diets-off`, `queue-off`, `more-food`,
+`region-spawning`, `replays-off`.
+
+```bash
+isle-server profile list
+isle-server profile show realism          # current -> new value for every key
+isle-server profile apply realism
+isle-server preset apply ai-low short-nights fast-growth   # applied left to right
+```
+
+Windows: `IsleServer.ps1 Profile apply realism`, `IsleServer.ps1 Preset apply ai-low short-nights`
+(or `Manage.bat Profile apply realism`).
+
+Profiles never touch names, passwords or ports. Your own profiles and presets are just `KEY=VALUE` files in
+`config/profiles/` and `config/presets/`. The first comment line is the description.
+
+## Maps
+
+| Linux | Windows | Effect |
+|---|---|---|
+| `isle-server maps list` | `Manage.bat Maps list` | Known maps from `config/maps.txt`, the current one marked `*` |
+| `isle-server maps show [name]` | `Manage.bat Maps show Isla_Spiro` | Branch, status and description |
+| `isle-server maps set <name> [--keep-branch]` | `Manage.bat Maps set Isla_Spiro` | Sets `MAP_NAME` and the map's `STEAM_BRANCH`. If the branch changes, stop the server and run `validate` |
+
+| Map | `MAP_NAME` | Steam branch | Status |
+|---|---|---|---|
+| Gateway | `Gateway` | `evrima` | current, default |
+| Isla Spiro | `Isla_Spiro` | `spiro0.11.59.04` | archived build: no updates or new species |
+
+Map names are case-sensitive. There is no official map list; the Isla Spiro branch name comes from community hosting
+templates, so verify it on first install. When the developers release a new map, add a line to `config/maps.txt`
+(`NAME  BRANCH  STATUS  description`); a `MAP_NAME` that isn't listed only produces a warning in `check`. The web UI
+has a **Map & AI** page for the same things:
+
+![Map & AI page](docs/images/ui/map-ai.png)
+
+## AI creatures
+
+| Linux | Windows | Effect |
+|---|---|---|
+| `isle-server ai status` | `Manage.bat AI status` | Spawning, density, spawn interval and disabled classes |
+| `isle-server ai on\|off` | `Manage.bat AI off` | `SPAWN_AI` (next restart) |
+| `isle-server ai density 0.5` | `Manage.bat AI density 0.5` | `AI_DENSITY`, also applied live over RCON (`aidensity`) |
+| `isle-server ai interval 25` | `Manage.bat AI interval 25` | `AI_SPAWN_INTERVAL`, the seconds between spawn checks (next restart) |
+| `isle-server ai preset ai-prey-only` | `Manage.bat AI preset ai-prey-only` | Applies an `ai-*` preset |
+| `isle-server ai-classes set Boar Deer` | `Manage.bat AIClasses set Boar Deer` | `DISABLED_AI_CLASSES`, live over RCON |
+
+AI presets: `ai-normal`, `ai-low`, `ai-high`, `ai-off`, `ai-fast-respawn` (20 s), `ai-slow-respawn` (90 s) and
+`ai-prey-only` (no Compsognathus or Pterodactylus). The AI classes and their roles are listed in `config/classes.txt`:
+
+| Class | Role |
+|---|---|
+| Compsognathus | carnivore |
+| Pterodactylus | flying |
+| Boar, Deer, Goat | prey |
+| Seaturtle | aquatic |
+
+Lower the density before you turn AI off: carnivores live on AI.
+
+![AI creatures on the Map & AI page](docs/images/ui/map-ai-creatures.png)
+
+## Admins, whitelist and playable roster
+
+In the [web UI](UI.md) these are the **Players** and **Roster** pages:
+
+| Players | Roster |
+|---|---|
+| ![Admins and whitelist](docs/images/ui/players.png) | ![Playable roster and disabled AI](docs/images/ui/roster.png) |
+
+| Linux | Windows | Effect |
+|---|---|---|
+| `isle-server admins list\|add\|remove <SteamID64...>` | `IsleServer.ps1 Admins add <id...>` | `ADMIN_STEAM_IDS`. Applies on restart |
+| `isle-server whitelist list\|add\|remove <id...>\|on\|off` | `IsleServer.ps1 Whitelist add <id...>` | `WHITELIST_IDS` / `WHITELIST_ENABLED`. **Live** via RCON |
+| `isle-server classes list\|known\|set\|add\|remove <Class...>\|reset\|preset [roster]` | `IsleServer.ps1 Classes ...` | `ALLOWED_CLASSES`. **Live** via RCON `updateplayables` |
+| `isle-server ai-classes list\|known\|set\|add\|remove\|reset` | `IsleServer.ps1 AIClasses ...` | `DISABLED_AI_CLASSES`. **Live** via RCON |
+
+- SteamIDs must be SteamID64s (17 digits starting with `7656119`). Duplicates are dropped.
+- Class names are checked against [`config/classes.txt`](config/classes.txt). Unknown names only warn, so new
+  species keep working. Edit that file when a patch adds or renames one.
+- **Roster presets** live in [`config/rosters/`](config/rosters/): `all`, `carnivores`, `herbivores`,
+  `no-apex`, `small-only`, `beginner`.
+- When the server is running and RCON is enabled, whitelist and roster changes are also sent live. Otherwise
+  they apply on the next start. In docker mode the live change goes through the container.
+
+### Steam names for SteamID64s
+
+The admin and whitelist lists show each player's Steam name next to the SteamID64, in the CLI and in the web UI,
+and adding a player prints who you added:
+
+```text
+$ isle-server admins add 76561198012345678
+[ OK ] Admins: 1 - restart the server to apply (the game reads admins at start)
+  76561198012345678  Gondwa Warden
+$ isle-server admins list            # --refresh asks Steam again instead of using the cache
+$ isle-server steam names 76561198012345678 76561198087654321
+```
+
+On Windows: `IsleServer.ps1 Admins list`, `Whitelist add <id>`, `Steam names <id...>`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `STEAM_NAME_LOOKUP` | `true` | Look names up on Steam. `false` = no requests (names already cached still show) |
+| `STEAM_WEB_API_KEY` | (empty) | Optional [Steam Web API key](https://steamcommunity.com/dev/apikey): one batched call per 100 players instead of one profile page each. Masked in the UI |
+| `STEAM_NAME_CACHE_DAYS` | `7` | How long a name is cached in `config/.steam-names.json` |
+
+Without a key, names come from each public profile (`steamcommunity.com/profiles/<id>?xml=1`). A private profile
+or an ID with no Steam account shows "(name unknown)". A lookup never fails a command: when Steam can't be reached,
+the last known name is shown. Names are what players call themselves on Steam and can change at any time; the
+SteamID64 is what the server uses.
+
+### Roster by type, humans and eggs
+
+Each playable class in [`config/classes.txt`](config/classes.txt) has one or more types: `carnivore`, `herbivore`,
+`omnivore`, `flying`, `aquatic`.
+
+| Linux | Windows | Effect |
+|---|---|---|
+| `isle-server classes types` | `IsleServer.ps1 Classes types` | Lists the classes of each type |
+| `isle-server classes select carnivore [flying ...]` | `Classes select ...` | Only those types are playable |
+| `isle-server classes add-type herbivore` / `remove-type flying` | `Classes add-type` / `remove-type` | Adds or removes a whole type |
+| `isle-server classes humans on\|off` | `Classes humans on` | `ENABLE_HUMANS` (live via RCON `togglehumans`) |
+
+Humans are not a class: one switch turns them on or off. Eggs and hatchlings are not a class either and the server
+has no setting for them. The UI roster has filters for every type plus **human** and **egg**, with **Only**, **Add**
+and **Remove** buttons for the type in view.
+
+## Mutations
+
+`ENABLE_MUTATIONS` turns the mutation system on or off. `ENABLED_MUTATIONS` picks which mutations exist and how strong
+they are. When it is empty (the default), every mutation is available at the game's values. When it lists any, only
+those are available, written to `Game.ini` as `EnabledMutations=Name, value` lines.
+
+| Linux | Windows |
+|---|---|
+| `isle-server mutations list` | `IsleServer.ps1 Mutations list` |
+| `isle-server mutations enable Hemomania 0.1` | `Mutations enable Hemomania 0.1` |
+| `isle-server mutations disable Wader Featherweight` | `Mutations disable ...` |
+| `isle-server mutations reset` (all, game default) | `Mutations reset` |
+
+The names and defaults come from [`config/mutations.txt`](config/mutations.txt). "Fixed" mutations only take `1`.
+Values other than the default warn: they can make gameplay unstable. The UI has a **Mutations** card on the Map & AI page.
+
+## Admin commands (live, over RCON)
+
+`isle-server admin <action>` / `IsleServer.ps1 Admin <action>` and the UI **Admin** page send live commands to a
+running server with RCON enabled:
+
+| Action | What it does |
+|---|---|
+| `players`, `player [SteamID64]`, `details`, `queue`, `playables` | Players online, a player's data, server details, queue status, playable classes |
+| `announce <text>`, `dm <id> <text>` | Message everyone, or one player |
+| `kick <id> [reason]`, `ban <id> [reason]` | Kick or ban (sent as `id,reason`) |
+| `save`, `wipecorpses` | Save the world, remove every corpse |
+| `pause`, `migrations`, `humans`, `chat`, `ai-learning`, `netupdate` `on\|off` | Live switches (reset to server.conf on restart) |
+| `growth on\|off\|<multiplier>` | Growth multiplier, e.g. `growth 1.5` |
+| `custom "<command>"` | Experimental raw command |
+
+Evrima's RCON has **no** commands to change a player's size or growth stage, skin, or mutations, to give god mode, or
+to teleport or heal. Admins listed in `ADMIN_STEAM_IDS` do those in game with the game's own admin panel.
+
+## Any Game.ini / Engine.ini key (overrides)
+
+Put `Game.ini` and/or `Engine.ini` in `config/overrides/` (or the folder set in `INI_OVERRIDES_DIR`).
+They are merged into the generated files on every start:
+
+- `Key=Value` **replaces every generated line** of that key in that section. Repeat the key for lists.
+- New keys are added to their section, and new sections are appended.
+- Lines starting with `+`, `-` or `!` (Unreal array syntax) pass through unchanged.
+
+Examples: [`config/examples/overrides/`](config/examples/overrides/). Every known key, with its section, default,
+`server.conf` key and status: [`config/reference/Game.ini.md`](config/reference/Game.ini.md) and
+[`config/reference/Engine.ini.md`](config/reference/Engine.ini.md). In docker mode the folder is mounted
+read-only into the container.
+
+### Optional / advanced keys
+
+Written only when set:
+
+| server.conf | ini key | Notes |
+|---|---|---|
+| `REGION_SPAWNING` | `bUseRegionSpawning` | community-documented |
+| `REGION_SPAWN_COOLDOWN` | `bUseRegionSpawnCooldown` | community-documented |
+| `REGION_SPAWN_COOLDOWN_SECONDS` | `RegionSpawnCooldownTimeSeconds` | community-documented |
+| `WEATHER_MIN_INTERVAL` / `WEATHER_MAX_INTERVAL` | `Min/MaxWeatherVariationInterval` | community-documented |
+| `NET_TICK_RATE` | Engine.ini `NetServerMaxTickRate` | Unreal Engine |
+| `INI_OVERRIDES_DIR` | (override folder) | default `config/overrides` |
+
+## Validation (`check`)
+
+Run `isle-server check` (Linux) or `IsleServer.ps1 Check` (Windows) after you edit the file.
+`configure`, `run`, `start` and `install` run the same checks and won't launch while there are errors.
+
+| Severity | Condition |
+|---|---|
+| Error | `GAME_PORT`, `QUEUE_PORT` or `RCON_PORT` isn't 1–65535, or two enabled ports are the same |
+| Error | `MAX_PLAYERS` isn't a positive integer |
+| Error | A true/false setting has another value (allowed: true, false, yes, no, 1, 0, on, off) |
+| Error | A multiplier, density or day/night length isn't a number, or a time/retention value isn't a whole number |
+| Error | `RCON_ENABLED=true` and `RCON_PASSWORD` is empty |
+| Error | `EOS_CLIENT_ID` or `EOS_CLIENT_SECRET` is empty |
+| Warning | An `ADMIN_STEAM_IDS` / `WHITELIST_IDS` entry isn't a 17-digit SteamID64 |
+| Warning | `SERVER_NAME` is empty, or the whitelist is on with no IDs |
+
+Exit code: `0` = OK (warnings allowed), `1` = errors.
+
+## Runtime
+
+| Key | Default | Description |
+|---|---|---|
+| `RUNTIME` | `native` | `native` = run on this machine. `docker` = the launcher manages a container ([DOCKER.md](DOCKER.md)) |
+| `DOCKER_BUILD` | `true` | Docker: build the image from this repo. `false` = use `DOCKER_IMAGE` as is (pulled if missing) |
+| `DOCKER_IMAGE` | `theisle-server:latest` | Docker: image name / reference |
+| `PUID` / `PGID` | `1000` | Docker: uid/gid the server runs as inside the container |
+
+To override per command: `isle-server.sh --docker|--native <cmd>`, `IsleServer.ps1 <Cmd> -Runtime Docker|Native`,
+or the `ISLE_RUNTIME` environment variable (precedence: flag > env > config).
+In docker mode, `STEAMCMD_DIR`, `SERVER_DIR` and `BACKUP_DIR` are ignored. The container always uses `/data`.
+
 ## Install and update
 
 | Key | Default | Description |
@@ -67,6 +310,7 @@ then generate them only if they don't exist yet.
 | `PLANT_SPAWN_MULTIPLIER` | `PlantSpawnMultiplier` | `1` |
 | `SPAWN_AI` | `bSpawnAI` | `true` |
 | `AI_DENSITY` | `AIDensity` | `1` |
+| `AI_SPAWN_INTERVAL` | `AISpawnInterval` | `40` |
 | `DISABLED_AI_CLASSES` | `DisallowedAIClasses=` (one line each) | empty |
 | `ENABLE_MIGRATION` | `bEnableMigration` | `true` |
 | `MAX_MIGRATION_TIME` | `MaxMigrationTime` | `5400` |
@@ -148,8 +392,81 @@ Replace them only if the developers announce new values.
 | `EXTRA_ARGS` | `-log` | Extra command-line arguments for the server |
 | `STOP_TIMEOUT` | `60` | Seconds to wait for a graceful exit before killing |
 | `AUTO_RESTART` | `true` | Restart after a crash (watchdog mode) |
-| `BACKUP_RETENTION` | `10` | Number of backup archives to keep (0 = all) |
+| `BACKUP_RETENTION` | `10` | Number of backup archives to keep (0 = all). Also applies to `BACKUP_COPY_DIR` |
+| `BACKUP_SCHEDULE` | `0 5 * * *` | When the scheduled task backs up: cron syntax, `@daily`/`@hourly`/..., or `off` |
+| `BACKUP_COPY_DIR` | (empty) | Second copy of every backup, ideally on another disk or a network share (3-2-1) |
+| `BACKUP_OFFSITE_COMMAND` | (empty) | Command run after every backup to send it off-site; `{file}` is the archive |
 | `SAVE_BEFORE_STOP` | `true` | Send RCON `save` before stopping or backing up |
+
+### Scheduled backups and the 3-2-1 rule
+
+The installers add a per-minute task (systemd `theisle-server-backup.timer`, or the `TheIsleServer-Backup` scheduled
+task on Windows) that runs `backup tick`. It backs up when `BACKUP_SCHEDULE` falls due, at most once per due minute,
+and catches up on a minute missed while the machine was busy.
+
+`BACKUP_SCHEDULE` uses the five cron fields `minute hour day-of-month month day-of-week`, in the server's
+`TIMEZONE`. Lists (`1,15`), ranges (`1-5`), steps (`*/15`), names (`MON-FRI`, `JAN`) and `@hourly`, `@daily`,
+`@weekly`, `@monthly`, `@yearly` work; `off` turns scheduled backups off. Examples:
+
+| Schedule | Meaning |
+|---|---|
+| `0 5 * * *` | Every day at 05:00 (default) |
+| `0 */6 * * *` | Every 6 hours |
+| `30 4 * * MON-FRI` | Weekdays at 04:30 |
+| `0 5,17 * * *` | 05:00 and 17:00 |
+
+```bash
+isle-server backup schedule set "0 */6 * * *"   # validated before it is saved
+isle-server backup schedule show                # the next runs
+isle-server backup status                       # last backup and the 3-2-1 check (--json for scripts)
+```
+
+**3-2-1** means 3 copies of your data, on 2 different media, 1 of them off-site. The live world is one copy and
+`BACKUP_DIR` the second. Set `BACKUP_COPY_DIR` to another disk or a network share for the second medium, and
+`BACKUP_OFFSITE_COMMAND` for the off-site copy, for example:
+
+```bash
+BACKUP_COPY_DIR=/mnt/nas/theisle-backups
+BACKUP_OFFSITE_COMMAND=rclone copy {file} b2:my-bucket/theisle
+```
+
+The off-site command runs with a one-hour time limit, and a failure only warns. The `offsite-backup` plugin is an
+alternative. `backup status` (and the UI) warn when `BACKUP_COPY_DIR` is on the same disk as `BACKUP_DIR`. Both are
+machine settings and are not editable from the web UI.
+
+## Logs and time
+
+| Key | Default | Description |
+|---|---|---|
+| `TIMEZONE` | `local` | `local` or `utc`: the clock for log timestamps and for the `_yyyymmdd_hhmmss` suffix of dated files |
+| `LOG_DIR` | *(empty)* | Folder for log files. Empty = `<scripts>/logs` (Docker: `/data/logs`). Machine-specific |
+| `LOG_RETENTION` | `14` | Log files kept per kind (`launcher`, `server`, `ui`), and the game's own `TheIsle-backup-*.log`. `0` = keep all |
+| `LOG_MAX_SIZE_MB` | `20` | A new log file starts once the current one is bigger than this. `0` = no limit |
+
+Every log file is named `KIND_yyyymmdd_hhmmss.log`, for example `server_20261108_143000.log` (a second file in the
+same second gets `_1`, `_2` ...). Dated files use the same suffix:
+
+| File | Name |
+|---|---|
+| Backups | `theisle-backup_20261108_143000.tar.gz` (Windows `.zip`) |
+| Final backup on uninstall | `theisle-final_20261108_143000.tar.gz` |
+| Snapshots | `theisle-snapshot_20261108_143000.tar.gz` |
+| Replaced world | `Saved.pre-restore_20261108_143000`, `Saved.pre-snapshot_20261108_143000` |
+| Config backup | `server.conf.bak_20261108_143000` |
+
+Files with the older `-yyyymmdd-hhmmss` names are still found, restored and pruned. In Docker mode with `TIMEZONE=local`
+the container gets the host's UTC offset. The web UI has its own per-browser **Date & time** setting (server time,
+browser time or UTC, and the date format); see [UI.md](UI.md).
+
+## Web UI
+
+Used by `isle-server ui` / `IsleServer.ps1 UI` and the `theisle-ui` service (see [UI.md](UI.md)). Both keys are
+machine-specific: the UI shows them read-only, and snapshots don't carry them.
+
+| Key | Default | Description |
+|---|---|---|
+| `UI_HOST` | `127.0.0.1` | Address the web UI and API listen on. Keep `127.0.0.1` and use an SSH tunnel or a TLS reverse proxy for remote access |
+| `UI_PORT` | `8090` | Port of the web UI and API (`check` validates it) |
 
 ## RCON
 
@@ -174,3 +491,7 @@ The command bytes come from community documentation and may change with game upd
   `0 6 * * * systemctl restart theisle-server`
 - **Windows:** create a daily task that runs
   `C:\TheIsle\scripts\windows\Restart.bat` with the environment variable `ISLE_NOPAUSE=1` set.
+
+---
+
+Made with ❤️ by [Kyros Koh](https://github.com/kyroskoh)
