@@ -29,6 +29,10 @@ Please open a private security advisory on GitHub
     - set cookies or allow other origins (no CORS unless `--cors ORIGIN`)
   - **Headers:** pages are sent with a strict Content-Security-Policy (`'self'` only, no inline scripts),
     `X-Frame-Options: DENY`, `nosniff` and `no-referrer`.
+- **Backup targets from the web UI.** The 3-2-1 editor can set where copies of every backup go (a folder, an rclone
+  remote or an SSH host). Targets are validated strictly and run without a shell, but whoever holds the UI token
+  decides where your backups - which include `server.conf` - are sent: treat the token as full admin access.
+  `BACKUP_OFFSITE_COMMAND` can only be set in `server.conf` on the machine.
 - **Steam name lookups** (`STEAM_NAME_LOOKUP=true`, the default) make the server, never the browser, fetch
   public profile pages from `steamcommunity.com` for the SteamID64s you list (or call `api.steampowered.com`
   when `STEAM_WEB_API_KEY` is set). Only SteamID64s are sent. `STEAM_WEB_API_KEY` is masked in the web UI like a

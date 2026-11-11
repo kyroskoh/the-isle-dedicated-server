@@ -6,7 +6,7 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](DOCKER.md)
 [![Web UI + REST API](https://img.shields.io/badge/web%20UI-REST%20API%20%2B%20OpenAPI-6E56CF)](UI.md)
 
-**Version:** 1.12.0 · **Author:** [Kyros Koh](https://github.com/kyroskoh) · **Repository:** [kyroskoh/the-isle-dedicated-server](https://github.com/kyroskoh/the-isle-dedicated-server) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
+**Version:** 1.13.0 · **Author:** [Kyros Koh](https://github.com/kyroskoh) · **Repository:** [kyroskoh/the-isle-dedicated-server](https://github.com/kyroskoh/the-isle-dedicated-server) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
 
 Scripts to install, configure, run, update and back up a **The Isle – Evrima**
 dedicated server on **Windows**, **Linux** and **Docker**, all driven from one shared config file.
@@ -63,16 +63,27 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 - **Watchdog** that restarts the server if it crashes. On Linux this is systemd `Restart=on-failure` or the built-in watchdog. On Windows it's a scheduled task plus a watchdog loop.
 - **Auto-update** through SteamCMD before each start (optional).
 - **Graceful stop.** The scripts save the world over RCON, then stop the server cleanly.
+- **Easy first server.** `isle-server setup` (and the web UI's **Get started** page) checks the machine's CPU,
+  memory and disk, recommends settings that fit it (`isle-server recommend`), and walks you through name, map,
+  admins, play style and backups. The web UI also has a **guided tour**.
 - **Scheduled backups with 3-2-1.** `BACKUP_SCHEDULE` takes cron syntax (`0 */6 * * *`, `30 4 * * MON-FRI`, `@daily`,
-  `off`), checked every minute by a systemd timer or a Windows scheduled task. `BACKUP_COPY_DIR` keeps a second copy on
-  another disk and `BACKUP_OFFSITE_COMMAND` (or the offsite-backup plugin) sends one off-site; `backup status` reports the
-  3-2-1 check. Backups keep a set number of copies and can be restored.
+  `off`), checked every minute by a systemd timer or a Windows scheduled task. Set up your **3-2-1 strategy** with
+  `backup strategy` or in the UI: a second copy on another disk, and an off-site copy to a network share, any rclone
+  remote (S3, B2, Google Drive, ...) or another machine over SSH, each with its own retention, plus a `test`. Backups keep a set number of copies and can be restored.
 - **RCON client** (`tools/isle_rcon.py`). It's pure Python and runs on both OSes: announce, kick, ban, save, playerlist, whitelist and more.
 - **Least privilege.** On Linux the server runs as a dedicated `theisle` user. On Windows it runs as `LOCAL SERVICE`.
 
 ## Screenshots
 
 <table>
+  <tr>
+    <td width="50%"><a href="docs/images/ui/setup-machine.png"><img src="docs/images/ui/setup-machine.png" alt="Get started: what this machine can run, with recommended settings"></a><br><sub>Get started: what this machine can run, with recommended settings</sub></td>
+    <td width="50%"><a href="docs/images/ui/tour.png"><img src="docs/images/ui/tour.png" alt="The guided tour shows where everything is"></a><br><sub>The guided tour shows where everything is</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/images/ui/backup-strategy.png"><img src="docs/images/ui/backup-strategy.png" alt="Your 3-2-1 strategy: second disk and off-site (folder, rclone or SSH)"></a><br><sub>Your 3-2-1 strategy: second disk and off-site (folder, rclone or SSH)</sub></td>
+    <td width="50%"><a href="docs/images/ui/setup-style.png"><img src="docs/images/ui/setup-style.png" alt="Setup wizard: pick a play style"></a><br><sub>Setup wizard: pick a play style</sub></td>
+  </tr>
   <tr>
     <td width="50%"><a href="docs/images/ui/roster-types.png"><img src="docs/images/ui/roster-types.png" alt="Roster filtered by type (carnivore), with Only / Add / Remove, humans and eggs"></a><br><sub>Roster filtered by type (carnivore), with Only / Add / Remove, humans and eggs</sub></td>
     <td width="50%"><a href="docs/images/ui/mutations.png"><img src="docs/images/ui/mutations.png" alt="Mutations: all, or only chosen ones with their values"></a><br><sub>Mutations: all, or only chosen ones with their values</sub></td>
@@ -108,7 +119,7 @@ All pages, in both themes and on phones and tablets: [UI.md](UI.md). The screens
 
 1. Download or clone this repository.
 2. Double-click **`windows\Install.bat`**, accept the Administrator prompt, and choose **1** (native) or **2** (Docker Desktop).
-3. Edit **`C:\TheIsle\scripts\config\server.conf`**: set the server name, admins and so on.
+3. Run the setup wizard: **`C:\TheIsle\scripts\windows\IsleServer.ps1 Setup`** (or edit `C:\TheIsle\scripts\config\server.conf`).
 4. Run **`C:\TheIsle\scripts\windows\Restart.bat`**, or reboot. The server starts at boot.
 
 ### Docker (same launcher)
@@ -128,7 +139,7 @@ After that, use the same commands as a native install. See [DOCKER.md](DOCKER.md
 git clone https://github.com/kyroskoh/the-isle-dedicated-server.git
 cd the-isle-dedicated-server
 sudo ./linux/install.sh            # asks: 1 = native, 2 = docker (or pass --native / --docker); add --start
-sudo nano /home/theisle/theisle-scripts/config/server.conf
+sudo isle-server setup              # wizard: machine check, recommended settings, name, map, admins, backups
 sudo systemctl restart theisle-server
 ```
 

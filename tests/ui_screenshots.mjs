@@ -73,7 +73,8 @@ const port = await freePort();
 // fake Steam (tests/fixtures/fake-steam.py): Steam names for SteamID64s without touching the internet
 const steamProc = spawn(PY, [join(REPO, "tests", "fixtures", "fake-steam.py"), "0"], { stdio: ["ignore", "pipe", "ignore"] });
 const steamUrl = await new Promise((res) => steamProc.stdout.once("data", (b) => res("http://127.0.0.1:" + String(b).trim().split(/\s+/)[1])));
-const env = { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"),
+const env = { ...process.env, ISLE_SYSINFO_FAKE: JSON.stringify({ cpus: 8, mem_gb: 16, mem_available_gb: 13.2, disk_free_gb: 240, cpu_model: "AMD Ryzen 7 5800X 8-Core Processor", os: "Linux", arch: "x86_64", backup_size_mb: 180 }),
+  ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"),
   FAKE_DELAY: "0.2", FAKE_LOG_FILE: join(dir, "server.log") };
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
   "--port", String(port), "--snapshot-dir", join(dir, "snapshots")], { env, stdio: "ignore" });
@@ -155,6 +156,12 @@ try {
     await page.evaluate(() => document.querySelector("li.community").closest(".card").scrollIntoView({ block: "start" }));
     await snap(page, "plugins-community");
     await go(page, "snapshots"); await page.waitForSelector(".next-runs li"); await snap(page, "snapshots");
+    await page.waitForSelector("#st-kind");
+    await page.fill("#st-copy", "/mnt/backup-disk/theisle");
+    await page.selectOption("#st-kind", "rclone");
+    await page.fill("#st-remote", "b2"); await page.fill("#st-rpath", "gondwa-backups/theisle");
+    await page.evaluate(() => { document.querySelector("#backup-strategy").scrollIntoView({ block: "start" }); window.scrollBy(0, -90); });
+    await snap(page, "backup-strategy");
     await page.evaluate(() => { document.querySelector("#backup-schedule").scrollIntoView({ block: "start" }); window.scrollBy(0, -90); });
     await snap(page, "backup-schedule");
     await page.click("table button:has-text('Restore')");
@@ -175,6 +182,21 @@ try {
     await page.fill("#announce-text", "");
     await page.click("li:has-text('Global chat') button:has-text('On')"); await sleep(300);
     await snap(page, "admin");
+    // first-time setup wizard
+    await go(page, "setup"); await page.waitForSelector(".specs .stat"); await snap(page, "setup-machine");
+    await page.click(".setup-nav button:has-text('Skip this step')"); await page.waitForSelector("#setup-name");
+    await page.click(".setup-nav button:has-text('Skip this step')"); await page.waitForSelector("input[name='setup-map']");
+    await page.click(".setup-nav button:has-text('Skip this step')");
+    await page.click(".setup-nav button:has-text('Skip this step')"); await page.waitForSelector("input[name='setup-style']");
+    await page.check("input[name='setup-style'][value='realism']");
+    await snap(page, "setup-style");
+    // guided tour, on the quick actions
+    await go(page, "");
+    await page.evaluate(() => window.IsleTour.start());
+    await page.click(".tour-pop button:has-text('Next')"); await sleep(300);
+    await page.click(".tour-pop button:has-text('Next')"); await sleep(500);
+    await snap(page, "tour");
+    await page.keyboard.press("Escape");
     await go(page, "console");
     for (const [cmd, arg] of [["announce", "Restart in 30 minutes - find a safe spot!"], ["playerlist", ""], ["save", ""]]) {
       await page.selectOption("#rcon-cmd", cmd);
@@ -198,6 +220,12 @@ try {
   await snap(phone.page, "phone-dashboard-dark");
   await phone.page.click("#menu"); await sleep(400);
   await snap(phone.page, "phone-menu-dark");
+  await phone.page.keyboard.press("Escape"); await sleep(300);
+  await phone.page.evaluate(() => window.IsleTour.start());
+  for (let i = 0; i < 4; i++) { await phone.page.click(".tour-pop button:has-text('Next')"); await sleep(400); }
+  await snap(phone.page, "phone-tour-dark");
+  await phone.page.keyboard.press("Escape"); await sleep(300);
+  await phone.page.evaluate(() => { const app = document.querySelector("#app"); if (app.classList.contains("nav-open")) document.querySelector("#menu").click(); });
   await phone.page.keyboard.press("Escape");
   await phone.page.click("#content", { position: { x: 5, y: 5 } }).catch(() => {});
   await sleep(300);

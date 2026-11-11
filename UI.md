@@ -56,17 +56,37 @@ plain text.
 
 | Page | What it does |
 |---|---|
-| Dashboard | State, Start/Stop/Restart/Save/Backup, Update/Verify game files, server details, recent jobs with their output |
+| Dashboard | State, Start/Stop/Restart/Save/Backup, Update/Verify game files, server details, recent jobs with their output; a welcome card until setup is done |
+| Get started | First-time setup wizard: machine check with recommended settings, name and size, map, admins, play style, backups (schedule and 3-2-1), finish |
 | Settings | Every `server.conf` key, grouped and searchable. Secrets are masked. Changes are checked with `check` and rolled back if invalid. Machine-specific keys (paths, runtime, UI address) are read-only here |
 | Players | Admins and whitelist (add, remove, on/off), each with the player's Steam name (looked up by the server and cached) |
 | Roster | Playable classes as tick boxes (with types), roster presets, a type filter (incl. human and egg) with Only / Add / Remove, and the humans switch |
 | Map & AI | Switch maps (with their Steam branch), AI spawning, density (live), spawn interval, AI presets, disabled AI classes with their roles, mutations |
 | Profiles & presets | Apply a profile, or several presets in order |
 | Plugins | Search, install, enable/disable, update, remove, configure, plugin presets, catalog sources, community resources |
-| Snapshots & backups | Create, restore (choose parts, overwrite, stop first) and delete snapshots; back up now; backup schedule (cron) with live preview; 3-2-1 check |
+| Snapshots & backups | Create, restore (choose parts, overwrite, stop first) and delete snapshots; back up now; backup schedule (cron) with live preview; 3-2-1 check; 3-2-1 strategy editor (second copy, off-site target, retention, test) |
 | Logs | The game's log or any rotated `launcher_` / `server_` / `ui_` log file, last 100–2000 lines, with auto-refresh |
 | Admin | Live admin commands: players online, player data, DM, kick, ban, announce, live switches, growth multiplier, save, wipe corpses, custom |
 | RCON console | Send RCON commands to the running server |
+
+### Get started and the guided tour
+
+**Get started** (in the menu, and offered on the dashboard until setup is done) sets up a new server in seven steps.
+Step 1 reads this machine's CPU, memory and disk and recommends settings that fit it; tick the ones to apply. Each
+step saves when you continue, **Skip this step** leaves it as it is, and the last step checks the configuration and
+offers to download the game files and start the server. The same wizard runs in a terminal: `isle-server setup`.
+
+| Your machine | Play style |
+|---|---|
+| ![Setup wizard: machine check and recommended settings](docs/images/ui/setup-machine.png) | ![Setup wizard: play style](docs/images/ui/setup-style.png) |
+
+**Take the tour** (sidebar) walks through the main areas: it highlights each one and explains it. Use **Next** /
+**Back** or the arrow keys, **Esc** to stop. Focus stays in the tour card, the card always fits on screen, and on a
+phone it opens the menu when a step needs it. The tour never starts by itself.
+
+| Desktop | Phone |
+|---|---|
+| ![The guided tour on the dashboard](docs/images/ui/tour.png) | <img src="docs/images/ui/phone-tour-dark.png" alt="The guided tour on a phone" width="280"> |
 
 ### Date & time, cut-off text and screen sizes
 
@@ -154,6 +174,12 @@ list of community tools and guides.
 server's time zone). The 3-2-1 card checks copies, media and off-site.
 
 ![Backup schedule and 3-2-1 check](docs/images/ui/backup-schedule.png)
+
+**3-2-1 strategy.** How many backups to keep here, a second copy folder on another disk, and the off-site target:
+a folder or network share, an rclone remote, or another machine over SSH - each from simple fields, with its own
+retention. **Test** checks the saved targets by writing and removing a small file.
+
+![3-2-1 strategy editor](docs/images/ui/backup-strategy.png)
 
 **Admin.** Live RCON commands: players online with data / message / kick / ban, announcements, moderation by SteamID64,
 live switches (pause, migrations, humans, global chat, AI learning, network updates), the growth multiplier, save, queue

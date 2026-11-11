@@ -235,6 +235,17 @@
 
   function pageDashboard(c) {
     c.appendChild(pageHead("Dashboard", "Server state, quick actions and recent activity."));
+    // first visit: offer the setup wizard and the tour until setup is finished
+    var welcome = h("div");
+    c.appendChild(welcome);
+    api("GET", "/setup").then(function (st) {
+      if (st.done) return;
+      add(welcome, h("section", { class: "card welcome", id: "welcome", "aria-label": "Getting started" },
+        h("div", null, h("h2", { text: "New here? Set up your server in a few steps" }),
+          h("p", { class: "muted small", text: "Check what this machine can handle, name your server, pick a map and play style, add yourself as admin and protect your world with 3-2-1 backups." })),
+        h("div", { class: "row" }, h("a", { class: "btn primary", href: "#/setup", text: "Get started" }),
+          btn("Take the tour", { onclick: function () { window.IsleTour && window.IsleTour.start(); } }))));
+    }, function () { /* older API: no banner */ });
     var dot = h("span", { class: "dot" }), big = h("div", { class: "big", text: "…" }), detail = h("div", { class: "muted small" });
     var buttons = ACTIONS.map(function (a) { return actionButton(a, loadJobs); });
     var hero = h("section", { class: "card hero", "aria-label": "Server state" },
@@ -954,8 +965,15 @@
     c.appendChild(schedGrid);
     var loadBackups = function () { return api("GET", "/backups"); };
     var renderRule = section(rule, loadBackups, function (el, d) { backupRule(el, d); });
+    var refreshRule = function () { return loadBackups().then(function (b) { backupRule(clear(renderRule), b); }); };
     section(sched, loadBackups, function (el, d, reload) {
-      scheduleEditor(el, d, function () { reload(); loadBackups().then(function (b) { backupRule(clear(renderRule), b); }); });
+      scheduleEditor(el, d, function () { reload(); refreshRule(); });
+    });
+    var strat = h("section", { class: "card", id: "backup-strategy" });
+    strat.style.marginTop = "1rem";
+    c.appendChild(strat);
+    section(strat, function () { return api("GET", "/backups/strategy"); }, function (el, d, reload) {
+      strategyEditor(el, d, function () { reload(); refreshRule(); });
     });
     var listCard = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Snapshots" }), btn("Refresh", { kind: "ghost sm", icon: "refresh", onclick: function () { load(); } })), list);
     listCard.style.marginTop = "1rem";
@@ -1052,12 +1070,262 @@
       h("ul", { class: "checks" },
         item(r.copies >= 3, (r.copies || 0) + " of 3 copies", "Local backups (" + (d.local ? d.local.count : 0) + " in " + (d.local ? d.local.dir : "?") + ")" +
           (d.copy && d.copy.dir ? ", a second copy in " + d.copy.dir : "") + (d.offsite && d.offsite.configured ? ", and off-site" : "") + "."),
-        item(r.media >= 2, (r.media || 0) + " of 2 media", d.copy && d.copy.dir ? (d.copy.other_disk ? "BACKUP_COPY_DIR is on another disk." : "BACKUP_COPY_DIR is on the same disk as the backups - use another drive or a network share.")
-          : "Set BACKUP_COPY_DIR in server.conf to a second drive or network share."),
-        item(!!r.offsite, "Off-site", d.offsite && d.offsite.configured ? "BACKUP_OFFSITE_COMMAND runs after every backup" + (d.offsite.last ? " (last " + d.offsite.last.replace("T", " ") + ")." : ".")
-          : "Set BACKUP_OFFSITE_COMMAND in server.conf (e.g. rclone copy {file} remote:isle), or enable the offsite-backup plugin.")),
-      h("p", { class: "muted small" }, "Last backup: ", last),
-      h("p", { class: "muted small", text: "The copy folder and off-site command are machine settings: edit them in config/server.conf on the server (they are not editable here)." })]);
+        item(r.media >= 2, (r.media || 0) + " of 2 media", d.copy && d.copy.dir ? (d.copy.other_disk ? "The second copy is on another disk." : "The second copy is on the same disk as the backups - use another drive or a network share.")
+          : "Add a second copy on another drive or a network share below."),
+        item(!!r.offsite, "Off-site", d.offsite && d.offsite.configured ? "Sent off-site after every backup (" + d.offsite.configured + ")" + (d.offsite.last ? ", last: " + d.offsite.last : "") + "."
+          : "Choose an off-site target below: a network share, an rclone remote (S3, B2, Google Drive, ...) or another machine over SSH.")),
+      h("p", { class: "muted small" }, "Last backup: ", last)]);
+  }
+
+  /* 3-2-1 strategy: local retention, a second copy on another disk, an off-site target built from simple fields */
+  var OFFSITE_KINDS = [["", "Off"], ["dir", "Folder or network share"], ["rclone", "rclone remote (S3, B2, Drive, ...)"], ["ssh", "Another machine over SSH"]];
+  function strategyEditor(el, d, saved) {
+    var uid = function (n) { return "st-" + n; };
+    var field = function (id, label, input, hint) {
+      input.id = uid(id);
+      return h("div", { class: "field" }, h("label", { for: uid(id), text: label }), input, hint ? h("span", { class: "hint", text: hint }) : null);
+    };
+    var num = function (v, ph) { return h("input", { type: "number", min: "0", max: "9999", step: "1", value: v, placeholder: ph || "", class: "num" }); };
+    var txt = function (v, ph) { return h("input", { type: "text", value: v, placeholder: ph, spellcheck: "false", autocomplete: "off" }); };
+    // current target -> fields
+    var t = d.offsite_target || "", kind = d.offsite_kind || "", m;
+    var f = { dir: "", remote: "", rpath: "", user: "", host: "", port: "", spath: "" };
+    if (kind === "dir") f.dir = t.slice(4);
+    else if (kind === "rclone" && (m = t.match(/^rclone:([^:]+):(.*)$/))) { f.remote = m[1]; f.rpath = m[2]; }
+    else if (kind === "ssh" && (m = t.match(/^ssh:\/\/(?:([^@]+)@)?([^:/]+|\[[^\]]+\])(?::(\d+))?(\/.*)$/))) { f.user = m[1] || ""; f.host = m[2]; f.port = m[3] || ""; f.spath = m[4]; }
+    var keep = num(d.retention || "10");
+    var copyDir = txt(d.copy_dir, "/mnt/backup-disk/theisle  or  E:\\TheIsleBackups"), copyKeep = num(d.copy_retention, d.retention || "10");
+    var kindSel = h("select", null, OFFSITE_KINDS.map(function (k) { return h("option", { value: k[0], text: k[1], selected: k[0] === kind }); }));
+    var dir = txt(f.dir, "/mnt/nas/theisle  or  \\\\nas\\share\\theisle"), remote = txt(f.remote, "b2"), rpath = txt(f.rpath, "my-bucket/theisle");
+    var user = txt(f.user, "backup"), host = txt(f.host, "nas.example.lan"), port = num(f.port, "22"), spath = txt(f.spath, "/srv/theisle");
+    var offKeep = num(d.offsite_retention, d.retention || "10");
+    var toolNote = h("p", { class: "callout small", hidden: true });
+    var groups = {
+      dir: h("div", { class: "grid cols-2 kind-fields" }, field("dir", "Folder", dir, "A mounted network share or another disk, as the server's user sees it.")),
+      rclone: h("div", { class: "grid cols-2 kind-fields" }, field("remote", "rclone remote", remote, "The name from \"rclone config\" (run as the server's user)."), field("rpath", "Path in the remote", rpath)),
+      ssh: h("div", { class: "grid cols-2 kind-fields" }, field("user", "User", user), field("host", "Host", host), field("port", "Port", port), field("spath", "Folder on that machine", spath, "Key-based SSH login for the server's user must already work."))
+    };
+    var target = function () {
+      var k = kindSel.value;
+      if (k === "dir") return dir.value.trim() ? "dir:" + dir.value.trim() : "";
+      if (k === "rclone") return remote.value.trim() ? "rclone:" + remote.value.trim() + ":" + rpath.value.trim() : "";
+      if (k === "ssh") return host.value.trim() ? "ssh://" + (user.value.trim() ? user.value.trim() + "@" : "") + host.value.trim() + (port.value.trim() ? ":" + port.value.trim() : "") + (spath.value.trim() || "/") : "";
+      return "";
+    };
+    var preview = h("code", { class: "small target-preview" });
+    var paint = function () {
+      Object.keys(groups).forEach(function (k) { groups[k].hidden = kindSel.value !== k; });
+      preview.textContent = target() || "(none)";
+      var need = { rclone: d.tools && !d.tools.rclone ? "rclone is not installed on the server yet - install it (rclone.org/install) and run \"rclone config\" as the server's user." : "",
+        ssh: d.tools && !d.tools.scp ? "scp/ssh (OpenSSH client) is not installed on the server." : "" }[kindSel.value] || "";
+      toolNote.textContent = need; toolNote.hidden = !need;
+    };
+    [kindSel, dir, remote, rpath, user, host, port, spath].forEach(function (i) { i.addEventListener("input", paint); i.addEventListener("change", paint); });
+    var results = h("div", { class: "stack", "aria-live": "polite" });
+    var save = btn("Save strategy", { kind: "primary", type: "submit" }), test = btn("Test", { icon: "refresh" });
+    var form = h("form", { class: "stack", novalidate: true });
+    add(form, [
+      h("div", { class: "card-head" }, h("div", null, h("h2", { text: "3-2-1 strategy" }),
+        h("span", { class: "muted small", text: "Where copies of your world go after every backup." }))),
+      h("div", { class: "grid cols-2" },
+        h("fieldset", { class: "plain stack" }, h("legend", { class: "step-title", text: "1 · This machine" }), field("keep", "Backups to keep here", keep, "0 = keep all.")),
+        h("fieldset", { class: "plain stack" }, h("legend", { class: "step-title", text: "2 · Second copy (another disk)" }),
+          field("copy", "Copy folder", copyDir, "Empty = off. Pick a different drive than the backups for the \"2 media\"."), field("copykeep", "Copies to keep there", copyKeep, "Empty = same as here."))),
+      h("fieldset", { class: "plain stack" }, h("legend", { class: "step-title", text: "3 · Off-site" }),
+        h("div", { class: "grid cols-2" }, field("kind", "Send backups to", kindSel), field("offkeep", "Copies to keep off-site", offKeep, "Empty = same as here.")),
+        groups.dir, groups.rclone, groups.ssh, toolNote,
+        h("p", { class: "muted small" }, "Target: ", preview)),
+      d.offsite_command ? h("p", { class: "callout small", text: "BACKUP_OFFSITE_COMMAND is also set in server.conf and still runs after every backup." }) : null,
+      h("div", { class: "row" }, save, test, h("span", { class: "muted small", text: "Test checks the saved settings: it writes and removes a small file." })),
+      results]);
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var nums = [[keep, false], [copyKeep, true], [offKeep, true]], bad = null;
+      nums.forEach(function (n) { var v = n[0].value.trim(); var ok = (n[1] && !v) || /^\d{1,4}$/.test(v); n[0].toggleAttribute("aria-invalid", !ok); if (!ok && !bad) bad = n[0]; });
+      if (bad) { toast("Use whole numbers", "0 keeps every backup.", "error"); bad.focus(); return; }
+      var body = { retention: keep.value.trim(), copy_dir: copyDir.value.trim(), copy_retention: copyKeep.value.trim(),
+        offsite_target: target(), offsite_retention: offKeep.value.trim() };
+      busy(save, api("PUT", "/backups/strategy", body).then(function () { toast("3-2-1 strategy saved", "Applies from the next backup. Use Test to check the targets."); saved(); }, fail));
+    });
+    test.addEventListener("click", function () {
+      clear(results).appendChild(loading());
+      busy(test, api("POST", "/backups/strategy/test").then(function (r) {
+        clear(results);
+        if (!r.copy && !r.offsite) { results.appendChild(h("p", { class: "muted small", text: "Nothing to test yet: save a copy folder or an off-site target first." })); return; }
+        var ul = h("ul", { class: "checks" });
+        [["Second copy", r.copy], ["Off-site", r.offsite]].forEach(function (x) {
+          if (!x[1]) return;
+          add(ul, h("li", null, h("span", { class: "pill " + (x[1].ok ? "ok" : "bad"), text: x[1].ok ? "OK" : "Failed" }),
+            h("div", null, h("strong", { text: x[0] }), h("p", { class: "muted small" }, h("code", { text: x[1].target }), " - " + x[1].detail))));
+        });
+        results.appendChild(ul);
+      }, function (e) { clear(results); fail(e); }));
+    });
+    el.appendChild(form);
+    paint();
+  }
+
+  // ------------------------------------------------------------ first-time setup wizard (PRD ONB-03)
+  var SETUP_STEPS = ["Your machine", "Name & size", "Map", "Admins", "Play style", "Backups", "Finish"];
+  function pageSetup(c) {
+    c.appendChild(pageHead("Get started", "Set up your first The Isle server in a few steps. Everything can be changed later."));
+    var stepper = h("ol", { class: "stepper", "aria-label": "Setup steps" });
+    var panel = h("section", { class: "card setup-panel", "aria-live": "polite" });
+    var back = btn("Back"), next = btn("Next", { kind: "primary" }), skip = btn("Skip this step", { kind: "ghost" });
+    var nav = h("div", { class: "row setup-nav" }, back, h("span", { class: "spacer" }), skip, next);
+    add(c, [stepper, panel, nav]);
+    var cur = 0, onNext = null;
+    SETUP_STEPS.forEach(function (name, i) {
+      var b = h("button", { type: "button", class: "step", "data-step": String(i), "aria-label": "Step " + (i + 1) + ": " + name },
+        h("span", { class: "n", text: String(i + 1) }), h("span", { class: "label", text: name, "data-peek": name }));
+      b.addEventListener("click", function () { go(i); });
+      stepper.appendChild(h("li", null, b));
+    });
+    function go(i) {
+      cur = Math.max(0, Math.min(SETUP_STEPS.length - 1, i));
+      stepper.querySelectorAll("button.step").forEach(function (b, j) {
+        if (j === cur) b.setAttribute("aria-current", "step"); else b.removeAttribute("aria-current");
+        b.classList.toggle("done", j < cur);
+      });
+      back.disabled = cur === 0;
+      skip.hidden = cur === SETUP_STEPS.length - 1;
+      next.hidden = cur === SETUP_STEPS.length - 1;
+      next.textContent = cur === SETUP_STEPS.length - 2 ? "Finish" : "Save & continue";
+      onNext = null;
+      clear(panel);
+      panel.appendChild(h("h2", { text: (cur + 1) + ". " + SETUP_STEPS[cur], tabindex: "-1", class: "step-heading" }));
+      [stepMachine, stepBasics, stepMap, stepAdmins, stepStyle, stepBackups, stepFinish][cur](panel, function (fn) { onNext = fn; });
+      var heading = panel.querySelector(".step-heading");
+      if (heading) heading.focus({ preventScroll: true });
+      window.scrollTo(0, 0);
+    }
+    back.addEventListener("click", function () { go(cur - 1); });
+    skip.addEventListener("click", function () { go(cur + 1); });
+    next.addEventListener("click", function () {
+      busy(next, Promise.resolve(onNext ? onNext() : null).then(function (ok) { if (ok !== false) go(cur + 1); }, fail));
+    });
+    go(0);
+  }
+  function stepMachine(el, setNext) {
+    var holder = section(el, function () { return api("GET", "/system"); }, function (box, r) {
+      var m = r.machine;
+      var mem = m.mem_total_gb + " GB" + (m.mem_limit_gb ? " (container limit " + m.mem_limit_gb + " GB)" : "");
+      add(box, [
+        h("div", { class: "grid cols-3 specs" },
+          h("div", { class: "stat" }, h("span", { class: "muted small", text: "CPU" }), h("strong", { text: m.cpus + " threads" }), h("span", { class: "muted small", text: m.cpu_model || "", "data-peek": m.cpu_model || null })),
+          h("div", { class: "stat" }, h("span", { class: "muted small", text: "Memory" }), h("strong", { text: mem }), h("span", { class: "muted small", text: (m.mem_available_gb || "?") + " GB free now" })),
+          h("div", { class: "stat" }, h("span", { class: "muted small", text: "Disk" }), h("strong", { text: (m.disk_free_gb === null ? "?" : m.disk_free_gb) + " GB free" }),
+            h("span", { class: "muted small" }, breakable(m.disk_path || "")))),
+        h("p", null, "This machine fits a ", h("strong", { text: r.tier }), " server of about ", h("strong", { text: r.players + " players" }), " (" + m.os + " " + m.arch + ")."),
+        r.warnings.map(function (w) { return h("p", { class: "callout", text: w }); })]);
+      var tbody = h("tbody"), boxes = [];
+      r.recommendations.forEach(function (x) {
+        var cb = h("input", { type: "checkbox", checked: x.value !== x.current, "aria-label": "Apply " + x.key + " = " + x.value });
+        boxes.push([cb, x.key]);
+        tbody.appendChild(h("tr", null, h("td", { "data-label": "Apply" }, cb), h("td", { class: "data", "data-label": "Setting" }, h("code", { text: x.key })),
+          h("td", { "data-label": "Recommended", class: "nowrap" }, h("strong", { text: x.value })), h("td", { "data-label": "Current", class: "nowrap", text: x.current || "(default)" }),
+          h("td", { "data-label": "Why", class: "muted small", text: x.reason })));
+      });
+      add(box, [h("h3", { text: "Recommended settings" }),
+        h("div", { class: "table-wrap" }, h("table", null, h("thead", null, h("tr", null, ["Apply", "Setting", "Recommended", "Current", "Why"].map(function (t) {
+          return h("th", { scope: "col", text: t }); }))), tbody)),
+        h("p", { class: "muted small", text: "Estimates from community experience - the developers publish no official server requirements. Watch real usage and adjust in Settings." })]);
+      setNext(function () {
+        var keys = boxes.filter(function (b) { return b[0].checked; }).map(function (b) { return b[1]; });
+        if (!keys.length) return true;
+        return api("POST", "/recommendations/apply", { keys: keys }).then(function () { toast("Applied " + keys.length + " recommended setting" + (keys.length > 1 ? "s" : "")); });
+      });
+    });
+    return holder;
+  }
+  function stepBasics(el, setNext) {
+    section(el, function () { return api("GET", "/config"); }, function (box, d) {
+      var v = {};
+      d.settings.forEach(function (x) { v[x.key] = x.value; });
+      var name = h("input", { type: "text", id: "setup-name", value: v.SERVER_NAME || "", maxlength: "100", required: true });
+      var pw = h("input", { type: "password", id: "setup-password", value: v.SERVER_PASSWORD || "", autocomplete: "new-password" });
+      var players = h("input", { type: "number", id: "setup-players", min: "1", max: "500", value: v.MAX_PLAYERS || "100", class: "num" });
+      add(box, h("div", { class: "grid cols-2" },
+        h("div", { class: "field" }, h("label", { for: "setup-name", text: "Server name" }), name, h("span", { class: "hint", text: "Shown in the in-game server browser." })),
+        h("div", { class: "field" }, h("label", { for: "setup-password", text: "Join password" }), pw,
+          h("span", { class: "hint", text: v.SERVER_PASSWORD ? "A password is set - leave it to keep it, clear it for a public server." : "Empty = a public server anyone can join." })),
+        h("div", { class: "field" }, h("label", { for: "setup-players", text: "Max players" }), players, h("span", { class: "hint", text: "Step 1 suggests a number that fits this machine." }))));
+      setNext(function () {
+        var n = name.value.trim(), p = parseInt(players.value, 10);
+        if (!n || /"/.test(n)) { name.setAttribute("aria-invalid", "true"); toast("Give the server a name", "Double quotes are not allowed.", "error"); name.focus(); return false; }
+        if (!(p > 0) || String(p) !== players.value.trim()) { players.setAttribute("aria-invalid", "true"); toast("Max players must be a whole number", "", "error"); players.focus(); return false; }
+        var values = { SERVER_NAME: n, MAX_PLAYERS: String(p) };
+        if (pw.value !== v.SERVER_PASSWORD) values.SERVER_PASSWORD = pw.value;
+        return api("PATCH", "/config", { values: values }).then(function () { toast("Saved"); });
+      });
+    });
+  }
+  function stepMap(el, setNext) {
+    section(el, function () { return api("GET", "/maps"); }, function (box, d) {
+      var group = h("div", { class: "grid cols-2", role: "radiogroup", "aria-label": "Map" });
+      d.maps.forEach(function (m) {
+        var r = h("input", { type: "radio", name: "setup-map", value: m.name, checked: m.current });
+        group.appendChild(h("label", { class: "card choice" + (m.current ? " checked" : "") }, h("span", { class: "row" }, r, h("strong", { text: m.name }),
+          h("span", { class: "badge " + (m.status === "current" ? "green" : "amber"), text: m.status })), h("span", { class: "muted small", text: m.description })));
+        r.addEventListener("change", function () { group.querySelectorAll(".choice").forEach(function (x) { x.classList.toggle("checked", x.contains(r) && r.checked); }); });
+      });
+      box.appendChild(group);
+      setNext(function () {
+        var sel = group.querySelector("input:checked");
+        if (!sel || sel.value === d.current) return true;
+        return api("PUT", "/map", { name: sel.value }).then(function () { toast("Map set to " + sel.value, "Its Steam branch was set too - download the game files in the last step."); });
+      });
+    });
+  }
+  function stepAdmins(el) {
+    el.appendChild(h("p", { class: "muted", text: "Add your SteamID64 (17 digits starting with 7656119 - find it on steamid.io) so you can use admin commands in game. You can add more people later on the Players page." }));
+    el.appendChild(idListCard("Admins", "Admins can use admin commands in game.", "/admins"));
+  }
+  function stepStyle(el, setNext) {
+    section(el, function () { return api("GET", "/profiles"); }, function (box, list) {
+      var group = h("div", { class: "grid cols-2", role: "radiogroup", "aria-label": "Play style" });
+      var opt = function (value, title, desc, checked) {
+        var r = h("input", { type: "radio", name: "setup-style", value: value, checked: checked });
+        var l = h("label", { class: "card choice" + (checked ? " checked" : "") }, h("span", { class: "row" }, r, h("strong", { text: title })), h("span", { class: "muted small", text: desc }));
+        r.addEventListener("change", function () { group.querySelectorAll(".choice").forEach(function (x) { x.classList.toggle("checked", x === l); }); });
+        group.appendChild(l);
+      };
+      opt("", "Keep my current settings", "Change nothing now; profiles and presets are on their own page too.", true);
+      list.forEach(function (p) { opt(p.name, p.name, p.description || "", false); });
+      box.appendChild(group);
+      setNext(function () {
+        var sel = group.querySelector("input:checked");
+        if (!sel || !sel.value) return true;
+        return api("POST", "/profiles/" + encodeURIComponent(sel.value) + "/apply").then(function () { toast("Profile " + sel.value + " applied"); });
+      });
+    });
+  }
+  function stepBackups(el) {
+    el.appendChild(h("p", { class: "muted", text: "Backups run on a schedule. The 3-2-1 rule keeps your world safe: 3 copies, on 2 different disks or media, 1 of them off-site. Each part saves on its own." }));
+    var sched = h("section", { class: "card" }), strat = h("section", { class: "card" });
+    var grid = h("div", { class: "stack" }, sched, strat);
+    el.appendChild(grid);
+    section(sched, function () { return api("GET", "/backups"); }, function (box, d, reload) { scheduleEditor(box, d, reload); });
+    section(strat, function () { return api("GET", "/backups/strategy"); }, function (box, d, reload) { strategyEditor(box, d, reload); });
+  }
+  function stepFinish(el) {
+    var out = h("div", { class: "stack" }, loading());
+    el.appendChild(out);
+    api("POST", "/setup/complete").then(function () {
+      clear(out);
+      var install = btn("Download / update game files", { kind: "primary" }), start = btn("Start the server", { icon: "play" });
+      install.addEventListener("click", function () { busy(install, runJob("Update game files", api("POST", "/server/update"))); });
+      start.addEventListener("click", function () { busy(start, runJob("Start", api("POST", "/server/start"))); });
+      add(out, [h("p", { class: "callout green", text: "Your settings are saved and checked. Setup is complete." }),
+        h("ol", { class: "next-steps" },
+          h("li", null, h("strong", { text: "Download the game files" }), " (the first time takes a while - about 20 GB). ", install),
+          h("li", null, h("strong", { text: "Start the server" }), " and find it in the in-game server browser. ", start),
+          h("li", null, h("strong", { text: "Forward the ports" }), " on your router or cloud firewall: the game port (UDP and TCP) and the queue port (TCP)."),
+          h("li", null, h("strong", { text: "Learn the UI" }), " with a short tour. ", btn("Take the tour", { onclick: function () { location.hash = "#/"; setTimeout(function () { window.IsleTour && window.IsleTour.start(); }, 300); } })))]);
+    }, function (e) {
+      clear(out).appendChild(h("div", { class: "callout", role: "alert" }, h("strong", { text: "Almost there - the configuration has errors. " }), e.message || ""));
+      out.appendChild(h("p", { class: "muted small" }, "Fix them in ", h("a", { href: "#/settings", text: "Settings" }), ", then come back to this step."));
+    });
   }
 
   function restoreDialog(s, after) {
@@ -1323,7 +1591,7 @@
     "/": ["Dashboard", pageDashboard], "/settings": ["Settings", pageSettings], "/players": ["Players", pagePlayers],
     "/roster": ["Roster", pageRoster], "/profiles": ["Profiles & presets", pageProfiles], "/plugins": ["Plugins", pagePlugins],
     "/snapshots": ["Snapshots & backups", pageSnapshots], "/logs": ["Logs", pageLogs], "/console": ["RCON console", pageConsole],
-    "/world": ["Map & AI", pageWorld], "/admin": ["Admin", pageAdmin]
+    "/world": ["Map & AI", pageWorld], "/admin": ["Admin", pageAdmin], "/setup": ["Get started", pageSetup]
   };
   function navigate() {
     if (!state.token) return;

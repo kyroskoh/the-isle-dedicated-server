@@ -733,6 +733,7 @@ if ($uiWanted) {
 }
 if ($MigrateHint) { Write-Host ''; Write-Host "  $MigrateHint" -ForegroundColor Yellow }
 Write-Host '  Remember to forward the game and queue ports on your router / cloud firewall.'
+Write-Host "  First time? : & '$Manager' Setup   (machine check, recommended settings, name, map, admins, backups)"
 Write-Host ''
 Write-Host '  Project     : https://github.com/kyroskoh/the-isle-dedicated-server  (docs, issues, updates)'
 Write-Host ('  Made with ' + [char]0x2665 + ' by Kyros Koh (https://github.com/kyroskoh)')

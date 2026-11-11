@@ -46,7 +46,7 @@ DEFAULT_PARTS = ("worlds", "settings", "overrides", "plugins")
 # server.conf keys that describe the machine, not the server; not carried over by default
 MACHINE_KEYS = {"RUNTIME", "DOCKER_BUILD", "DOCKER_IMAGE", "PUID", "PGID", "STEAMCMD_DIR", "SERVER_DIR",
                 "BACKUP_DIR", "INI_OVERRIDES_DIR", "MULTIHOME_IP", "UI_HOST", "UI_PORT", "LOG_DIR",
-                "BACKUP_COPY_DIR", "BACKUP_OFFSITE_COMMAND"}
+                "BACKUP_COPY_DIR", "BACKUP_OFFSITE_COMMAND", "BACKUP_OFFSITE_TARGET"}
 NOT_WORLD = {"Config", "Logs", "Crashes"}
 CONTAINER, VOLUME = "theisle", "theisle-data"
 PS_NAMES = {"status": "Status", "save": "Save", "stop": "Stop"}

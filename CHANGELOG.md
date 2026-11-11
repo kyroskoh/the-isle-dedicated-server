@@ -6,6 +6,40 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-11-11
+
+Planned in [PRD.md](PRD.md) as milestone M18 (BAK-10 to BAK-12, ONB-01 to ONB-04, UI-09).
+
+### Added
+- **Configure your 3-2-1 strategy in the CLI and the web UI:** `backup strategy show|copy|offsite|keep|test`
+  (Windows: `Backup strategy ...`) and a 3-2-1 strategy editor on **Snapshots & backups**.
+  - Off-site targets without writing commands: `dir:` (another disk or a network share), `rclone:<remote>:<path>`
+    (S3, B2, Google Drive, OneDrive, SFTP, ...) and `ssh://[user@]host[:port]/path`. They are validated strictly
+    and run without a shell by `tools/isle_offsite.py`.
+  - Retention per copy: `BACKUP_COPY_RETENTION`, `BACKUP_OFFSITE_RETENTION` (default `BACKUP_RETENTION`); old copies are
+    pruned on the target too.
+  - `backup strategy test` writes and removes a probe file on each target and says why one fails (tool missing,
+    no key-based SSH login, not writable, same disk as the backups).
+  - API: `GET/PUT /api/v1/backups/strategy`, `POST /api/v1/backups/strategy/test`.
+- **Easy first server:** `isle-server setup` (Windows: `Setup`) and a **Get started** page in the web UI walk through
+  a machine check, name and password, map and size, admins, play style, backups and 3-2-1, then check everything.
+  The dashboard offers it until setup is done; both installers end with a hint to run it.
+- **Recommendations from the machine's specs:** `tools/isle_sysinfo.py` reads CPU threads, memory (and a container
+  limit), free disk, OS and architecture and recommends `MAX_PLAYERS`, `AI_DENSITY`, `NET_TICK_RATE`,
+  `BACKUP_RETENTION` and `BACKUP_SCHEDULE`, each with its reason, plus warnings (non-x86_64, too little memory or disk).
+  `recommend [--json | --apply KEY...]`, `GET /api/v1/system`, `POST /api/v1/recommendations/apply`.
+- **Guided tour of the web UI:** "Take the tour" in the sidebar (and on the welcome card) highlights and explains the
+  main areas, with keyboard support, focus handling and a phone layout.
+
+### Changed
+- The 3-2-1 check in the UI points to the new editor instead of server.conf.
+- `BACKUP_OFFSITE_TARGET` and `BACKUP_COPY_DIR` are kept on snapshot restore (machine settings) and are set through the
+  validated strategy endpoint, not the generic settings editor.
+
+### Fixed
+- `backup strategy test` (and any future `backup` sub-command) that failed no longer falls through to taking a backup.
+- Windows: `Recommend --apply` with an unknown key threw a strict-mode error instead of a clear message.
+
 ## [1.12.0] - 2026-11-10
 
 Planned in [PRD.md](PRD.md) as milestone M17 (ROS-05 to ROS-07, MUT-01 to MUT-03, BAK-06 to BAK-09, ADM-01 to ADM-03,

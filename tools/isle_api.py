@@ -49,15 +49,18 @@ import isle_plugins  # noqa: E402
 import isle_logs  # noqa: E402
 import isle_cron  # noqa: E402
 import isle_steam  # noqa: E402
+import isle_offsite  # noqa: E402
+import isle_sysinfo  # noqa: E402
 
-API_VERSION = "1.1.0"
+API_VERSION = "1.2.0"
 MAX_BODY = 64 * 1024
 MASK = "********"
 SECRET_KEYS = {"RCON_PASSWORD", "SERVER_PASSWORD", "EOS_CLIENT_SECRET", "STEAM_BRANCH_PASSWORD", "STEAM_WEB_API_KEY"}
 # never editable through the API: change these with the installer (machine / runtime / paths)
 LOCKED_KEYS = {"RUNTIME", "DOCKER_BUILD", "DOCKER_IMAGE", "PUID", "PGID", "STEAMCMD_DIR", "SERVER_DIR",
                "BACKUP_DIR", "INI_OVERRIDES_DIR", "UI_HOST", "UI_PORT", "LOG_DIR",
-               "BACKUP_COPY_DIR", "BACKUP_OFFSITE_COMMAND"}   # a shell command: never settable remotely
+               "BACKUP_COPY_DIR", "BACKUP_OFFSITE_TARGET",   # set through PUT /backups/strategy (validated)
+               "BACKUP_OFFSITE_COMMAND"}   # a shell command: never settable remotely
 ACCESS_LOG = {"log": None, "lock": threading.Lock()}
 STEAMID_RE = re.compile(r"^7656119\d{10}$")
 CLASS_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
@@ -819,6 +822,104 @@ class Api(object):
         ensure_ok(code, out, status=502)
         return last_json(out)
 
+    # ------------------------------------------------------------ onboarding
+    @route("GET", "/api/v1/system", "getSystem", "Setup",
+           "This machine's CPU, memory and disk, and settings that fit them (estimates; MAX_PLAYERS, AI_DENSITY, NET_TICK_RATE, backups)",
+           responses={"200": {"type": "object"}})
+    def system(self, req):
+        return isle_sysinfo.report(self.env.conf)
+
+    @route("POST", "/api/v1/recommendations/apply", "applyRecommendations", "Setup",
+           "Apply recommended settings (all, or only the keys given); validated like any settings change",
+           body=obj({"keys": STR_LIST}), responses={"200": obj({"changed": STR_LIST, "check": OUTPUT})})
+    def recommendations_apply(self, req):
+        body = req.body if isinstance(req.body, dict) else {}
+        keys = body.get("keys") or []
+        if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+            raise ApiError(422, "Validation failed", "keys: a list of setting names")
+        recs = {r["key"]: r["value"] for r in isle_sysinfo.report(self.env.conf)["recommendations"]}
+        unknown = [k for k in keys if k not in recs]
+        if unknown:
+            raise ApiError(422, "Not a recommended setting", ", ".join(unknown))
+        return self._apply_conf({k: v for k, v in recs.items() if not keys or k in keys})
+
+    def _setup_file(self):
+        return os.path.join(os.path.dirname(self.env.conf), ".setup-done")
+
+    @route("GET", "/api/v1/setup", "getSetup", "Setup", "Whether first-time setup was finished (CLI setup wizard or the UI)",
+           responses={"200": obj({"done": {"type": "boolean"}, "at": {"type": ["string", "null"]}})})
+    def setup_state(self, req):
+        try:
+            with open(self._setup_file(), encoding="utf-8") as handle:
+                return {"done": True, "at": handle.read().strip() or None}
+        except OSError:
+            return {"done": False, "at": None}
+
+    @route("POST", "/api/v1/setup/complete", "completeSetup", "Setup", "Mark first-time setup as finished (after a passing check)",
+           responses={"200": obj({"done": {"type": "boolean"}, "at": {"type": ["string", "null"]}})})
+    def setup_complete(self, req):
+        code, out = self.env.run("check", timeout=60)
+        if code != 0:
+            raise ApiError(422, "Fix the configuration first", out.strip()[-2000:])
+        v = self.env.values()
+        with open(self._setup_file(), "w", encoding="utf-8") as handle:
+            handle.write(time.strftime("%Y-%m-%d %H:%M:%S", isle_logs.now(v)) + "\n")
+        return self.setup_state(req)
+
+    # ------------------------------------------------------ 3-2-1 strategy
+    @route("GET", "/api/v1/backups/strategy", "getBackupStrategy", "Backups",
+           "The 3-2-1 strategy: second copy folder, off-site target (dir:, rclone:, ssh://), retention, installed tools",
+           responses={"200": {"type": "object"}})
+    def backup_strategy(self, req):
+        return isle_offsite.strategy(self.env.conf)
+
+    @route("PUT", "/api/v1/backups/strategy", "setBackupStrategy", "Backups",
+           "Set the 3-2-1 strategy. Empty strings turn a part off. The off-site target is dir:/path, rclone:remote:path or "
+           "ssh://[user@]host[:port]/path - never a shell command (BACKUP_OFFSITE_COMMAND stays server.conf-only)",
+           body=obj({"copy_dir": {"type": "string", "maxLength": 400}, "copy_retention": {"type": "string", "pattern": r"^\d{0,4}$"},
+                     "offsite_target": {"type": "string", "maxLength": 500}, "offsite_retention": {"type": "string", "pattern": r"^\d{0,4}$"},
+                     "retention": {"type": "string", "pattern": r"^\d{1,4}$"}}),
+           responses={"200": obj({"changed": STR_LIST, "check": OUTPUT})})
+    def backup_strategy_set(self, req):
+        body = req.body if isinstance(req.body, dict) else {}
+        allowed = {"copy_dir": "BACKUP_COPY_DIR", "copy_retention": "BACKUP_COPY_RETENTION", "offsite_target": "BACKUP_OFFSITE_TARGET",
+                   "offsite_retention": "BACKUP_OFFSITE_RETENTION", "retention": "BACKUP_RETENTION"}
+        unknown = sorted(set(body) - set(allowed))
+        if unknown or not body:
+            raise ApiError(422, "Validation failed", "use: %s" % ", ".join(sorted(allowed)) if not unknown else "unknown field(s): %s" % ", ".join(unknown))
+        updates = {}
+        for field, key in allowed.items():
+            if field not in body:
+                continue
+            val = body[field]
+            if not isinstance(val, str):
+                raise ApiError(422, "Validation failed", "%s must be a string" % field)
+            val = val.strip()
+            if field.endswith("retention"):
+                if not re.match(r"^\d{0,4}$", val) or (field == "retention" and not val):
+                    raise ApiError(422, "Validation failed", "%s: a whole number (0 = keep all)%s" % (field, "" if field == "retention" else ", or empty for BACKUP_RETENTION"))
+            elif field == "copy_dir" and val:
+                try:
+                    isle_offsite.check_dir(val, "copy_dir")
+                except isle_offsite.TargetError as exc:
+                    raise ApiError(422, "Invalid copy folder", str(exc))
+                backup_dir = (self.env.values().get("BACKUP_DIR") or "").rstrip("/\\")
+                if backup_dir and val.rstrip("/\\") == backup_dir:
+                    raise ApiError(422, "Invalid copy folder", "the second copy must not be BACKUP_DIR itself")
+            elif field == "offsite_target" and val:
+                try:
+                    isle_offsite.parse(val)
+                except isle_offsite.TargetError as exc:
+                    raise ApiError(422, "Invalid off-site target", str(exc))
+            updates[key] = val
+        return self._apply_conf(updates)
+
+    @route("POST", "/api/v1/backups/strategy/test", "testBackupStrategy", "Backups",
+           "Check the second copy folder and the off-site target without sending a backup (writes and removes a probe)",
+           responses={"200": {"type": "object"}})
+    def backup_strategy_test(self, req):
+        return isle_offsite.test(self.env.conf)
+
     @route("PUT", "/api/v1/backups/schedule", "setBackupSchedule", "Backups",
            "Set when backups run: cron syntax (minute hour day month weekday), @daily, ... or off",
            body=obj({"schedule": {"type": "string", "maxLength": 100}}, ["schedule"]), responses={"200": OUTPUT})
@@ -1131,7 +1232,7 @@ def build_spec():
         "externalDocs": {"description": "Project on GitHub (made with love by Kyros Koh)", "url": "https://github.com/kyroskoh/the-isle-dedicated-server"},
         "servers": [{"url": "/"}],
         "security": [{"bearerAuth": []}],
-        "tags": [{"name": t} for t in ("System", "Server", "Jobs", "Admin", "Settings", "Players", "Roster", "World", "Profiles", "Plugins", "Backups", "Snapshots")],
+        "tags": [{"name": t} for t in ("System", "Setup", "Server", "Jobs", "Admin", "Settings", "Players", "Roster", "World", "Profiles", "Plugins", "Backups", "Snapshots")],
         "paths": paths,
         "components": {
             "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},

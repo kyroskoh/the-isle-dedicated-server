@@ -68,7 +68,7 @@ const port = await freePort();
 // fake Steam (tests/fixtures/fake-steam.py): Steam names for SteamID64s without touching the internet
 const steamProc = spawn(PY, [join(REPO, "tests", "fixtures", "fake-steam.py"), "0"], { stdio: ["ignore", "pipe", "ignore"] });
 const steamUrl = await new Promise((res) => steamProc.stdout.once("data", (b) => res("http://127.0.0.1:" + String(b).trim().split(/\s+/)[1])));
-const env = { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.1",
+const env = { ...process.env, ISLE_SYSINFO_FAKE: '{"cpus": 4, "mem_gb": 8, "disk_free_gb": 100, "arch": "x86_64", "cpu_model": "An Extremely Long Processor Model Name With Many Words 16-Core @ 3.40GHz"}', ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.1",
   FAKE_LOG_FILE: logFile };
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
   "--port", String(port), "--snapshot-dir", join(dir, "snapshots")], { env, stdio: ["ignore", "pipe", "pipe"] });
@@ -229,7 +229,7 @@ const settle = async (page) => {
   for (let i = 0; i < 80; i++) { if (await page.evaluate(() => !document.querySelector("#content [role=status]"))) break; await sleep(100); }
   await sleep(150);
 };
-const ROUTES = ["", "settings", "players", "roster", "world", "profiles", "plugins", "snapshots", "logs", "admin", "console"];
+const ROUTES = ["", "setup", "settings", "players", "roster", "world", "profiles", "plugins", "snapshots", "logs", "admin", "console"];
 const WIDTHS = [1440, 1280, 1024, 820, 600, 390, 320];
 try {
   for (const scheme of ["light", "dark"]) {
@@ -284,6 +284,17 @@ try {
           await page.screenshot({ path: join(process.env.OVERFLOW_SHOTS, `${route || "dashboard"}-${width}.png`), fullPage: true, caret: "initial", animations: "allow" });
         }
       }
+      // the guided tour card stays inside the viewport and the page does not overflow while it is open
+      await nav("");
+      await page.evaluate(() => window.IsleTour.start());
+      for (const stepNo of [0, 2, 4, 11]) {
+        await page.evaluate((n) => { while (window.IsleTour.active() && Number((document.querySelector(".tour-count").textContent.match(/\d+/) || [1])[0]) - 1 < n) document.querySelector(".tour-pop .btn.primary").click(); }, stepNo);
+        await sleep(450);
+        const box = await page.evaluate(() => { const r = document.querySelector(".tour-pop").getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: innerWidth, h: innerHeight }; });
+        const off = box.l < 0 || box.t < 0 || box.r > box.w + 1 || box.b > box.h + 1 ? ["tour card outside the viewport: " + JSON.stringify(box)] : [];
+        report(`${scheme} tour step ${stepNo + 1} @${width}`, off.concat(await page.evaluate(audit)));
+      }
+      await page.evaluate(() => window.IsleTour.end(false));
       if (width === 1280 || width === 390) {
         // dialogs and transient UI
         await nav(""); await page.waitForSelector(".list strong"); await settle(page);

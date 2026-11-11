@@ -77,7 +77,7 @@ const steamProc = spawn(PY, [join(REPO, "tests", "fixtures", "fake-steam.py"), "
 const steamUrl = await new Promise((res) => steamProc.stdout.once("data", (b) => res("http://127.0.0.1:" + String(b).trim().split(/\s+/)[1])));
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
   "--port", String(port), "--snapshot-dir", join(dir, "snapshots")],
-  { env: { ...process.env, ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.5" }, stdio: ["ignore", "pipe", "pipe"] });
+  { env: { ...process.env, ISLE_SYSINFO_FAKE: '{"cpus": 4, "mem_gb": 8, "disk_free_gb": 100, "arch": "x86_64"}', ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.5" }, stdio: ["ignore", "pipe", "pipe"] });
 const apiLog = [];
 for (const stream of [api.stdout, api.stderr]) stream.on("data", (b) => { apiLog.push(String(b)); if (apiLog.length > 400) apiLog.shift(); });
 process.on("uncaughtException", (e) => { console.log("API log (last lines):\n" + apiLog.join("").split("\n").slice(-30).join("\n")); throw e; });
@@ -282,6 +282,67 @@ try {
   await ck("unsupported edits explained", async () => /god mode/.test(await page.textContent("#content .callout")));
   await ck("credit and repo link", async () => page.evaluate(() => !!document.querySelector(".credit a[href='https://github.com/kyroskoh']") &&
     document.querySelector("#repo-link").href === "https://github.com/kyroskoh/the-isle-dedicated-server"));
+
+  console.log("## 3-2-1 strategy");
+  await page.click('#nav a[href="#/snapshots"]');
+  await page.waitForSelector("#st-kind");
+  await page.fill("#st-copy", join(dir, "copy2"));
+  await page.selectOption("#st-kind", "dir");
+  await page.fill("#st-dir", join(dir, "nas"));
+  await ck("target preview builds the target", async () => (await page.textContent(".target-preview")) === "dir:" + join(dir, "nas"));
+  await page.selectOption("#st-kind", "ssh");
+  await page.fill("#st-host", "nas.lan"); await page.fill("#st-user", "backup"); await page.fill("#st-spath", "/srv/isle");
+  await ck("ssh fields build ssh://", async () => (await page.textContent(".target-preview")) === "ssh://backup@nas.lan/srv/isle");
+  await page.fill("#st-spath", "/srv/isle;rm");
+  await page.click("button:has-text('Save strategy')");
+  await ck("unsafe target refused by the server", async () => { await page.waitForSelector(".toast.error:has-text('Invalid off-site target')"); return !conf_("BACKUP_OFFSITE_TARGET"); });
+  await page.selectOption("#st-kind", "dir");
+  await page.fill("#st-offkeep", "4");
+  await page.click("button:has-text('Save strategy')");
+  await ck("strategy saved", async () => { await page.waitForSelector(".toast:has-text('3-2-1 strategy saved')");
+    return conf_("BACKUP_COPY_DIR") === join(dir, "copy2") && conf_("BACKUP_OFFSITE_TARGET") === "dir:" + join(dir, "nas") && conf_("BACKUP_OFFSITE_RETENTION") === "4"; });
+  await page.waitForSelector("#backup-strategy button:has-text('Test')");
+  await page.click("#backup-strategy button:has-text('Test')");
+  await ck("test reports each target", async () => { await page.waitForSelector("#backup-strategy .checks li >> nth=1"); return (await page.locator("#backup-strategy .checks .pill.ok").count()) === 2; });
+
+  console.log("## setup wizard");
+  await page.click('#nav a[href="#/"]');
+  await ck("dashboard offers setup until it is done", async () => { await page.waitForSelector("#welcome"); return page.isVisible("#welcome a[href='#/setup']"); });
+  await page.click("#welcome a[href='#/setup']");
+  await ck("machine step shows specs and recommendations", async () => { await page.waitForSelector(".specs .stat");
+    return /8 GB/.test(await page.textContent(".specs")) && (await page.locator(".setup-panel tbody tr").count()) >= 5; });
+  await page.evaluate(() => document.querySelectorAll(".setup-panel tbody input[type=checkbox]").forEach((cb) => { cb.checked = cb.getAttribute("aria-label").indexOf("MAX_PLAYERS") >= 0; }));
+  await page.click(".setup-nav button:has-text('Save & continue')");
+  await ck("recommendation applied", async () => { await page.waitForSelector("#setup-name"); return conf_("MAX_PLAYERS") === "65"; });
+  await page.fill("#setup-name", "Wizard Isle"); await page.fill("#setup-players", "48");
+  await page.click(".setup-nav button:has-text('Save & continue')");
+  await ck("name and size saved", async () => { await page.waitForSelector("input[name='setup-map']"); return conf_("SERVER_NAME") === '"Wizard Isle"' && conf_("MAX_PLAYERS") === "48"; });
+  await ck("stepper marks progress", async () => (await page.getAttribute(".stepper button[data-step='2']", "aria-current")) === "step" && (await page.locator(".stepper .step.done").count()) === 2);
+  for (const want of ["input[aria-label='SteamID64 to add']", "input[name='setup-style']", "#cron-expr"]) {
+    await page.click(".setup-nav button:has-text('Save & continue'), .setup-nav button:has-text('Finish')");
+    await page.waitForSelector(want);
+  }
+  await page.click(".setup-nav button:has-text('Finish')");
+  await ck("finish marks setup done", async () => { await page.waitForSelector(".setup-panel .callout.green"); return true; });
+  await page.click('#nav a[href="#/"]'); await page.waitForSelector(".hero"); await sleep(400);
+  await ck("no setup banner afterwards", async () => !(await page.isVisible("#welcome")));
+
+  console.log("## guided tour");
+  await page.click("#tour-start");
+  await ck("tour opens as a dialog with focus", async () => { await page.waitForSelector(".tour-pop[role=dialog]");
+    await page.waitForFunction(() => document.activeElement && document.activeElement.id === "tour-title", null, { timeout: 3000 }); return true; });
+  await page.keyboard.press("ArrowRight"); await page.keyboard.press("ArrowRight"); await sleep(700);
+  await ck("arrow keys move and the target is highlighted", async () => /Step 3 of/.test(await page.textContent(".tour-count")) && (await page.isVisible(".tour-spot")));
+  await page.keyboard.press("Tab"); await page.keyboard.press("Tab"); await page.keyboard.press("Tab"); await page.keyboard.press("Tab");
+  await ck("focus stays in the tour card", async () => page.evaluate(() => !!document.activeElement.closest(".tour-pop")));
+  await ck("tour card stays on screen", async () => page.evaluate(() => { const r = document.querySelector(".tour-pop").getBoundingClientRect();
+    return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; }));
+  await page.keyboard.press("Escape");
+  await ck("Escape closes it and returns focus", async () => { await sleep(200); return !(await page.$("#tour")) && (await page.evaluate(() => document.activeElement.id)) === "tour-start"; });
+  await page.click("#tour-start");
+  for (let i = 0; i < 12; i++) { await page.click(".tour-pop button:has-text('Next')"); await sleep(260); }
+  await page.click(".tour-pop button:has-text('Done')");
+  await ck("finishing remembers it", async () => !(await page.$("#tour")) && (await page.evaluate(() => window.IsleTour.seen())));
 
   console.log("## date & time preferences");
   await page.click('#nav a[href="#/"]');

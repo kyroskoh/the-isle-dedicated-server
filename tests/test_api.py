@@ -60,7 +60,7 @@ class ApiServer(object):
             handle.write("".join("[2026-11-08 12:00:%02d UTC] INFO line %d\n" % (i % 60, i) for i in range(300)))
         self.steam = subprocess.Popen([sys.executable, FAKE_STEAM, "0"], stdout=subprocess.PIPE, universal_newlines=True)
         steam_url = "http://127.0.0.1:%s" % self.steam.stdout.readline().split()[1]
-        env = dict(os.environ, ISLE_STEAM_COMMUNITY_URL=steam_url, ISLE_STEAM_API_URL=steam_url, ISLE_UI_TOKEN=TOKEN, ISLE_LOG_DIR=self.logs, FAKE_LAUNCHER_LOG=self.log, FAKE_STATE_DIR=self.dir,
+        env = dict(os.environ, ISLE_SYSINFO_FAKE='{"cpus": 4, "mem_gb": 8, "disk_free_gb": 100, "arch": "x86_64"}', ISLE_STEAM_COMMUNITY_URL=steam_url, ISLE_STEAM_API_URL=steam_url, ISLE_UI_TOKEN=TOKEN, ISLE_LOG_DIR=self.logs, FAKE_LAUNCHER_LOG=self.log, FAKE_STATE_DIR=self.dir,
                    FAKE_DELAY="0.4", PYTHONUNBUFFERED="1")
         self.out = open(os.path.join(self.dir, "api.log"), "w")
         self.proc = subprocess.Popen([sys.executable, API, "--conf", self.conf, "--launcher", FAKE, "--port", str(self.port),
@@ -435,6 +435,60 @@ class ApiTest(unittest.TestCase):
         for bad in ("61 * * * *", "* * *", "0 5 * * 8", "@sometimes", "0 5 * * *; rm -rf /", ""):
             self.assertEqual(self.s.call("PUT", "/api/v1/backups/schedule", {"schedule": bad})[0], 422, bad)
         self.s.call("PUT", "/api/v1/backups/schedule", {"schedule": "0 5 * * *"})
+
+    def test_system_and_recommendations(self):
+        r = self.s.call("GET", "/api/v1/system")[1]
+        self.assertEqual((r["machine"]["cpus"], r["machine"]["mem_total_gb"], r["players"], r["tier"]), (4, 8, 65, "medium"))
+        keys = {x["key"]: x for x in r["recommendations"]}
+        self.assertEqual(keys["MAX_PLAYERS"]["value"], "65")
+        self.assertTrue(all(x["reason"] for x in r["recommendations"]))
+        old = self.conf("MAX_PLAYERS")
+        code, out, _ = self.s.call("POST", "/api/v1/recommendations/apply", {"keys": ["MAX_PLAYERS", "NET_TICK_RATE"]})
+        self.assertEqual(code, 200, out)
+        self.assertEqual(sorted(out["changed"]), ["MAX_PLAYERS", "NET_TICK_RATE"])
+        self.assertEqual((self.conf("MAX_PLAYERS"), self.conf("NET_TICK_RATE")), ("65", "30"))
+        for bad in ({"keys": ["RCON_PASSWORD"]}, {"keys": "MAX_PLAYERS"}, {"keys": [1]}):
+            self.assertEqual(self.s.call("POST", "/api/v1/recommendations/apply", bad)[0], 422, bad)
+        self.s.call("PATCH", "/api/v1/config", {"values": {"MAX_PLAYERS": old, "NET_TICK_RATE": ""}})
+
+    def test_setup_state(self):
+        marker = os.path.join(os.path.dirname(self.s.conf), ".setup-done")
+        if os.path.exists(marker):
+            os.remove(marker)
+        self.assertEqual(self.s.call("GET", "/api/v1/setup")[1], {"done": False, "at": None})
+        with open(self.s.conf) as handle:
+            original = handle.read()
+        with open(self.s.conf, "w") as handle:
+            handle.write(re.sub(r"(?m)^MAX_PLAYERS=.*$", "MAX_PLAYERS=lots", original))
+        self.assertEqual(self.s.call("POST", "/api/v1/setup/complete")[0], 422, "a failing check blocks it")
+        self.assertFalse(self.s.call("GET", "/api/v1/setup")[1]["done"])
+        with open(self.s.conf, "w") as handle:
+            handle.write(original)
+        code, body, _ = self.s.call("POST", "/api/v1/setup/complete")
+        self.assertEqual(code, 200, body)
+        self.assertTrue(body["done"] and body["at"])
+        self.assertTrue(self.s.call("GET", "/api/v1/setup")[1]["done"])
+
+    def test_backup_strategy(self):
+        s = self.s.call("GET", "/api/v1/backups/strategy")[1]
+        self.assertEqual((s["copy_dir"], s["offsite_target"]), ("", ""))
+        self.assertIn("rclone", s["tools"])
+        copy = os.path.join(self.s.dir, "copy2")
+        code, out, _ = self.s.call("PUT", "/api/v1/backups/strategy", {"copy_dir": copy, "copy_retention": "3",
+                                                                        "offsite_target": "dir:" + os.path.join(self.s.dir, "nas"), "offsite_retention": ""})
+        self.assertEqual(code, 200, out)
+        self.assertEqual((self.conf("BACKUP_COPY_DIR"), self.conf("BACKUP_COPY_RETENTION")), (copy, "3"))
+        self.assertTrue(self.conf("BACKUP_OFFSITE_TARGET").startswith("dir:"))
+        t = self.s.call("POST", "/api/v1/backups/strategy/test")[1]
+        self.assertTrue(t["ok"], t)
+        self.assertTrue(os.path.isdir(copy), "the test creates the folder")
+        for bad in ({"offsite_target": "rclone copy {file} remote:x"}, {"offsite_target": "ssh://h/p;rm -rf /"}, {"offsite_target": "dir:../x"},
+                    {"copy_dir": "relative"}, {"copy_retention": "lots"}, {"retention": ""}, {"offsite_command": "rm -rf /"}, {}):
+            self.assertEqual(self.s.call("PUT", "/api/v1/backups/strategy", bad)[0], 422, bad)
+        locked = [k for k in self.s.call("GET", "/api/v1/config")[1]["settings"] if k["key"] in ("BACKUP_OFFSITE_TARGET", "BACKUP_OFFSITE_COMMAND")]
+        self.assertTrue(locked and all(not k["editable"] for k in locked), "only the validated strategy endpoint sets these")
+        self.assertEqual(self.s.call("PUT", "/api/v1/backups/strategy", {"copy_dir": "", "offsite_target": ""})[0], 200)
+        self.assertEqual((self.conf("BACKUP_COPY_DIR"), self.conf("BACKUP_OFFSITE_TARGET")), ("", ""))
 
     def test_cron_preview(self):
         code, body, _ = self.s.call("GET", "/api/v1/cron/preview?expr=" + urllib.parse.quote("15 3 * * SUN"))

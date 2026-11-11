@@ -152,6 +152,36 @@ or an ID with no Steam account shows "(name unknown)". A lookup never fails a co
 the last known name is shown. Names are what players call themselves on Steam and can change at any time; the
 SteamID64 is what the server uses.
 
+### First-time setup and recommended settings
+
+`isle-server setup` (Windows: `IsleServer.ps1 Setup`) is a short wizard for a new server. It checks this machine,
+recommends settings that fit it, then asks for the server name, join password, map, max players, your SteamID64 as
+admin, a play-style profile, the backup schedule and the 3-2-1 targets, and finishes with `check`. Press Enter to keep
+a value. `setup --yes` uses the recommendations and defaults without asking. The web UI has the same wizard on its
+**Get started** page.
+
+`isle-server recommend` shows the machine and the recommendations on their own; `recommend --apply [KEY...]` applies
+them (all, or only the keys you name):
+
+```text
+Machine   : Linux x86_64, 8 CPU threads (AMD Ryzen 7 5800X 8-Core Processor)
+Memory    : 16 GB, 13.2 GB available
+Disk      : 240 GB free at /home/theisle
+Fits      : a large server, about 100 players
+
+Setting            Recommended    Current        Why
+MAX_PLAYERS        100            100            About 100 players fit 16 GB of memory and 8 CPU threads ...
+AI_DENSITY         1              1              The machine has room for the default amount of AI.
+NET_TICK_RATE      30             (default)      30 Hz is smooth and affordable with 4+ CPU threads.
+BACKUP_RETENTION   30             10             30 backups of ~180 MB use at most a quarter of the free disk ...
+BACKUP_SCHEDULE    0 */6 * * *    0 5 * * *      Busy servers lose less progress with a backup every 6 hours.
+```
+
+The developers publish no official server requirements, so these are estimates from community experience: about
+2.5 GB of memory for an empty server plus ~60 MB per player, a CPU thread per ~25 players (at most 100 players), and
+~20 GB of disk for the game files. A container memory limit counts, and non-x86_64 machines, less than ~6 GB of
+memory and too little disk get a warning. Watch real usage and adjust.
+
 ### Roster by type, humans and eggs
 
 Each playable class in [`config/classes.txt`](config/classes.txt) has one or more types: `carnivore`, `herbivore`,
@@ -392,10 +422,13 @@ Replace them only if the developers announce new values.
 | `EXTRA_ARGS` | `-log` | Extra command-line arguments for the server |
 | `STOP_TIMEOUT` | `60` | Seconds to wait for a graceful exit before killing |
 | `AUTO_RESTART` | `true` | Restart after a crash (watchdog mode) |
-| `BACKUP_RETENTION` | `10` | Number of backup archives to keep (0 = all). Also applies to `BACKUP_COPY_DIR` |
+| `BACKUP_RETENTION` | `10` | Local backup archives to keep (0 = all). Also the default for the second copy and off-site |
 | `BACKUP_SCHEDULE` | `0 5 * * *` | When the scheduled task backs up: cron syntax, `@daily`/`@hourly`/..., or `off` |
 | `BACKUP_COPY_DIR` | (empty) | Second copy of every backup, ideally on another disk or a network share (3-2-1) |
-| `BACKUP_OFFSITE_COMMAND` | (empty) | Command run after every backup to send it off-site; `{file}` is the archive |
+| `BACKUP_COPY_RETENTION` | (empty) | Copies kept in `BACKUP_COPY_DIR` (empty = `BACKUP_RETENTION`) |
+| `BACKUP_OFFSITE_TARGET` | (empty) | Off-site copy: `dir:<path>`, `rclone:<remote>:<path>` or `ssh://[user@]host[:port]/path` |
+| `BACKUP_OFFSITE_RETENTION` | (empty) | Copies kept off-site (empty = `BACKUP_RETENTION`) |
+| `BACKUP_OFFSITE_COMMAND` | (empty) | Advanced, server.conf only: a command run after every backup; `{file}` is the archive |
 | `SAVE_BEFORE_STOP` | `true` | Send RCON `save` before stopping or backing up |
 
 ### Scheduled backups and the 3-2-1 rule
@@ -421,18 +454,38 @@ isle-server backup schedule show                # the next runs
 isle-server backup status                       # last backup and the 3-2-1 check (--json for scripts)
 ```
 
+### Your 3-2-1 strategy
+
 **3-2-1** means 3 copies of your data, on 2 different media, 1 of them off-site. The live world is one copy and
-`BACKUP_DIR` the second. Set `BACKUP_COPY_DIR` to another disk or a network share for the second medium, and
-`BACKUP_OFFSITE_COMMAND` for the off-site copy, for example:
+`BACKUP_DIR` the second. Add a second copy on another disk (the "2 media") and an off-site copy (the "1 off-site")
+with `backup strategy`, or in the web UI on **Snapshots & backups → 3-2-1 strategy**:
+
+![The 3-2-1 strategy editor](docs/images/ui/backup-strategy.png)
 
 ```bash
-BACKUP_COPY_DIR=/mnt/nas/theisle-backups
-BACKUP_OFFSITE_COMMAND=rclone copy {file} b2:my-bucket/theisle
+isle-server backup strategy                                         # what is set up now
+isle-server backup strategy keep 14                                 # local backups to keep
+isle-server backup strategy copy /mnt/backup-disk/theisle --keep 7  # second copy, on another disk
+isle-server backup strategy offsite rclone:b2:my-bucket/theisle --keep 30
+isle-server backup strategy test                                    # check both (writes and removes a probe file)
+isle-server backup strategy offsite off                             # turn a part off
 ```
 
-The off-site command runs with a one-hour time limit, and a failure only warns. The `offsite-backup` plugin is an
-alternative. `backup status` (and the UI) warn when `BACKUP_COPY_DIR` is on the same disk as `BACKUP_DIR`. Both are
-machine settings and are not editable from the web UI.
+On Windows: `IsleServer.ps1 Backup strategy copy E:\TheIsleBackups`, `Backup strategy offsite dir:\\nas\share\theisle`,
+`Backup strategy test`.
+
+| Off-site target | Example | Needs |
+|---|---|---|
+| A folder: a mounted network share, another machine's share, a synced folder | `dir:/mnt/nas/theisle`, `dir:\\nas\share\theisle` | The share mounted / reachable for the server's user |
+| An [rclone](https://rclone.org) remote: S3, Backblaze B2, Google Drive, OneDrive, SFTP, ... | `rclone:b2:my-bucket/theisle` | rclone installed, and `rclone config` run as the server's user |
+| Another machine over SSH | `ssh://backup@nas.lan:2222/srv/theisle` | The OpenSSH client and key-based login for the server's user |
+
+After every backup the archive is copied to each part, and old copies there are pruned to their "keep" count (only
+files named `theisle-*`). Targets are validated strictly and run without a shell, which is why the web UI may set
+them. `BACKUP_OFFSITE_COMMAND` (server.conf only) still runs any command you like after each backup, and the
+`offsite-backup` plugin is another option. An off-site step has a one-hour limit; a failure only warns, and
+`backup status` shows the result of the last one. `backup status` (and the UI) warn when the second copy or a `dir:`
+target sits on the same disk as `BACKUP_DIR`.
 
 ## Logs and time
 
