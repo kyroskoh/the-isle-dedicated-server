@@ -158,6 +158,31 @@ ck "tick runs when due, once"     "rm -f $T/.backup-tick; out backup schedule se
 ck "off never runs"               "out backup schedule off >/dev/null && rm -f $T/.backup-tick && ! out backup tick | grep -q 'Scheduled backup'"
 sed -i 's|^BACKUP_COPY_DIR=.*|BACKUP_COPY_DIR=|; s|^BACKUP_OFFSITE_COMMAND=.*|BACKUP_OFFSITE_COMMAND=|' "$ISLE_CONF"; out backup schedule set '0 5 * * *' >/dev/null
 
+echo "## 3-2-1 strategy (BAK-10..12)"
+ck "strategy copy + keep"         "out backup strategy copy $T/copy2 --keep 3 >/dev/null && [ \"\$(conf BACKUP_COPY_DIR)\" = $T/copy2 ] && [ \"\$(conf BACKUP_COPY_RETENTION)\" = 3 ]"
+ck "strategy offsite dir"         "out backup strategy offsite dir:$T/nas2 --keep 2 >/dev/null && [ \"\$(conf BACKUP_OFFSITE_TARGET)\" = dir:$T/nas2 ]"
+ck "unsafe targets refused"       "! out backup strategy offsite 'ssh://h/p;rm' >/dev/null && ! out backup strategy offsite 'rclone copy {file} x' >/dev/null && [ \"\$(conf BACKUP_OFFSITE_TARGET)\" = dir:$T/nas2 ]"
+ck "relative copy folder refused" "! out backup strategy copy rel/dir >/dev/null"
+ck "strategy test passes"         "out backup strategy test | grep -q 'Off-site    : OK'"
+if ! command -v rclone >/dev/null 2>&1; then   # an rclone target fails its test while rclone is not installed
+  out backup strategy offsite rclone:none:x >/dev/null
+  ck "a failing test exits 1, no backup" "n=\$(ls $T/bk | wc -l); out backup strategy test | grep -q 'not installed'; ! out backup strategy test >/dev/null && [ \$(ls $T/bk | wc -l) -eq \$n ]"
+fi
+out backup strategy offsite "dir:$T/nas2" >/dev/null
+ck "backup sends off-site + prunes" "for i in 1 2 3; do out backup >/dev/null; sleep 1; done; [ \$(ls $T/nas2 | grep -c theisle-) -eq 2 ] && [ \$(ls $T/copy2 | grep -c theisle-) -eq 3 ]"
+ck "check validates the target"   "sed -i 's|^BACKUP_OFFSITE_TARGET=.*|BACKUP_OFFSITE_TARGET=ftp://x|' $ISLE_CONF && out check | grep -q 'BACKUP_OFFSITE_TARGET'"
+out backup strategy offsite off >/dev/null; out backup strategy copy off >/dev/null
+
+echo "## onboarding (ONB-01..02)"
+export ISLE_SYSINFO_FAKE='{"cpus": 2, "mem_gb": 6, "disk_free_gb": 50, "arch": "x86_64"}'
+ck "recommend shows a table"      "out recommend | grep -q 'MAX_PLAYERS *30'"
+ck "recommend --apply KEY"        "out recommend --apply MAX_PLAYERS NET_TICK_RATE >/dev/null && [ \"\$(conf MAX_PLAYERS)\" = 30 ] && [ \"\$(conf NET_TICK_RATE)\" = 20 ]"
+ck "recommend --apply unknown"    "! out recommend --apply RCON_PASSWORD >/dev/null"
+rm -f "$T/.setup-done"
+ck "setup wizard (answers piped)" "printf 'n\\nWizard Isle\\n-\\n\\n24\\n\\n\\n\\n\\n\\n' | ISLE_SETUP_INTERACTIVE=1 out setup >/dev/null && [ \"\$(conf SERVER_NAME)\" = 'Wizard Isle' ] && [ \"\$(conf MAX_PLAYERS)\" = 24 ] && [ -f $T/.setup-done ]"
+ck "setup --yes applies recommendations" "out recommend --apply MAX_PLAYERS >/dev/null; sed -i 's/^AI_DENSITY=.*/AI_DENSITY=2/' $ISLE_CONF && out setup --yes </dev/null >/dev/null && [ \"\$(conf AI_DENSITY)\" = 0.75 ]"
+unset ISLE_SYSINFO_FAKE
+
 echo "## admin (ADM-01..03)"
 ck "admin usage notes the limits" "out admin | grep -q 'god mode'"
 ck "admin kick needs a SteamID64" "! out admin kick 123 >/dev/null"

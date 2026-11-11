@@ -26,6 +26,7 @@
     Logs           Show a log: the game's own log (default) or Logs launcher|ui|list (add -Follow to tail it)
     Backup         Zip save data and config into BACKUP_DIR (+ second copy and off-site, 3-2-1)
                    Backup schedule [show|set "<cron>"|off], Backup status [--json], Backup tick (per-minute task)
+                   Backup strategy [show|copy <folder>|offsite <target>|keep <N>|test]  (configure 3-2-1)
     Restore        Restore a backup (-Path <.zip or .tar.gz>; both work in both runtimes)
     Rcon           Send an RCON command (-RconArgs 'announce','Hello')
     Save           Ask the server to save via RCON
@@ -37,6 +38,8 @@
     Whitelist      list|add|remove <SteamID64...>|on|off      (live via RCON when running)
                    lists and adds show Steam names (cached; list --refresh looks again)
     Steam          names [--refresh] <SteamID64...>           (resolve SteamID64s to Steam names)
+    Setup          first-time setup wizard (machine check, name, map, admins, play style, backups); Setup --yes
+    Recommend      settings that fit this machine's CPU, memory and disk; Recommend --apply [KEY...]
     Classes        list|known|set|add|remove <Class...>|reset|preset [roster]
                    types | select|add-type|remove-type <type...> | humans [on|off]
     Mutations      list | enable <Name> [value] | disable <Name...> | reset
@@ -86,7 +89,7 @@ param(
     [ValidateSet('Install', 'Update', 'Validate', 'Check', 'Configure', 'Start', 'Stop', 'Restart', 'Status', 'Run',
                  'Logs', 'Backup', 'Restore', 'Rcon', 'Save', 'Firewall', 'RemoveFirewall',
                  'InstallService', 'RemoveService', 'Info', 'Version', 'Help',
-                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot', 'UI', 'UiToken', 'AI', 'Maps', 'Mutations', 'Admin', 'Steam')]
+                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot', 'UI', 'UiToken', 'AI', 'Maps', 'Mutations', 'Admin', 'Steam', 'Recommend', 'Setup')]
     [string]$Command = 'Help',
 
     [string]$ConfigPath,
@@ -278,6 +281,14 @@ function Test-ServerConfig {
     if (Get-Python) {
         $chk = Invoke-Cron @('check', (C 'BACKUP_SCHEDULE'))
         if ($chk.Code -ne 0) { $errors.Add("BACKUP_SCHEDULE: $($chk.Out)") }
+        if (C 'BACKUP_OFFSITE_TARGET') {
+            $chk = Invoke-Offsite @('parse', (C 'BACKUP_OFFSITE_TARGET'))
+            if ($chk.Code -ne 0) { $errors.Add("BACKUP_OFFSITE_TARGET: $($chk.Out.Trim())") }
+        }
+    }
+    if ((C 'BACKUP_COPY_DIR') -and -not [IO.Path]::IsPathRooted((C 'BACKUP_COPY_DIR'))) { $errors.Add("BACKUP_COPY_DIR='$(C 'BACKUP_COPY_DIR')' must be an absolute path") }
+    foreach ($k in 'BACKUP_COPY_RETENTION', 'BACKUP_OFFSITE_RETENTION') {
+        if ((C $k) -and (C $k) -notmatch '^\d+$') { $errors.Add("$k='$(C $k)' must be a whole number (0 = keep all, empty = BACKUP_RETENTION)") }
     }
     $mapName = C 'MAP_NAME'
     if ($mapName -and (Test-Path (Join-Path $RepoDir 'config\maps.txt')) -and -not (Get-MapEntry $mapName)) {
@@ -739,6 +750,106 @@ function Invoke-Cron([string[]]$cronArgs) {
         return @{ Code = $LASTEXITCODE; Out = (@($out) -join "`n") }
     } finally { $ErrorActionPreference = $prev }
 }
+# ------------------------------------------------------------- onboarding --
+function Invoke-Sysinfo([string[]]$sysArgs) {   # tools/isle_sysinfo.py -> @{ Code; Out }
+    $py = Get-Python
+    if (-not $py) { throw 'Python 3 is required for recommendations and setup (winget install Python.Python.3.12)' }
+    $a = @(); if ($py[1]) { $a += $py[1] }
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $py[0] @($a + @((Join-Path $RepoDir 'tools\isle_sysinfo.py'), '--conf', $ConfigPath) + $sysArgs) 2>&1 | ForEach-Object { "$_" }
+        return @{ Code = $LASTEXITCODE; Out = (@($out) -join "`n") }
+    } finally { $ErrorActionPreference = $prev }
+}
+function Get-Recommendations([string[]]$keys) {
+    $r = Invoke-Sysinfo @('--json')
+    if ($r.Code -ne 0) { throw "Could not read this machine's specs: $($r.Out)" }
+    return @(($r.Out | ConvertFrom-Json).recommendations | Where-Object { -not $keys -or $keys.Count -eq 0 -or $keys -contains $_.key })
+}
+function Invoke-RecommendCommand {
+    $first = ''; if ($Items -and $Items.Count) { $first = $Items[0] }
+    switch ($first) {
+        '--json' { Write-Host (Invoke-Sysinfo @('--json')).Out }
+        '--apply' {
+            $keys = @($Items | Select-Object -Skip 1)
+            $recs = @(Get-Recommendations $keys)
+            if ($recs.Count -eq 0) { throw 'Nothing to apply (unknown key?) - see: IsleServer.ps1 Recommend' }
+            foreach ($x in $recs) { Set-ConfigValue $x.key ([string]$x.value); Write-Ok "$($x.key)=$($x.value)" }
+            if (-not (Test-ServerConfig)) { Write-Warn 'Check the configuration: IsleServer.ps1 Check' }
+        }
+        '' { Write-Host (Invoke-Sysinfo @()).Out; Write-Host "`nApply them with: IsleServer.ps1 Recommend --apply [KEY...]" }
+        default { throw 'Usage: IsleServer.ps1 Recommend [--json | --apply [KEY...]]' }
+    }
+}
+function Read-Answer([string]$question, [string]$default) {
+    if ($script:SetupYes) { return $default }
+    $suffix = ''; if ($default) { $suffix = " [$default]" }
+    if ([Console]::IsInputRedirected) { Write-Host "  $question$($suffix): " -NoNewline; $ans = [Console]::In.ReadLine() }
+    else { $ans = Read-Host "  $question$suffix" }
+    if ([string]::IsNullOrEmpty($ans)) { return $default }
+    return $ans
+}
+function Invoke-SetupCommand {   # first-time setup wizard; Setup --yes uses the recommendations and defaults
+    $script:SetupYes = ($Items -contains '--yes') -or ($Items -contains '-y')
+    if (-not $script:SetupYes -and [Console]::IsInputRedirected -and -not $env:ISLE_SETUP_INTERACTIVE) { $script:SetupYes = $true }
+    $n = 7
+    $mode = 'press Enter to keep the value in [brackets]'; if ($script:SetupYes) { $mode = 'using recommendations and defaults' }
+    Write-Host "`nThe Isle server setup - $mode" -ForegroundColor Green
+    Initialize-RconPassword   # first: later steps (profiles) validate the whole configuration
+    Write-Host "`n[1/$n] Your machine"
+    (Invoke-Sysinfo @()).Out -split "`n" | ForEach-Object { Write-Host "  $_" }
+    if ((Read-Answer 'Use these recommended settings? (Y/n)' '') -notmatch '^[nN]') {
+        foreach ($x in (Get-Recommendations @())) { Set-ConfigValue $x.key ([string]$x.value) }
+        Write-Ok 'Recommended settings applied'
+    }
+    Write-Host "`n[2/$n] Name and password"
+    $v = Read-Answer 'Server name (shown in the server browser)' (C 'SERVER_NAME')
+    if ($v -and $v -notmatch '"') { Set-ConfigValue 'SERVER_NAME' $v } else { Write-Warn 'Kept the old name (no double quotes allowed)' }
+    $v = Read-Answer "Join password (empty = public server; '-' keeps the current one)" '-'
+    if ($v -ne '-') { Set-ConfigValue 'SERVER_PASSWORD' $v }
+    Write-Host "`n[3/$n] Map and size"
+    Write-Host ('  Maps: ' + ((Get-MapEntries | ForEach-Object Name) -join ' '))
+    $map = Read-Answer 'Map' (C 'MAP_NAME' 'Gateway')
+    if ($map -ne (C 'MAP_NAME')) {
+        try { $script:Items = @('set', $map); Invoke-MapsCommand } catch { Write-Warn "Kept map $(C 'MAP_NAME') ($_)" }
+    }
+    $v = Read-Answer 'Max players' (C 'MAX_PLAYERS' '100')
+    if ($v -match '^\d+$' -and [int]$v -gt 0) { Set-ConfigValue 'MAX_PLAYERS' $v } else { Write-Warn "Kept MAX_PLAYERS=$(C 'MAX_PLAYERS')" }
+    Write-Host "`n[4/$n] Admins"
+    $v = Read-Answer 'Your SteamID64 for in-game admin (empty = skip; steamid.io finds it)' ''
+    if ($v) {
+        try { $script:Items = @('add') + @($v -split '[\s,]+' | Where-Object { $_ }); Invoke-ListCommand 'Admins' }
+        catch { Write-Warn "Not added ($_) - add admins later with: IsleServer.ps1 Admins add <SteamID64>" }
+    }
+    Write-Host "`n[5/$n] Play style"
+    $script:Items = @('list'); Invoke-OverlayCommand 'Profile'
+    $v = Read-Answer 'Profile to apply (empty = keep the current settings)' ''
+    if ($v) { try { $script:Items = @('apply', $v); Invoke-OverlayCommand 'Profile'; Import-ServerConfig } catch { Write-Warn "Profile not applied ($_)" } }
+    Write-Host "`n[6/$n] Backups (3-2-1)"
+    $v = Read-Answer 'Backup schedule (cron, @daily or off)' (C 'BACKUP_SCHEDULE')
+    if ((Invoke-Cron @('check', $v)).Code -eq 0) { Set-ConfigValue 'BACKUP_SCHEDULE' $v } else { Write-Warn "Not a valid schedule - kept $(C 'BACKUP_SCHEDULE')" }
+    $v = Read-Answer 'Second copy on another disk (absolute folder, empty = skip)' (C 'BACKUP_COPY_DIR')
+    if (-not $v -or [IO.Path]::IsPathRooted($v)) { Set-ConfigValue 'BACKUP_COPY_DIR' $v } else { Write-Warn 'Must be an absolute folder - skipped' }
+    $v = Read-Answer 'Off-site target (dir:D:\path, rclone:remote:path, ssh://user@host/path; empty = skip)' (C 'BACKUP_OFFSITE_TARGET')
+    if (-not $v -or (Invoke-Offsite @('parse', $v)).Code -eq 0) { Set-ConfigValue 'BACKUP_OFFSITE_TARGET' $v } else { Write-Warn 'Skipped the off-site target' }
+    Write-Host "`n[7/$n] Check"
+    if (Test-ServerConfig) {
+        Set-Content -Path (Get-StateFile 'setup-done') -Value (Get-Now).ToString('yyyy-MM-dd HH:mm:ss', $Invariant)
+        Write-Ok "Setup complete - settings saved in $ConfigPath"
+        Write-Host "`nNext steps:`n  IsleServer.ps1 Install        download the game server (first time, ~20 GB)`n  IsleServer.ps1 Start          start it"
+        Write-Host "  windows\UI.bat                the web UI (it has a guided tour)`n  IsleServer.ps1 Backup strategy test   check your backup targets"
+    } else { Write-Warn "Fix the errors above (edit $ConfigPath or run IsleServer.ps1 Setup again)"; exit 1 }
+}
+function Invoke-Offsite([string[]]$offArgs) {   # tools/isle_offsite.py (3-2-1 targets) -> @{ Code; Out }
+    $py = Get-Python
+    if (-not $py) { throw 'Python 3 is required for off-site targets (winget install Python.Python.3.12)' }
+    $a = @(); if ($py[1]) { $a += $py[1] }
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $py[0] @($a + @((Join-Path $RepoDir 'tools\isle_offsite.py'), '--conf', $ConfigPath) + $offArgs) 2>&1 | ForEach-Object { "$_" }
+        return @{ Code = $LASTEXITCODE; Out = (@($out) -join "`n") }
+    } finally { $ErrorActionPreference = $prev }
+}
 function Invoke-Backup321([string]$file) {
     $copy = C 'BACKUP_COPY_DIR'
     if ($copy) {
@@ -749,7 +860,7 @@ function Invoke-Backup321([string]$file) {
             if ([IO.Path]::GetPathRoot([IO.Path]::GetFullPath($copy)) -eq [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($file))) {
                 Write-Warn "BACKUP_COPY_DIR is on the same drive as the backups - use another disk for the '2 media' of 3-2-1"
             }
-            $keep = [int](C 'BACKUP_RETENTION' '10')
+            $keep = [int](C 'BACKUP_COPY_RETENTION' (C 'BACKUP_RETENTION' '10'))
             if ($keep -gt 0) {
                 Get-ChildItem -Path $copy -Filter 'theisle-*' -File | Sort-Object LastWriteTime -Descending | Select-Object -Skip $keep |
                     ForEach-Object { Remove-Item $_.FullName -Force }
@@ -768,9 +879,15 @@ function Invoke-Backup321([string]$file) {
         Set-Content -Path (Get-StateFile 'backup-offsite') -Value ('{0} {1} {2} {3}' -f (Get-Now).ToString('yyyy-MM-dd HH:mm:ss', $Invariant), (Get-ZoneLabel), $rc, (Split-Path -Leaf $file))
         if ($rc -eq 0) { Write-Ok 'Off-site copy done' } else { Write-Warn "Off-site copy failed (exit $rc) - the local backups are fine" }
     }
+    if (C 'BACKUP_OFFSITE_TARGET') {   # dir: / rclone: / ssh:// - no shell involved (tools\isle_offsite.py)
+        if (-not (Get-Python)) { Write-Warn 'Python 3 is required for BACKUP_OFFSITE_TARGET - off-site copy skipped'; return }
+        Write-Step "Off-site copy to $(C 'BACKUP_OFFSITE_TARGET')"
+        $r = Invoke-Offsite @('send', $file)
+        if ($r.Code -eq 0) { Write-Ok $r.Out.Trim() } else { Write-Warn "$($r.Out.Trim()) - the local backups are fine" }
+    }
 }
 function Invoke-DockerBackup321 {
-    if (-not ((C 'BACKUP_COPY_DIR') + (C 'BACKUP_OFFSITE_COMMAND'))) { return }
+    if (-not ((C 'BACKUP_COPY_DIR') + (C 'BACKUP_OFFSITE_COMMAND') + (C 'BACKUP_OFFSITE_TARGET'))) { return }
     $name = (Invoke-Dc @('run', '--rm', '--entrypoint', 'sh', 'theisle', '-c', 'ls -t /data/backups/theisle-*.tar.gz 2>/dev/null | head -n1') 2>$null | Select-Object -Last 1)
     if (-not "$name".Trim()) { Write-Warn 'No backup found in the volume for the second copy / off-site step'; return }
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('theisle-321-' + [guid]::NewGuid())
@@ -804,6 +921,58 @@ function Invoke-BackupTool {   # Backup schedule|status|tick
                 default { throw 'Usage: IsleServer.ps1 Backup schedule [show|set "<cron>"|off]' }
             }
         }
+        'strategy' {
+            $usage = @'
+Usage: IsleServer.ps1 Backup strategy [show [--json]]
+       Backup strategy copy <absolute folder>|off [--keep N]      second copy, ideally another disk (the '2 media')
+       Backup strategy offsite <target>|off [--keep N]            off-site copy (the '1 off-site'):
+            dir:D:\Backups | dir:\\nas\share\theisle | rclone:<remote>:<path> | ssh://user@host[:port]/path
+       Backup strategy keep <N>                                    local backups to keep (BACKUP_RETENTION, 0 = all)
+       Backup strategy test                                        check both targets (writes and removes a probe)
+'@
+            $what = 'show'; if ($rest.Count) { $what = $rest[0].ToLowerInvariant() }
+            $val = ''; if ($rest.Count -gt 1) { $val = $rest[1] }
+            $keep = ''; $ki = [array]::IndexOf([string[]]$rest, '--keep')
+            if ($ki -ge 0) { if ($ki + 1 -ge $rest.Count -or $rest[$ki + 1] -notmatch '^\d+$') { throw '--keep needs a whole number (0 = keep all)' }; $keep = $rest[$ki + 1] }
+            switch ($what) {
+                'show' {
+                    if ($rest -contains '--json') { Write-Host (Invoke-Offsite @('strategy', '--json')).Out; return }
+                    $ret = C 'BACKUP_RETENTION' '10'
+                    Write-Host ("Local     : {0} (keep {1})" -f $BackupDir, $ret)
+                    if (C 'BACKUP_COPY_DIR') { Write-Host ("Copy 2    : {0} (keep {1})" -f (C 'BACKUP_COPY_DIR'), (C 'BACKUP_COPY_RETENTION' $ret)) }
+                    else { Write-Host 'Copy 2    : off  - Backup strategy copy E:\TheIsleBackups' }
+                    if (C 'BACKUP_OFFSITE_TARGET') { Write-Host ("Off-site  : {0} (keep {1})" -f (C 'BACKUP_OFFSITE_TARGET'), (C 'BACKUP_OFFSITE_RETENTION' $ret)) }
+                    else { Write-Host 'Off-site  : off  - Backup strategy offsite rclone:b2:bucket/theisle' }
+                    if (C 'BACKUP_OFFSITE_COMMAND') { Write-Host 'Command   : BACKUP_OFFSITE_COMMAND is also set (runs after every backup)' }
+                    Write-Host ("Schedule  : {0}" -f (C 'BACKUP_SCHEDULE'))
+                    Write-Host "`nCheck it with: IsleServer.ps1 Backup strategy test   (status: IsleServer.ps1 Backup status)"
+                }
+                'copy' {
+                    if (-not $val) { throw $usage }
+                    if ($val -eq 'off') { Set-ConfigValue 'BACKUP_COPY_DIR' ''; Write-Ok 'Second copy turned off'; return }
+                    if (-not [IO.Path]::IsPathRooted($val)) { throw 'The copy folder must be an absolute path, e.g. E:\TheIsleBackups' }
+                    if ([IO.Path]::GetFullPath($val).TrimEnd('\', '/') -eq [IO.Path]::GetFullPath($BackupDir).TrimEnd('\', '/')) { throw 'The copy folder must not be BACKUP_DIR itself' }
+                    Set-ConfigValue 'BACKUP_COPY_DIR' $val; if ($keep) { Set-ConfigValue 'BACKUP_COPY_RETENTION' $keep }
+                    Write-Ok ("Second copy: {0}{1}" -f $val, $(if ($keep) { " (keep $keep)" } else { '' }))
+                    Write-Step 'Check it with: IsleServer.ps1 Backup strategy test'
+                }
+                'offsite' {
+                    if (-not $val) { throw $usage }
+                    if ($val -eq 'off') { Set-ConfigValue 'BACKUP_OFFSITE_TARGET' ''; Write-Ok 'Off-site target turned off'; return }
+                    $chk = Invoke-Offsite @('parse', $val)
+                    if ($chk.Code -ne 0) { throw "Not a valid off-site target: $($chk.Out.Trim())" }
+                    Set-ConfigValue 'BACKUP_OFFSITE_TARGET' $val; if ($keep) { Set-ConfigValue 'BACKUP_OFFSITE_RETENTION' $keep }
+                    Write-Ok ("Off-site: {0}{1}" -f $val, $(if ($keep) { " (keep $keep)" } else { '' }))
+                    Write-Step 'Check it with: IsleServer.ps1 Backup strategy test'
+                }
+                'keep' {
+                    if ($val -notmatch '^\d+$') { throw 'Usage: IsleServer.ps1 Backup strategy keep <N>   (0 = keep all)' }
+                    Set-ConfigValue 'BACKUP_RETENTION' $val; Write-Ok "Keeping $val local backup(s)"
+                }
+                'test' { $r = Invoke-Offsite @('test'); Write-Host $r.Out; if ($r.Code -ne 0) { exit 1 } }
+                default { Write-Host $usage; if ($what -notin 'help', '-h', '--help') { exit 1 } }
+            }
+        }
         'tick' {
             $f = Get-StateFile 'backup-tick'
             $a = @('due', (C 'BACKUP_SCHEDULE'))
@@ -822,7 +991,8 @@ function Invoke-BackupTool {   # Backup schedule|status|tick
                 $nCopy = @(Get-ChildItem -Path $copy -Filter 'theisle-*' -File).Count
                 $other = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($copy)) -ne [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($dir))
             }
-            $off = @(); if (C 'BACKUP_OFFSITE_COMMAND') { $off += 'command' }
+            $off = @(); if (C 'BACKUP_OFFSITE_TARGET') { $off += (C 'BACKUP_OFFSITE_TARGET') }
+            if (C 'BACKUP_OFFSITE_COMMAND') { $off += 'command' }
             $en = Join-Path (Split-Path -Parent $ConfigPath) 'plugins\enabled.txt'
             if ((Test-Path $en) -and ((Get-Content $en) -contains 'offsite-backup')) { $off += 'offsite-backup plugin' }
             $offLast = ''; if (Test-Path (Get-StateFile 'backup-offsite')) { $offLast = (Get-Content (Get-StateFile 'backup-offsite') -Raw).Trim() }
@@ -844,7 +1014,7 @@ function Invoke-BackupTool {   # Backup schedule|status|tick
             Write-Host ("Last     : {0}" -f $last)
             Write-Host ("Local    : {0} backups in {1}" -f $local.Count, $dir)
             if ($copy) { $where = 'SAME drive'; if ($other) { $where = 'another drive' }; Write-Host ("Copy 2   : {0} in {1} ({2})" -f $nCopy, $copy, $where) }
-            $offText = 'not configured (BACKUP_OFFSITE_COMMAND or the offsite-backup plugin)'; if ($off.Count) { $offText = ($off -join '+') }
+            $offText = 'not configured (Backup strategy offsite <target>)'; if ($off.Count) { $offText = ($off -join '+') }
             if ($offLast) { $offText += " - last: $offLast" }
             Write-Host "Off-site : $offText"
             Write-Host ("3-2-1    : {0} copies, {1} media, off-site {2}" -f $copies, $media, [bool]$off.Count)
@@ -1731,6 +1901,8 @@ function Invoke-ConfigTool([string]$cmd) {
         'Maps' { Invoke-MapsCommand; return $true }
         'Mutations' { Invoke-MutationsCommand; return $true }
         'Admin' { Invoke-AdminCommand; return $true }
+        'Recommend' { Invoke-RecommendCommand; return $true }
+        'Setup' { Invoke-SetupCommand; return $true }
         'Steam' {
             $rest = @($Items | Select-Object -Skip 1)
             if (-not $Items -or $Items[0] -ne 'names' -or -not @($rest | Where-Object { $_ -ne '--refresh' }).Count) { throw 'Usage: IsleServer.ps1 Steam names [--refresh] <SteamID64...>' }
@@ -1738,7 +1910,7 @@ function Invoke-ConfigTool([string]$cmd) {
             Show-SteamIds $ids '' -Refresh:($rest -contains '--refresh'); return $true
         }
         'Backup' {
-            if ($Items -and $Items.Count -and @('schedule', 'status', 'tick') -contains $Items[0].ToLowerInvariant()) { Invoke-BackupTool; return $true }
+            if ($Items -and $Items.Count -and @('schedule', 'status', 'strategy', 'tick') -contains $Items[0].ToLowerInvariant()) { Invoke-BackupTool; return $true }
             return $false
         }
         'AI' { Invoke-AICommand; return $true }

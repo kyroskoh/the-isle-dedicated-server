@@ -24,6 +24,7 @@
 #    backup       Archive save data / config to BACKUP_DIR (+ second copy and off-site, 3-2-1)
 #    backup schedule [show|set "<cron>"|off]   when the scheduled task backs up
 #    backup status [--json]                     schedule, last backup and the 3-2-1 check
+#    backup strategy [show|copy <dir>|offsite <target>|keep <N>|test]   configure the 3-2-1 strategy
 #    backup tick  run by the per-minute timer: backs up when BACKUP_SCHEDULE is due
 #    restore <f>  Restore a backup archive (server must be stopped)
 #    rcon <cmd>   Send an RCON command (see tools/isle_rcon.py)
@@ -56,6 +57,8 @@
 #    ui [--host H] [--port P] [--open] [--cert F --key F]
 #                 Web UI + REST API (OpenAPI docs at /docs); see UI.md
 #    ui-token [--rotate]  Show (or replace) the web UI access token
+#    setup [--yes]    first-time setup wizard (machine check, name, map, admins, play style, backups)
+#    recommend [--json | --apply [KEY...]]   settings that fit this machine's CPU, memory and disk
 #    info         Print resolved paths and settings
 #    version      Print the script version
 #    help         This text
@@ -244,7 +247,16 @@ check_config() {
   done
   if command -v python3 >/dev/null 2>&1; then
     v="$(python3 "$REPO_DIR/tools/isle_cron.py" check "$(cfg BACKUP_SCHEDULE)" 2>&1 >/dev/null)" || errors+=("BACKUP_SCHEDULE: $v")
+    if [[ -n "$(cfg BACKUP_OFFSITE_TARGET)" ]]; then
+      v="$(python3 "$REPO_DIR/tools/isle_offsite.py" parse "$(cfg BACKUP_OFFSITE_TARGET)" 2>&1 >/dev/null)" || errors+=("BACKUP_OFFSITE_TARGET: $v")
+    fi
   fi
+  v="$(cfg BACKUP_COPY_DIR)"
+  if [[ -n "$v" && "$v" != /* ]]; then errors+=("BACKUP_COPY_DIR='$v' must be an absolute path"); fi
+  for k in BACKUP_COPY_RETENTION BACKUP_OFFSITE_RETENTION; do
+    v="$(cfg "$k")"
+    if [[ -n "$v" ]] && ! [[ "$v" =~ ^[0-9]+$ ]]; then errors+=("$k='$v' must be a whole number (0 = keep all, empty = BACKUP_RETENTION)"); fi
+  done
   if [[ -n "$(cfg ENABLED_MUTATIONS)" ]]; then
     local _m
     IFS=';' read -ra _m <<< "$(cfg ENABLED_MUTATIONS)"
@@ -326,6 +338,99 @@ ensure_rcon_password() {
   if is_true "$(cfg RCON_ENABLED)" && [[ -z "$(cfg RCON_PASSWORD)" ]]; then
     set_conf RCON_PASSWORD "$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-24)"
     ok "Generated a random RCON password (saved in $ISLE_CONF)"
+  fi
+}
+
+# ------------------------------------------------- onboarding (PRD ONB-01..05)
+conf_set() { set_conf "$1" "$2"; CFG[$1]="$2"; }   # write and keep the in-memory value current
+recommend_pairs() {  # KEY... -> "KEY<TAB>VALUE" for the recommended settings (all, or only the keys given)
+  python3 "$REPO_DIR/tools/isle_sysinfo.py" --conf "$ISLE_CONF" --json | python3 -c '
+import json, sys
+want = set(sys.argv[1:])
+for r in json.load(sys.stdin)["recommendations"]:
+    if not want or r["key"] in want:
+        print("%s\t%s" % (r["key"], r["value"]))' "$@"
+}
+cmd_recommend() {  # [--json] | [--apply [KEY...]]
+  command -v python3 >/dev/null 2>&1 || die "python3 is required for recommendations"
+  case "${1:-}" in
+    --json) python3 "$REPO_DIR/tools/isle_sysinfo.py" --conf "$ISLE_CONF" --json ;;
+    --apply)
+      shift
+      local k v n=0
+      while IFS=$'\t' read -r k v; do
+        [[ -n "$k" ]] || continue
+        conf_set "$k" "$v"; n=$((n + 1)); ok "$k=$v"
+      done < <(recommend_pairs "$@")
+      (( n )) || die "Nothing to apply (unknown key?) - see: $0 recommend"
+      check_config >/dev/null || warn "Check the configuration: $0 check" ;;
+    "") python3 "$REPO_DIR/tools/isle_sysinfo.py" --conf "$ISLE_CONF"
+        printf '\nApply them with: %s recommend --apply [KEY...]\n' "$0" ;;
+    *) die "Usage: $0 recommend [--json | --apply [KEY...]]" ;;
+  esac
+}
+SETUP_YES=0
+ask() {  # QUESTION DEFAULT -> the answer (the default when not interactive)
+  local ans=""
+  if (( SETUP_YES )); then printf '%s' "$2"; return; fi
+  read -r -p "  $1${2:+ [$2]}: " ans || true
+  printf '%s' "${ans:-$2}"
+}
+ask_yes() {  # QUESTION -> 0 for yes (default yes)
+  local a; a="$(ask "$1 (Y/n)" "")"; [[ ! "${a,,}" =~ ^n ]]
+}
+cmd_setup() {  # first-time setup wizard: [--yes] uses the recommendations and defaults without asking
+  local v map i names=() ids=() n_step=7
+  [[ "${1:-}" == --yes || "${1:-}" == -y ]] && SETUP_YES=1
+  [[ -t 0 || -n "${ISLE_SETUP_INTERACTIVE:-}" ]] || SETUP_YES=1   # tests answer through a pipe
+  command -v python3 >/dev/null 2>&1 || die "python3 is required for the setup wizard"
+  printf '\n%sThe Isle server setup%s - %s\n' "$C_GRN" "$C_RST" "$( (( SETUP_YES )) && echo 'using recommendations and defaults' || echo 'press Enter to keep the value in [brackets]')"
+  ensure_rcon_password   # first: later steps (profiles) validate the whole configuration
+  printf '\n[1/%d] Your machine\n' "$n_step"
+  python3 "$REPO_DIR/tools/isle_sysinfo.py" --conf "$ISLE_CONF" | sed 's/^/  /'
+  if ask_yes "Use these recommended settings?"; then
+    while IFS=$'\t' read -r i v; do [[ -n "$i" ]] && conf_set "$i" "$v"; done < <(recommend_pairs)
+    ok "Recommended settings applied"
+  fi
+  printf '\n[2/%d] Name and password\n' "$n_step"
+  v="$(ask "Server name (shown in the server browser)" "$(cfg SERVER_NAME)")"
+  if [[ "$v" != *'"'* && -n "$v" ]]; then conf_set SERVER_NAME "$v"; else warn "Kept the old name (no double quotes allowed)"; fi
+  v="$(ask "Join password (empty = public server; '-' keeps the current one)" "-")"
+  [[ "$v" == "-" ]] || conf_set SERVER_PASSWORD "$v"
+  printf '\n[3/%d] Map and size\n' "$n_step"
+  mapfile -t names < <(map_names)
+  (( ${#names[@]} )) && printf '  Maps: %s\n' "${names[*]}"
+  map="$(ask "Map" "$(cfg MAP_NAME Gateway)")"
+  if [[ "$map" != "$(cfg MAP_NAME)" ]]; then
+    if (cmd_maps set "$map"); then load_config; else warn "Kept map $(cfg MAP_NAME)"; fi
+  fi
+  v="$(ask "Max players" "$(cfg MAX_PLAYERS 100)")"
+  if [[ "$v" =~ ^[0-9]+$ ]] && (( v > 0 )); then conf_set MAX_PLAYERS "$v"; else warn "Kept MAX_PLAYERS=$(cfg MAX_PLAYERS)"; fi
+  printf '\n[4/%d] Admins\n' "$n_step"
+  v="$(ask "Your SteamID64 for in-game admin (empty = skip; steamid.io finds it)" "")"
+  if [[ -n "$v" ]]; then
+    read -ra ids <<< "${v//,/ }"
+    if (cmd_admins add "${ids[@]}"); then load_config; else warn "Not added - add admins later with: $0 admins add <SteamID64>"; fi
+  fi
+  printf '\n[5/%d] Play style\n' "$n_step"
+  cmd_overlay profile list | sed 's/^/  /'
+  v="$(ask "Profile to apply (empty = keep the current settings)" "")"
+  if [[ -n "$v" ]]; then (cmd_overlay profile apply "$v") || warn "Profile not applied"; load_config; fi
+  printf '\n[6/%d] Backups (3-2-1)\n' "$n_step"
+  v="$(ask "Backup schedule (cron, @daily or off)" "$(cfg BACKUP_SCHEDULE)")"
+  if python3 "$REPO_DIR/tools/isle_cron.py" check "$v" >/dev/null 2>&1; then conf_set BACKUP_SCHEDULE "$v"; else warn "Not a valid schedule - kept $(cfg BACKUP_SCHEDULE)"; fi
+  v="$(ask "Second copy on another disk (absolute folder, empty = skip)" "$(cfg BACKUP_COPY_DIR)")"
+  if [[ -z "$v" || "$v" == /* ]]; then conf_set BACKUP_COPY_DIR "$v"; else warn "Must be an absolute folder - skipped"; fi
+  v="$(ask "Off-site target (dir:/path, rclone:remote:path, ssh://user@host/path; empty = skip)" "$(cfg BACKUP_OFFSITE_TARGET)")"
+  if [[ -z "$v" ]] || python3 "$REPO_DIR/tools/isle_offsite.py" parse "$v" >/dev/null; then conf_set BACKUP_OFFSITE_TARGET "$v"; else warn "Skipped the off-site target"; fi
+  printf '\n[7/%d] Check\n' "$n_step"
+  if check_config; then
+    printf '%s\n' "$(date '+%F %T')" > "$(state_file setup-done)" 2>/dev/null || true
+    ok "Setup complete - settings saved in $ISLE_CONF"
+    printf '\nNext steps:\n  %s install        download the game server (first time, ~20 GB)\n  %s start          start it\n' "$0" "$0"
+    printf '  %s ui             the web UI (it has a guided tour)\n  %s backup strategy test   check your backup targets\n' "$0" "$0"
+  else
+    warn "Fix the errors above (edit $ISLE_CONF or run $0 setup again)"; return 1
   fi
 }
 
@@ -728,7 +833,7 @@ backup_321() {  # FILE - second copy + off-site for a finished backup archive
       if [[ "$(stat -c %d "$copy" 2>/dev/null)" == "$(stat -c %d "$(dirname "$file")" 2>/dev/null)" ]]; then
         warn "BACKUP_COPY_DIR is on the same disk as the backups - use another disk for the '2 media' of 3-2-1"
       fi
-      keep="$(cfg BACKUP_RETENTION 10)"
+      keep="$(cfg BACKUP_COPY_RETENTION)"; [[ -n "$keep" ]] || keep="$(cfg BACKUP_RETENTION 10)"
       if [[ "$keep" =~ ^[0-9]+$ ]] && (( keep > 0 )); then
         find "$copy" -maxdepth 1 -name 'theisle-*' -printf '%T@ %p\n' | sort -rn | tail -n +$((keep + 1)) | cut -d' ' -f2- \
           | while IFS= read -r old; do rm -f -- "$old"; done
@@ -746,9 +851,16 @@ backup_321() {  # FILE - second copy + off-site for a finished backup archive
     printf '%s %s %s\n' "$(date '+%F %T %Z')" "$rc" "$(basename "$file")" > "$(state_file backup-offsite)" 2>/dev/null || true
     if (( rc == 0 )); then ok "Off-site copy done"; else warn "Off-site copy failed (exit $rc) - the local backups are fine"; fi
   fi
+  if [[ -n "$(cfg BACKUP_OFFSITE_TARGET)" ]]; then   # dir: / rclone: / ssh:// - no shell involved (tools/isle_offsite.py)
+    local msg
+    if ! command -v python3 >/dev/null 2>&1; then warn "python3 is required for BACKUP_OFFSITE_TARGET - off-site copy skipped"; return 0; fi
+    log "Off-site copy to $(cfg BACKUP_OFFSITE_TARGET)"
+    if msg="$(timeout 4000 python3 "$REPO_DIR/tools/isle_offsite.py" --conf "$ISLE_CONF" send "$file" 2>&1)"; then ok "$msg"
+    else warn "${msg:-Off-site copy failed} - the local backups are fine"; fi
+  fi
 }
 docker_backup_321() {  # copy the newest archive out of the volume when a second copy / off-site is configured
-  [[ -n "$(cfg BACKUP_COPY_DIR)$(cfg BACKUP_OFFSITE_COMMAND)" ]] || return 0
+  [[ -n "$(cfg BACKUP_COPY_DIR)$(cfg BACKUP_OFFSITE_COMMAND)$(cfg BACKUP_OFFSITE_TARGET)" ]] || return 0
   local name tmp
   name="$(dc run --rm --entrypoint sh theisle -c 'ls -t /data/backups/theisle-*.tar.gz 2>/dev/null | head -n1' 2>/dev/null | tr -d '\r')"
   [[ -n "$name" ]] || { warn "No backup found in the volume for the second copy / off-site step"; return 0; }
@@ -762,11 +874,57 @@ newest_backup() {  # newest archive in BACKUP_DIR (native) - prints "path epoch"
 }
 backup_tool() {  # backup schedule|status|tick ...; returns 1 for a plain backup
   case "${1:-}" in
-    schedule) shift; backup_schedule "$@" ;;
-    status)   shift; backup_status "$@" ;;
-    tick)     backup_tick ;;
+    # these exit with their own status: returning non-zero here would mean "not a subcommand - back up now"
+    schedule) shift; backup_schedule "$@"; exit $? ;;
+    status)   shift; backup_status "$@"; exit $? ;;
+    strategy) shift; backup_strategy "$@"; exit $? ;;
+    tick)     backup_tick; exit $? ;;
     ""|now)   return 1 ;;
-    *) die "Usage: $0 backup [now|schedule [show|set \"<cron>\"|off]|status [--json]|tick]" ;;
+    *) die "Usage: $0 backup [now|schedule [show|set \"<cron>\"|off]|status [--json]|strategy ...|tick]" ;;
+  esac
+}
+STRATEGY_USAGE="Usage: isle-server backup strategy [show [--json]]
+       backup strategy copy <absolute dir>|off [--keep N]          second copy, ideally another disk (the '2 media')
+       backup strategy offsite <target>|off [--keep N]             off-site copy (the '1 off-site'):
+            dir:/mnt/nas/theisle | rclone:<remote>:<path> | ssh://user@host[:port]/path
+       backup strategy keep <N>                                     local backups to keep (BACKUP_RETENTION, 0 = all)
+       backup strategy test                                         check both targets (writes and removes a probe)"
+backup_strategy() {  # configure the 3-2-1 strategy (PRD BAK-10..12)
+  command -v python3 >/dev/null 2>&1 || die "python3 is required for backup strategies"
+  local off="$REPO_DIR/tools/isle_offsite.py" sub="${1:-show}" val keep=""
+  shift || true
+  case "$sub" in
+    show)
+      if [[ "${1:-}" == --json ]]; then python3 "$off" --conf "$ISLE_CONF" strategy --json; return; fi
+      printf 'Local     : %s (keep %s)\n' "$BACKUP_DIR" "$(cfg BACKUP_RETENTION 10)"
+      printf 'Copy 2    : %s\n' "$( [[ -n "$(cfg BACKUP_COPY_DIR)" ]] && printf '%s (keep %s)' "$(cfg BACKUP_COPY_DIR)" "$(cfg BACKUP_COPY_RETENTION "$(cfg BACKUP_RETENTION 10)")" || echo 'off  - backup strategy copy /mnt/other-disk/theisle')"
+      printf 'Off-site  : %s\n' "$( [[ -n "$(cfg BACKUP_OFFSITE_TARGET)" ]] && printf '%s (keep %s)' "$(cfg BACKUP_OFFSITE_TARGET)" "$(cfg BACKUP_OFFSITE_RETENTION "$(cfg BACKUP_RETENTION 10)")" || echo 'off  - backup strategy offsite rclone:b2:bucket/theisle')"
+      [[ -n "$(cfg BACKUP_OFFSITE_COMMAND)" ]] && printf 'Command   : BACKUP_OFFSITE_COMMAND is also set (runs after every backup)\n'
+      printf 'Schedule  : %s\n' "$(cfg BACKUP_SCHEDULE)"
+      printf '\nCheck it with: %s backup strategy test   (status: %s backup status)\n' "$0" "$0" ;;
+    copy|offsite)
+      val="${1:-}"; shift || true
+      [[ -n "$val" ]] || die "$STRATEGY_USAGE"
+      if [[ "${1:-}" == --keep ]]; then keep="${2:-}"; [[ "$keep" =~ ^[0-9]+$ ]] || die "--keep needs a whole number (0 = keep all)"; fi
+      if [[ "$sub" == copy ]]; then
+        if [[ "$val" == off ]]; then set_conf BACKUP_COPY_DIR ""; ok "Second copy turned off"; return; fi
+        [[ "$val" == /* ]] || die "The copy folder must be an absolute path, e.g. /mnt/backup2/theisle"
+        [[ "$(readlink -m "$val")" != "$(readlink -m "$BACKUP_DIR")" ]] || die "The copy folder must not be BACKUP_DIR itself"
+        set_conf BACKUP_COPY_DIR "$val"; [[ -n "$keep" ]] && set_conf BACKUP_COPY_RETENTION "$keep"
+        ok "Second copy: $val${keep:+ (keep $keep)}"
+      else
+        if [[ "$val" == off ]]; then set_conf BACKUP_OFFSITE_TARGET ""; ok "Off-site target turned off"; return; fi
+        python3 "$off" parse "$val" >/dev/null || die "Not a valid off-site target (see: $0 backup strategy help)"
+        set_conf BACKUP_OFFSITE_TARGET "$val"; [[ -n "$keep" ]] && set_conf BACKUP_OFFSITE_RETENTION "$keep"
+        ok "Off-site: $val${keep:+ (keep $keep)}"
+      fi
+      log "Check it with: $0 backup strategy test" ;;
+    keep)
+      [[ "${1:-}" =~ ^[0-9]+$ ]] || die "Usage: $0 backup strategy keep <N>   (0 = keep all)"
+      set_conf BACKUP_RETENTION "$1"; ok "Keeping $1 local backup(s)" ;;
+    test) python3 "$off" --conf "$ISLE_CONF" test ;;
+    help|-h|--help) printf '%s\n' "$STRATEGY_USAGE" ;;
+    *) die "$STRATEGY_USAGE" ;;
   esac
 }
 backup_schedule() {
@@ -805,7 +963,8 @@ backup_status() {  # [--json] - schedule, last backup and the 3-2-1 check
     n_copy="$(find "$copy" -maxdepth 1 -type f -name 'theisle-*' | wc -l)"
     [[ "$(stat -c %d "$copy")" != "$(stat -c %d "$BACKUP_DIR" 2>/dev/null)" ]] && other=true
   fi
-  if [[ -n "$(cfg BACKUP_OFFSITE_COMMAND)" ]]; then off_cfg="command"; fi
+  if [[ -n "$(cfg BACKUP_OFFSITE_TARGET)" ]]; then off_cfg="$(cfg BACKUP_OFFSITE_TARGET)"; fi
+  if [[ -n "$(cfg BACKUP_OFFSITE_COMMAND)" ]]; then off_cfg="${off_cfg:+$off_cfg+}command"; fi
   if grep -qx offsite-backup "$(dirname "$ISLE_CONF")/plugins/enabled.txt" 2>/dev/null; then off_cfg="${off_cfg:+$off_cfg+}offsite-backup plugin"; fi
   off_last="$(cat "$(state_file backup-offsite)" 2>/dev/null || true)"
   copies=1; (( n_local > 0 )) && copies=$((copies + 1)); (( n_copy > 0 )) && copies=$((copies + 1)); [[ -n "$off_cfg" ]] && copies=$((copies + 1))
@@ -832,7 +991,7 @@ PY
   printf 'Last     : %s\n' "${path:+$(basename "$path") ($(( ${age:-0} / 3600 ))h $(( ${age:-0} % 3600 / 60 ))m ago)}"
   printf 'Local    : %s backups in %s\n' "$n_local" "$BACKUP_DIR"
   printf 'Copy 2   : %s\n' "${copy:+$n_copy in $copy ($([[ $other == true ]] && echo 'another disk' || echo 'SAME disk'))}"
-  printf 'Off-site : %s%s\n' "${off_cfg:-not configured (BACKUP_OFFSITE_COMMAND or the offsite-backup plugin)}" "${off_last:+ - last: $off_last}"
+  printf 'Off-site : %s%s\n' "${off_cfg:-not configured (backup strategy offsite <target>)}" "${off_last:+ - last: $off_last}"
   printf '3-2-1    : %s copies %s, %s media %s, off-site %s\n' "$copies" "$([[ $copies -ge 3 ]] && echo OK || echo '(need 3)')" \
     "$media" "$([[ $media -ge 2 ]] && echo OK || echo '(need 2)')" "$([[ $offsite == true ]] && echo OK || echo '(need 1)')"
 }
@@ -1440,6 +1599,8 @@ config_tool() {  # dispatch shared by both runtimes; returns 1 if CMD is not a c
     mutations)  cmd_mutations "$@" ;;
     admin)      cmd_admin "$@" ;;
     steam)      cmd_steam "$@" ;;
+    recommend)  cmd_recommend "$@" ;;
+    setup)      cmd_setup "$@" ;;
     profile)    cmd_overlay profile "$@" ;;
     preset)     cmd_overlay preset "$@" ;;
     plugins)    cmd_plugins "$@" ;;

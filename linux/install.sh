@@ -909,6 +909,7 @@ ${UI_LINE:+  $UI_LINE
 }
   Docker publishes ports through its own iptables rules (no ufw/firewalld rules needed).
   Remember to forward the game and queue ports on your router / cloud firewall.
+  First time? : sudo isle-server setup   (machine check, recommended settings, name, map, admins, backups)
 
   Project     : https://github.com/kyroskoh/the-isle-dedicated-server  (docs, issues, updates)
   Made with ♥ by Kyros Koh (https://github.com/kyroskoh)
@@ -1078,6 +1079,7 @@ cat <<EOF
 ${UI_LINE:+  $UI_LINE
 }
   Remember to forward the game and queue ports on your router / cloud firewall.
+  First time? : sudo isle-server setup   (machine check, recommended settings, name, map, admins, backups)
 
   Project     : https://github.com/kyroskoh/the-isle-dedicated-server  (docs, issues, updates)
   Made with ♥ by Kyros Koh (https://github.com/kyroskoh)

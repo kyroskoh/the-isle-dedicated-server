@@ -80,6 +80,19 @@ ck 'Whitelist add shows name' { (run Whitelist add 76561198000000003) -match '76
 ck 'Steam names'             { $o = run Steam names 76561198000000001 76561198000000099; ($o -match '76561198000000001  RexHunter') -and ($o -match '76561198000000099  \(name unknown\)') }
 ck 'Steam names checks ids'  { (run Steam names 123) -match 'SteamID64' }
 ck 'Names cached'            { Test-Path (Join-Path $W '.steam-names.json') }
+$c2 = Join-Path $W 'copy2'; $nas = Join-Path $W 'nas2'
+ck 'Strategy copy + keep'    { run Backup strategy copy $c2 --keep 3 | Out-Null; ((conf BACKUP_COPY_DIR) -eq $c2) -and ((conf BACKUP_COPY_RETENTION) -eq '3') }
+ck 'Strategy offsite dir'    { run Backup strategy offsite "dir:$nas" --keep 2 | Out-Null; (conf BACKUP_OFFSITE_TARGET) -eq "dir:$nas" }
+ck 'Unsafe target refused'   { $o = run Backup strategy offsite 'ssh://h/p;rm'; ($o -match 'Not a valid') -and ((conf BACKUP_OFFSITE_TARGET) -eq "dir:$nas") }
+ck 'Strategy test passes'    { (run Backup strategy test) -match 'Off-site\s+: OK' }
+ck 'Strategy show --json'    { ((run Backup strategy show --json) -split "`n" | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1 | ConvertFrom-Json).offsite_kind -eq 'dir' }
+run Backup strategy offsite off | Out-Null; run Backup strategy copy off | Out-Null
+$env:ISLE_SYSINFO_FAKE = '{"cpus": 2, "mem_gb": 6, "disk_free_gb": 50, "arch": "x86_64"}'
+ck 'Recommend table'         { (run Recommend) -match 'MAX_PLAYERS\s+30' }
+ck 'Recommend --apply KEY'   { run Recommend --apply MAX_PLAYERS NET_TICK_RATE | Out-Null; ((conf MAX_PLAYERS) -eq '30') -and ((conf NET_TICK_RATE) -eq '20') }
+ck 'Recommend unknown key'   { (run Recommend --apply RCON_PASSWORD) -match 'Nothing to apply' }
+ck 'Setup --yes'             { run Setup --yes | Out-Null; ((conf AI_DENSITY) -eq '0.75') -and (Test-Path (Join-Path $W '.setup-done')) }
+Remove-Item Env:ISLE_SYSINFO_FAKE
 Stop-Process -Id $steam.Id -Force -ErrorAction SilentlyContinue
 Remove-Item $W -Recurse -Force -ErrorAction SilentlyContinue
 "RESULT: $fails failure(s)"
