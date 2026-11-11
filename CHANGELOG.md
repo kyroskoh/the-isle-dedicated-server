@@ -450,7 +450,8 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/kyroskoh/the-isle-dedicated-server/releases/tag/v1.13.0
 [1.8.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.6.0...v1.7.0
