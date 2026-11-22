@@ -390,7 +390,9 @@ jobs:
 
   web-ui:
     # Chromium (Chrome/Edge/Opera), Firefox (Gecko) and WebKit (Safari) - desktop, tablet and phone shapes
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where Playwright 1.48's WebKit system packages (libicu74, libxml2,
+    # libvpx9, libx264-164) no longer exist. Move up together with a Playwright release that supports it.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30   # a hung step fails the job instead of running for hours
     strategy:
       fail-fast: false
