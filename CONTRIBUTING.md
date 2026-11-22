@@ -26,7 +26,7 @@ Bug reports, distro fixes and new config keys are welcome.
    `plugins/catalog.json` (see PLUGINS.md).
 9. API or web UI changes: `python3 -m unittest tests/test_api.py`, `node tests/test_ui.mjs` and `node tests/test_ui_overflow.mjs`
    (long names, IDs and values at 320-1440 px must not overflow, clip or break words) (Playwright +
-   Chromium: `npm i playwright@1.48.2 && npx playwright install chromium`). If the UI looks different, regenerate
+   Chromium: `npm i playwright@1.65.1 && npx playwright install chromium`). If the UI looks different, regenerate
    the documentation screenshots with `node tests/ui_screenshots.mjs` (writes `docs/images/ui/*.png`; needs Pillow
    to shrink them).
 10. Open a pull request. CI runs ShellCheck, the PowerShell parser, PSScriptAnalyzer and smoke tests.

@@ -207,6 +207,7 @@ input:disabled, select:disabled, textarea:disabled { background: var(--surface-2
 input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); width: 16px; height: 16px; }
 .input-group { display: flex; gap: .4rem; }
 .input-group input { flex: 1; }
+.input-group > .btn { flex: none; min-width: max-content; }   /* a button keeps its label whole; the input gives way */
 .check { display: inline-flex; align-items: center; gap: .45rem; font-weight: 500; cursor: pointer; }
 
 /* switch */
@@ -462,6 +463,7 @@ input.num { width: 5.5rem; flex: none; min-width: 0; }
 .login .credit { margin-top: 1.25rem; text-align: center; }
 .docs-foot { text-align: center; padding: 1.5rem 0 .5rem; }
 .admin-grid { grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr)); align-items: start; }
+.admin-grid .input-group { flex-wrap: wrap; }
 .admin-grid .input-group input { min-width: 0; flex: 1 1 8rem; }
 .checks .pill { min-width: 3.75rem; justify-content: center; }
 .steam-name.muted { font-weight: 400; font-style: italic; }
