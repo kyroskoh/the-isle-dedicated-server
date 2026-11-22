@@ -6,7 +6,7 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](DOCKER.md)
 [![Web UI + REST API](https://img.shields.io/badge/web%20UI-REST%20API%20%2B%20OpenAPI-6E56CF)](UI.md)
 
-**Version:** 1.13.0 · **Author:** [Kyros Koh](https://github.com/kyroskoh) · **Repository:** [kyroskoh/the-isle-dedicated-server](https://github.com/kyroskoh/the-isle-dedicated-server) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
+**Version:** 1.13.1 · **Author:** [Kyros Koh](https://github.com/kyroskoh) · **Repository:** [kyroskoh/the-isle-dedicated-server](https://github.com/kyroskoh/the-isle-dedicated-server) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
 
 Scripts to install, configure, run, update and back up a **The Isle – Evrima**
 dedicated server on **Windows**, **Linux** and **Docker**, all driven from one shared config file.

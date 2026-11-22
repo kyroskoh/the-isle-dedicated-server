@@ -6,6 +6,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-11-22
+
+### Fixed
+- **Web UI:** on the Admin page at phone widths (320-390 px), the **Send** buttons were squeezed narrower than their
+  label. Buttons in an input group now keep their label whole, and the Admin page's input groups wrap instead.
+- **License:** GitHub now detects the project as MIT. `LICENSE.md` became `LICENSE` with only the standard MIT text;
+  the trademark and scope note moved to the README's Disclaimer.
+
+### Changed
+- **CI:** the browser test jobs run on `ubuntu-latest` (Ubuntu 26.04) with Playwright 1.65.1. Playwright 1.48.2 could
+  not install WebKit's system packages there.
+- **Releases:** besides pushing a `vX.Y.Z` tag, a release can now be published by running the `release` workflow
+  (Actions → release → Run workflow), which creates the tag from `VERSION`. It never moves an existing tag.
+
 ## [1.13.0] - 2026-11-11
 
 Planned in [PRD.md](PRD.md) as milestone M18 (BAK-10 to BAK-12, ONB-01 to ONB-04, UI-09).
@@ -450,7 +464,8 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.13.1...HEAD
+[1.13.1]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/kyroskoh/the-isle-dedicated-server/releases/tag/v1.13.0
 [1.8.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.0...v1.7.1
