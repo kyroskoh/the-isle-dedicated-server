@@ -1,4 +1,4 @@
-# MIT License
+MIT License
 
 Copyright (c) 2026 Kyros Koh (kyroskoh) and contributors
 
@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-*The Isle* is a trademark of Afterthought LLC. *Steam* and *SteamCMD* are trademarks of
-Valve Corporation. This project is not affiliated with or endorsed by either company. The
-license above covers only the scripts and documentation in this repository, not the game
-server software that SteamCMD downloads.

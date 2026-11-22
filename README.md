@@ -1,7 +1,7 @@
 # The Isle (Evrima) Dedicated Server Scripts
 
 [![lint](https://github.com/kyroskoh/the-isle-dedicated-server/actions/workflows/lint.yml/badge.svg)](https://github.com/kyroskoh/the-isle-dedicated-server/actions/workflows/lint.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platforms](https://img.shields.io/badge/runs%20on-Windows%20%7C%20Linux%20%7C%20Docker-1b6a43)](INSTALL.md)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](DOCKER.md)
 [![Web UI + REST API](https://img.shields.io/badge/web%20UI-REST%20API%20%2B%20OpenAPI-6E56CF)](UI.md)
@@ -220,7 +220,7 @@ docker-compose.yml           Compose service (ports, volume, env settings)
 - [CHANGELOG.md](CHANGELOG.md): release history
 - [SECURITY.md](SECURITY.md): hardening advice
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to contribute
-- [LICENSE.md](LICENSE.md): MIT
+- [LICENSE](LICENSE): MIT
 
 ## References
 
@@ -237,7 +237,9 @@ docker-compose.yml           Compose service (ports, volume, env settings)
 ## Disclaimer
 
 This is a community project. It is not affiliated with or endorsed by Afterthought LLC
-(the developers of The Isle) or by Valve. "The Isle" is a trademark of its owners. Game
+(the developers of The Isle) or by Valve. *The Isle* is a trademark of Afterthought LLC; *Steam* and *SteamCMD* are
+trademarks of Valve Corporation. The MIT [license](LICENSE) covers only the scripts and documentation in this
+repository, not the game server software that SteamCMD downloads. Game
 settings change between Evrima updates. If a key stops working, check the official
 patch notes and adjust `server.conf` (or use `EXTRA_GAME_SESSION_SETTINGS`).
 
