@@ -34,15 +34,14 @@ Bug reports, distro fixes and new config keys are welcome.
 ## Releasing (maintainers)
 
 1. On `main`, bump `VERSION` and add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` (merged through a PR).
-2. Tag that commit and push the tag:
+2. Publish it, either way:
+   - **From the browser:** Actions → **release** → **Run workflow** on `main`, with the version (`X.Y.Z`). It
+     creates the `vX.Y.Z` tag on that commit.
+   - **With git:** `git tag vX.Y.Z && git push origin vX.Y.Z`
 
-   ```bash
-   git tag vX.Y.Z && git push origin vX.Y.Z
-   ```
-
-The `release` workflow (`.github/workflows/release.yml`) checks the tag against `VERSION` and publishes a GitHub
+The `release` workflow (`.github/workflows/release.yml`) checks the version against `VERSION` and publishes a GitHub
 release whose notes are that version's CHANGELOG section (`python3 tools/release_notes.py X.Y.Z` previews them).
-Re-running it updates the notes of an existing release.
+It never moves an existing tag, and re-running it updates the notes of an existing release.
 
 When you report a bug, include your OS and version, the command you ran, and the last 50 lines of
 the server log or console output. Remove any passwords first.
