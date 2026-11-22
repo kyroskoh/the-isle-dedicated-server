@@ -390,9 +390,9 @@ jobs:
 
   web-ui:
     # Chromium (Chrome/Edge/Opera), Firefox (Gecko) and WebKit (Safari) - desktop, tablet and phone shapes
-    # Pinned: ubuntu-latest moved to 26.04, where Playwright 1.48's WebKit system packages (libicu74, libxml2,
-    # libvpx9, libx264-164) no longer exist. Move up together with a Playwright release that supports it.
-    runs-on: ubuntu-24.04
+    # Playwright must know the runner's Ubuntu release to install the browsers' system packages
+    # (1.65 supports 24.04 and 26.04); upgrade it when ubuntu-latest moves on.
+    runs-on: ubuntu-latest
     timeout-minutes: 30   # a hung step fails the job instead of running for hours
     strategy:
       fail-fast: false
@@ -407,7 +407,7 @@ jobs:
           node-version: 20
       - name: Install Playwright + ${{ matrix.browser }}
         run: |
-          npm install --no-save --no-package-lock playwright@1.48.2
+          npm install --no-save --no-package-lock playwright@1.65.1
           npx playwright install --with-deps ${{ matrix.browser }}
       - name: Web UI in a browser (UI-01..05)
         run: UI_SCREENSHOTS="$RUNNER_TEMP/ui-shots" node tests/test_ui.mjs
