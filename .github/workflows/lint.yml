@@ -33,6 +33,8 @@ jobs:
         run: python3 -m unittest -v tests/test_steam.py
       - name: 3-2-1 off-site targets (BAK-10..12)
         run: python3 -m unittest -v tests/test_offsite.py
+      - name: Release notes from CHANGELOG.md
+        run: python3 -m unittest -v tests/test_release.py
       - name: Web UI via the real launcher (UI-04)
         run: |
           set -e

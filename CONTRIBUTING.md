@@ -31,6 +31,19 @@ Bug reports, distro fixes and new config keys are welcome.
    to shrink them).
 10. Open a pull request. CI runs ShellCheck, the PowerShell parser, PSScriptAnalyzer and smoke tests.
 
+## Releasing (maintainers)
+
+1. On `main`, bump `VERSION` and add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` (merged through a PR).
+2. Tag that commit and push the tag:
+
+   ```bash
+   git tag vX.Y.Z && git push origin vX.Y.Z
+   ```
+
+The `release` workflow (`.github/workflows/release.yml`) checks the tag against `VERSION` and publishes a GitHub
+release whose notes are that version's CHANGELOG section (`python3 tools/release_notes.py X.Y.Z` previews them).
+Re-running it updates the notes of an existing release.
+
 When you report a bug, include your OS and version, the command you ran, and the last 50 lines of
 the server log or console output. Remove any passwords first.
 
