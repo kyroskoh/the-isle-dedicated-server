@@ -49,6 +49,15 @@
 .PARAMETER FromSnapshot
     Restore a snapshot (from any OS/runtime) after installing - e.g. moving to a new machine.
 
+.PARAMETER Remote
+    Install on ANOTHER machine over SSH instead of this PC (Linux or Windows; native or Docker), using a
+    machine added with "IsleServer.ps1 Remote add NAME --host H --user U --new-key". Needs Python 3 and the
+    OpenSSH client here (built into Windows 10/11), not Administrator rights.
+
+.PARAMETER RemoteSetup
+    Like -Remote, but guided: asks for the host and user, creates and helps install an SSH key, checks the
+    machine and installs. Run interactively without -Native/-Docker/-Remote, the installer asks where to install.
+
 .PARAMETER UI
     Also run the web UI + REST API at boot (scheduled task TheIsleServer-UI, 127.0.0.1:UI_PORT,
     see UI.md). Kept on later re-runs; -NoUI removes it.
@@ -112,6 +121,8 @@ param(
     [string]$Carry,
     [switch]$Overwrite,
     [string]$FromSnapshot,
+    [string]$Remote,
+    [switch]$RemoteSetup,
     [string]$Image,
     [switch]$KeepData,
     [switch]$RemoveGameFiles,
@@ -155,6 +166,39 @@ $dataSwitch = $Purge -or $KeepData -or $RemoveGameFiles -or $RemoveWorlds -or $R
 if ($dataSwitch -and -not $Uninstall) { Fail '-Purge/-KeepData/-Remove* are only valid together with -Uninstall.' }
 if ($KeepData -and ($Purge -or $RemoveGameFiles -or $RemoveWorlds -or $RemoveBackups -or $RemoveSettings)) {
     Fail '-KeepData cannot be combined with -Purge or -Remove*.'
+}
+
+# ---------------------------------------------------- this PC or another? ----
+function Invoke-RemoteInstall([string]$name) {   # hand over to tools\isle_remote.py (no elevation needed here)
+    $py = $null
+    foreach ($c in @(@('py', '-3'), @('python', ''), @('python3', ''))) {
+        $cmd = Get-Command $c[0] -ErrorAction SilentlyContinue
+        if ($cmd -and $cmd.Source -notmatch 'WindowsApps\\python') { $py = @($cmd.Source, $c[1]); break }
+    }
+    if (-not $py) { Fail 'Installing on another machine needs Python 3 here (winget install Python.Python.3.12) and the OpenSSH client.' }
+    $tool = Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\isle_remote.py'
+    $a = @(); if ($py[1]) { $a += $py[1] }
+    $a += @($tool, '--dir', (Join-Path (Split-Path -Parent $PSScriptRoot) 'config'))
+    if ($name) { $a += @('provision', $name) } else { $a += 'wizard' }
+    if ($Native) { $a += '--native' } elseif ($Docker) { $a += '--docker' }
+    if ($Start) { $a += '--start' }
+    if ($UI) { $a += '--ui' }
+    if ($PSBoundParameters.ContainsKey('Branch')) { $a += @('--branch', $Branch) }
+    if ($Image) { $a += @('--image', $Image) }
+    if ($FromSnapshot) { $a += @('--from-snapshot', $FromSnapshot) }
+    & $py[0] @a
+    exit $LASTEXITCODE
+}
+if ($Remote -or $RemoteSetup) {
+    if ($Uninstall) { Fail '-Remote installs only; to remove a remote install, run the installer there with -Uninstall.' }
+    Invoke-RemoteInstall $Remote
+}
+if (-not $Native -and -not $Docker -and -not $Uninstall -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+    Write-Host ''
+    Write-Host 'Where should The Isle server run?'
+    Write-Host '  1) This PC'
+    Write-Host '  2) Another machine over SSH (Linux or Windows, native or Docker)'
+    if ((Read-Host 'Choose [1]') -eq '2') { Invoke-RemoteInstall '' }
 }
 
 # ------------------------------------------------------------ elevation ----

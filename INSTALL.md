@@ -205,6 +205,66 @@ sudo ./linux/install.sh --docker --uninstall    # removes the container, keeps t
 
 Details: [DOCKER.md](DOCKER.md).
 
+## Install on another machine (over SSH)
+
+You can run the installer on one machine (your PC, a laptop) and have it set up The Isle server on **another**
+machine: a Linux or Windows server, a VPS or a box in your closet, natively or in Docker. Run either installer
+interactively without `--native`/`--docker` and it first asks:
+
+```text
+Where should The Isle server run?
+  1) This machine
+  2) Another machine over SSH (Linux or Windows, native or Docker)
+```
+
+Choosing **2** starts a guided setup: the machine's host name or IP, the SSH user and port, native or Docker,
+then an SSH **key pair** made for that machine, help installing its public key, a check of the machine, and
+the install itself. You can run each step yourself too:
+
+```bash
+isle-server remote add vps --host 203.0.113.10 --user admin --mode native --new-key   # saves the machine, makes a key
+isle-server remote copy-id vps         # Linux: installs the public key (asks for the password once)
+isle-server remote test vps            # OS, sudo/admin, Docker, free disk, an existing install
+isle-server remote provision vps --start --setup      # upload, install, start, apply settings for THAT machine
+isle-server remote run vps -- status   # then manage it from here: status, logs, backup, update ...
+```
+
+Without installing anything locally first: `./linux/install.sh --remote` (guided) or
+`./linux/install.sh --remote vps --docker --start`; on Windows `.\windows\Install.ps1 -RemoteSetup` or
+`-Remote vps -Docker -Start`. Neither needs root or Administrator rights on **this** machine. On Windows
+leave out the `--` in `Remote run vps status` (PowerShell keeps `--` for itself).
+
+| | Linux target | Windows target |
+|---|---|---|
+| SSH server | OpenSSH (any distro) | OpenSSH Server (Settings → Optional features, or `Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0`) |
+| Account | `root`, or a user with passwordless `sudo` | a member of **Administrators** |
+| Where the key goes | `~/.ssh/authorized_keys` (`remote copy-id` does it) | `C:\ProgramData\ssh\administrators_authorized_keys`, then `Restart-Service sshd` |
+| Installed with | `linux/install.sh --native` or `--docker` | `windows/Install.ps1 -Native` or `-Docker` |
+
+How it works and what it keeps:
+
+- **Keys, not passwords: made here, or your own.** `--new-key` (or `remote keygen NAME`) creates an ed25519 key
+  pair in `config/keys/NAME_ed25519` (mode 600). To bring your own pair, `remote import-key NAME ~/.ssh/id_ed25519
+  [--pub ~/.ssh/id_ed25519.pub]` checks it with `ssh-keygen` (refusing a public key that does not match, or a
+  passphrase - unattended logins cannot type one) and keeps a copy in `config/keys/NAME_key` (mode 600); or point
+  at it where it is with `add --key FILE` (an `ssh-agent` can then unlock a passphrase). No password is ever
+  stored; `copy-id` asks for one once, and only `ssh-copy-id` sees it.
+- **From the web UI.** The **Remote machines** page (and the **Your machine** step of Get started) does the same:
+  add a machine, make a key pair or upload your own, test it and install there. See [UI.md](UI.md#remote-machines).
+- **Pinned host keys.** The first connection records the machine's host key in `config/keys/known_hosts`; a
+  changed key later is refused, with advice on what to do if you reinstalled that machine.
+- **What is uploaded.** The scripts and tools only: never your `server.conf`, the web UI token, your list of
+  machines or any keys. The remote installer creates its own config, and `--setup` runs `setup --yes` there so
+  `MAX_PLAYERS`, AI density and backups fit **that** machine's CPU, memory and disk. To bring a world and its
+  settings along, pass `--from-snapshot FILE` (a snapshot from `isle-server snapshot create`).
+- **Other options.** `--native`/`--docker`, `--start`, `--ui` (the web UI listens on the remote's localhost:
+  reach it with `ssh -L 8090:127.0.0.1:8090 ...`), `--branch`, `--image`, `--dry-run` (show what it would do),
+  `--stage-only` (upload and unpack, install later).
+- **Requirements here:** Python 3 and the OpenSSH client (`ssh`, `scp`; built into Linux, macOS and
+  Windows 10/11).
+- `remote hosts` lists your machines, `remote show NAME` / `remote remove NAME` manage them; the list lives
+  in `config/hosts/` (not committed, like `config/keys/`).
+
 ## Updating
 
 - **Game:** the server updates itself on every start when `UPDATE_ON_START=true`, so a restart is enough.

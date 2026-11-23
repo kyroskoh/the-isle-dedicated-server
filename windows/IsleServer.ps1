@@ -38,6 +38,8 @@
     Whitelist      list|add|remove <SteamID64...>|on|off      (live via RCON when running)
                    lists and adds show Steam names (cached; list --refresh looks again)
     Steam          names [--refresh] <SteamID64...>           (resolve SteamID64s to Steam names)
+    Remote         install and manage a server on ANOTHER machine over SSH: hosts | add NAME --host H --user U
+                   [--new-key] | keygen | test | provision NAME [--native|--docker] [--start] | run NAME CMD | wizard
     Setup          first-time setup wizard (machine check, name, map, admins, play style, backups); Setup --yes
     Recommend      settings that fit this machine's CPU, memory and disk; Recommend --apply [KEY...]
     Classes        list|known|set|add|remove <Class...>|reset|preset [roster]
@@ -89,7 +91,7 @@ param(
     [ValidateSet('Install', 'Update', 'Validate', 'Check', 'Configure', 'Start', 'Stop', 'Restart', 'Status', 'Run',
                  'Logs', 'Backup', 'Restore', 'Rcon', 'Save', 'Firewall', 'RemoveFirewall',
                  'InstallService', 'RemoveService', 'Info', 'Version', 'Help',
-                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot', 'UI', 'UiToken', 'AI', 'Maps', 'Mutations', 'Admin', 'Steam', 'Recommend', 'Setup')]
+                 'Admins', 'Whitelist', 'Classes', 'AIClasses', 'Profile', 'Preset', 'Plugins', 'Snapshot', 'UI', 'UiToken', 'AI', 'Maps', 'Mutations', 'Admin', 'Steam', 'Recommend', 'Setup', 'Remote')]
     [string]$Command = 'Help',
 
     [string]$ConfigPath,
@@ -1903,6 +1905,14 @@ function Invoke-ConfigTool([string]$cmd) {
         'Admin' { Invoke-AdminCommand; return $true }
         'Recommend' { Invoke-RecommendCommand; return $true }
         'Setup' { Invoke-SetupCommand; return $true }
+        'Remote' {
+            $py = Get-Python
+            if (-not $py) { throw 'Python 3 is required for remote machines (winget install Python.Python.3.12)' }
+            $a = @(); if ($py[1]) { $a += $py[1] }
+            $a += @((Join-Path $RepoDir 'tools\isle_remote.py'), '--dir', (Split-Path -Parent $ConfigPath)) + @($Items)
+            & $py[0] @a
+            exit $LASTEXITCODE
+        }
         'Steam' {
             $rest = @($Items | Select-Object -Skip 1)
             if (-not $Items -or $Items[0] -ne 'names' -or -not @($rest | Where-Object { $_ -ne '--refresh' }).Count) { throw 'Usage: IsleServer.ps1 Steam names [--refresh] <SteamID64...>' }

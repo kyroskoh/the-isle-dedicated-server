@@ -23,6 +23,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API = os.path.join(REPO, "tools", "isle_api.py")
 FAKE = os.path.join(REPO, "tests", "fixtures", "fake-launcher.py")
 FAKE_STEAM = os.path.join(REPO, "tests", "fixtures", "fake-steam.py")
+FAKE_SSH = os.path.join(REPO, "tests", "fixtures", "fake-ssh.py")
 TOKEN = "test-token-0123456789abcdef"
 ADMIN = "76561198000000001"
 
@@ -60,7 +61,8 @@ class ApiServer(object):
             handle.write("".join("[2026-11-08 12:00:%02d UTC] INFO line %d\n" % (i % 60, i) for i in range(300)))
         self.steam = subprocess.Popen([sys.executable, FAKE_STEAM, "0"], stdout=subprocess.PIPE, universal_newlines=True)
         steam_url = "http://127.0.0.1:%s" % self.steam.stdout.readline().split()[1]
-        env = dict(os.environ, ISLE_SYSINFO_FAKE='{"cpus": 4, "mem_gb": 8, "disk_free_gb": 100, "arch": "x86_64"}', ISLE_STEAM_COMMUNITY_URL=steam_url, ISLE_STEAM_API_URL=steam_url, ISLE_UI_TOKEN=TOKEN, ISLE_LOG_DIR=self.logs, FAKE_LAUNCHER_LOG=self.log, FAKE_STATE_DIR=self.dir,
+        self.ssh_log = os.path.join(self.dir, "ssh.log")
+        env = dict(os.environ, ISLE_SSH=FAKE_SSH, FAKE_SSH_LOG=self.ssh_log, ISLE_SYSINFO_FAKE='{"cpus": 4, "mem_gb": 8, "disk_free_gb": 100, "arch": "x86_64"}', ISLE_STEAM_COMMUNITY_URL=steam_url, ISLE_STEAM_API_URL=steam_url, ISLE_UI_TOKEN=TOKEN, ISLE_LOG_DIR=self.logs, FAKE_LAUNCHER_LOG=self.log, FAKE_STATE_DIR=self.dir,
                    FAKE_DELAY="0.4", PYTHONUNBUFFERED="1")
         self.out = open(os.path.join(self.dir, "api.log"), "w")
         self.proc = subprocess.Popen([sys.executable, API, "--conf", self.conf, "--launcher", FAKE, "--port", str(self.port),
@@ -468,6 +470,75 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(code, 200, body)
         self.assertTrue(body["done"] and body["at"])
         self.assertTrue(self.s.call("GET", "/api/v1/setup")[1]["done"])
+
+    def assertPrivate(self, path):
+        """only the owner can read a private key"""
+        if os.name == "nt":
+            acl = subprocess.run(["icacls", path], stdout=subprocess.PIPE, universal_newlines=True).stdout
+            self.assertNotRegex(acl, r"(?i)\b(Users|Everyone|Authenticated Users)\b:", acl)
+            self.assertNotIn("(I)", acl, "no inherited entries: " + acl)
+        else:
+            self.assertEqual(os.stat(path).st_mode & 0o077, 0)
+
+    def test_remote_machines(self):
+        if not shutil.which("ssh-keygen"):
+            self.skipTest("ssh-keygen (OpenSSH client) is not installed")
+        cfg = os.path.dirname(self.s.conf)
+        self.assertEqual(self.s.call("GET", "/api/v1/remote/hosts")[1], [])
+        code, h, _ = self.s.call("POST", "/api/v1/remote/hosts", {"name": "vps", "host": "203.0.113.10", "user": "admin", "mode": "docker"})
+        self.assertEqual(code, 201, h)
+        self.assertEqual((h["host"], h["port"], h["os"], h["mode"], h["key"]["public_key"]), ("203.0.113.10", "22", "auto", "docker", None))
+        self.assertEqual(self.s.call("POST", "/api/v1/remote/hosts", {"name": "vps", "host": "h", "user": "u"})[0], 409)
+        for bad in ({"name": "x", "host": "-oProxyCommand=evil", "user": "u"}, {"name": "x", "host": "h", "user": "a;b"},
+                    {"name": "Bad Name", "host": "h", "user": "u"}, {"name": "x", "host": "h", "user": "u", "key": "/etc/shadow"},
+                    {"name": "x", "host": "h", "user": "u", "port": "99999"}, {"name": "x", "host": "h"}):
+            self.assertEqual(self.s.call("POST", "/api/v1/remote/hosts", bad)[0], 422, bad)
+        # generate a key pair here
+        code, h, _ = self.s.call("POST", "/api/v1/remote/hosts/vps/keygen")
+        self.assertEqual(code, 200, h)
+        self.assertTrue(h["key"]["public_key"].startswith("ssh-ed25519 "))
+        self.assertIn("SHA256:", h["key"]["fingerprint"])
+        self.assertTrue(h["key"]["managed"] and h["key"]["exists"])
+        self.assertPrivate(os.path.join(cfg, "keys", "vps_ed25519"))
+        listed = json.dumps(self.s.call("GET", "/api/v1/remote/hosts")[1])
+        self.assertNotIn("PRIVATE KEY", listed, "private keys are never returned")
+        # or bring your own
+        own = os.path.join(self.s.dir, "own_rsa")
+        subprocess.run(["ssh-keygen", "-q", "-t", "rsa", "-b", "2048", "-N", "", "-C", "mine", "-f", own], check=True)
+        other = os.path.join(self.s.dir, "other")
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", other], check=True)
+        locked = os.path.join(self.s.dir, "locked")
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "pw123", "-f", locked], check=True)
+        priv = slurp(own)
+        for body, why in (({"private_key": priv, "public_key": slurp(other + ".pub")}, "does not belong"),
+                          ({"private_key": slurp(locked)}, "passphrase"), ({"private_key": slurp(own + ".pub")}, "not an OpenSSH"),
+                          ({"private_key": 42}, "")):
+            code, out, _ = self.s.call("PUT", "/api/v1/remote/hosts/vps/key", body)
+            self.assertEqual(code, 422, out)
+            self.assertIn(why, json.dumps(out))
+        code, h, _ = self.s.call("PUT", "/api/v1/remote/hosts/vps/key", {"private_key": priv, "public_key": slurp(own + ".pub")})
+        self.assertEqual(code, 200, h)
+        self.assertEqual(h["key"]["public_key"], slurp(own + ".pub").strip())
+        self.assertEqual(h["key"]["key"], os.path.join("keys", "vps_key"))
+        self.assertPrivate(os.path.join(cfg, "keys", "vps_key"))
+        # check the machine, install there (a job through the launcher)
+        code, t, _ = self.s.call("POST", "/api/v1/remote/hosts/vps/test")
+        self.assertEqual(code, 200, t)
+        self.assertTrue(t["reachable"] and t["ready"], t)
+        self.assertEqual(t["os"], "linux")
+        sent = [json.loads(l) for l in slurp(self.s.ssh_log).splitlines()]
+        self.assertIn(os.path.join(cfg, "keys", "vps_key"), sent[0], "the imported key is used")
+        code, job, _ = self.s.call("POST", "/api/v1/remote/hosts/vps/provision", {"start": True, "setup": True})
+        self.assertEqual(code, 202, job)
+        self.assertEqual(self.s.wait_job(job["id"])["state"], "succeeded")
+        self.assertIn(["remote", "provision", "vps", "--start", "--setup"], self.s.calls())
+        self.assertEqual(self.s.call("POST", "/api/v1/remote/hosts/vps/provision", {"start": "yes"})[0], 422)
+        self.assertEqual(self.s.call("POST", "/api/v1/remote/hosts/nope/test")[0], 404)
+        # forget it, and its key
+        code, out, _ = self.s.call("DELETE", "/api/v1/remote/hosts/vps?delete_key=true")
+        self.assertEqual((code, out["deleted_key_files"]), (200, 2), out)
+        self.assertFalse(os.path.exists(os.path.join(cfg, "keys", "vps_key")))
+        self.assertEqual(self.s.call("GET", "/api/v1/remote/hosts")[1], [])
 
     def test_backup_strategy(self):
         s = self.s.call("GET", "/api/v1/backups/strategy")[1]

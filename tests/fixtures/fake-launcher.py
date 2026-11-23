@@ -146,6 +146,10 @@ if cmd == "plugins" and rest[:1] == ["sources"]:
         cur = [c for c in cur if c != rest[2]]
     open(path, "w").write("".join(c + "\n" for c in cur))
     print("[ OK ] Catalog sources: %d" % len(cur)); sys.exit(0)
+if cmd == "remote":
+    print("[ OK ] remote %s" % " ".join(rest), flush=True)
+    time.sleep(float(os.environ.get("FAKE_DELAY", "0.3")))
+    print("Done: The Isle server is installed on %s." % (rest[1] if len(rest) > 1 else "?")); sys.exit(0)
 if cmd in ("profile", "preset", "plugins", "snapshot"):
     if cmd == "snapshot" and rest[:1] == ["create"]:
         out = rest[rest.index("--output") + 1]

@@ -57,6 +57,9 @@
 #    ui [--host H] [--port P] [--open] [--cert F --key F]
 #                 Web UI + REST API (OpenAPI docs at /docs); see UI.md
 #    ui-token [--rotate]  Show (or replace) the web UI access token
+#    remote       hosts | add NAME --host H --user U [--new-key] | keygen | copy-id | test |
+#                 provision NAME [--native|--docker] [--start] [--setup] | run NAME -- CMD | wizard
+#                 install and manage a server on ANOTHER machine over SSH (see INSTALL.md)
 #    setup [--yes]    first-time setup wizard (machine check, name, map, admins, play style, backups)
 #    recommend [--json | --apply [KEY...]]   settings that fit this machine's CPU, memory and disk
 #    info         Print resolved paths and settings
@@ -1601,6 +1604,8 @@ config_tool() {  # dispatch shared by both runtimes; returns 1 if CMD is not a c
     steam)      cmd_steam "$@" ;;
     recommend)  cmd_recommend "$@" ;;
     setup)      cmd_setup "$@" ;;
+    remote)     command -v python3 >/dev/null 2>&1 || die "python3 is required for remote machines"
+                python3 "$REPO_DIR/tools/isle_remote.py" --dir "$(dirname "$ISLE_CONF")" "$@" ;;
     profile)    cmd_overlay profile "$@" ;;
     preset)     cmd_overlay preset "$@" ;;
     plugins)    cmd_plugins "$@" ;;

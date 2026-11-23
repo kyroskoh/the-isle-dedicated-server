@@ -4,6 +4,9 @@ config/*.bak
 # Local state: Steam name cache, backup scheduler marks
 config/.steam-names.json*
 config/.backup-*
+# Remote machines (isle-server remote): host list, SSH keys, pinned host keys
+config/hosts/
+config/keys/
 
 # Server data if someone installs inside the repo
 steamcmd/

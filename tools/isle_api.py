@@ -51,6 +51,7 @@ import isle_cron  # noqa: E402
 import isle_steam  # noqa: E402
 import isle_offsite  # noqa: E402
 import isle_sysinfo  # noqa: E402
+import isle_remote  # noqa: E402
 
 API_VERSION = "1.2.0"
 MAX_BODY = 64 * 1024
@@ -72,7 +73,7 @@ PS_NAMES = {"start": "Start", "stop": "Stop", "restart": "Restart", "save": "Sav
             "update": "Update", "validate": "Validate", "status": "Status", "info": "Info", "check": "Check",
             "logs": "Logs", "admins": "Admins", "whitelist": "Whitelist", "classes": "Classes",
             "ai-classes": "AIClasses", "profile": "Profile", "preset": "Preset", "plugins": "Plugins",
-            "snapshot": "Snapshot", "version": "Version", "ai": "AI", "maps": "Maps", "mutations": "Mutations", "admin": "Admin"}
+            "snapshot": "Snapshot", "version": "Version", "ai": "AI", "maps": "Maps", "mutations": "Mutations", "admin": "Admin", "remote": "Remote"}
 
 
 class ApiError(Exception):
@@ -822,6 +823,130 @@ class Api(object):
         ensure_ok(code, out, status=502)
         return last_json(out)
 
+    # --------------------------------------------------- remote machines (SSH)
+    def _inv(self):
+        return isle_remote.Inventory(os.path.dirname(self.env.conf))
+
+    def _host(self, name):
+        try:
+            return self._inv().load(name)
+        except isle_remote.RemoteError as exc:
+            raise ApiError(404, "Unknown remote machine", str(exc))
+
+    def _host_out(self, inv, h):
+        out = {k.lower(): h[k] for k in isle_remote.KEYS}
+        out["name"] = h["NAME"]
+        out["key"] = isle_remote.key_info(inv, h)
+        return out
+
+    @route("GET", "/api/v1/remote/hosts", "listRemoteHosts", "Remote",
+           "Machines this server can install The Isle on over SSH, with their public keys (never private keys)",
+           responses={"200": {"type": "array", "items": {"type": "object"}}})
+    def remote_hosts(self, req):
+        inv = self._inv()
+        return [self._host_out(inv, inv.load(n)) for n in inv.names()]
+
+    @route("POST", "/api/v1/remote/hosts", "addRemoteHost", "Remote", "Add a remote machine (key-based SSH; no passwords are stored)",
+           body=obj({"name": STR, "host": STR, "user": STR, "port": {"type": "string", "pattern": r"^\d{1,5}$"},
+                     "os": {"type": "string", "enum": ["auto", "linux", "windows"]}, "mode": {"type": "string", "enum": ["native", "docker"]},
+                     "install_root": STR, "service_user": STR}, ["name", "host", "user"]),
+           responses={"201": {"type": "object"}}, status=201)
+    def remote_add(self, req):
+        b = req.body if isinstance(req.body, dict) else {}
+        allowed = {"name", "host", "user", "port", "os", "mode", "install_root", "service_user"}
+        if set(b) - allowed:
+            raise ApiError(422, "Validation failed", "unknown field(s): %s" % ", ".join(sorted(set(b) - allowed)))
+        if not all(isinstance(b.get(k, ""), str) for k in allowed):
+            raise ApiError(422, "Validation failed", "every field is a string")
+        inv = self._inv()
+        h = {"NAME": need(b, "name", "str").strip().lower(), "HOST": need(b, "host", "str").strip(), "USER": need(b, "user", "str").strip(),
+             "PORT": (b.get("port") or "22").strip(), "OS": (b.get("os") or "auto").strip(), "MODE": (b.get("mode") or "native").strip(),
+             "KEY": "", "INSTALL_ROOT": (b.get("install_root") or "C:\\TheIsle").strip(), "SERVICE_USER": (b.get("service_user") or "theisle").strip()}
+        try:
+            if os.path.exists(inv.path(h["NAME"])):
+                raise ApiError(409, "Already added", "a machine called %s exists - remove it first" % h["NAME"])
+            inv.save(h)
+        except isle_remote.RemoteError as exc:
+            raise ApiError(422, "Validation failed", str(exc))
+        return self._host_out(inv, h)
+
+    @route("DELETE", "/api/v1/remote/hosts/{name}", "removeRemoteHost", "Remote",
+           "Forget a remote machine; ?delete_key=true also deletes the key pair kept for it here",
+           params=[{"name": "name", "in": "path", "required": True, "schema": STR},
+                   {"name": "delete_key", "in": "query", "required": False, "schema": {"type": "boolean"}}],
+           responses={"200": obj({"removed": STR, "deleted_key_files": {"type": "integer"}})})
+    def remote_remove(self, req, name):
+        self._host(name)
+        delete_key = (req.query.get("delete_key") or [""])[0].lower() in ("1", "true", "yes")
+        removed = isle_remote.remove_host(self._inv(), name, delete_key)
+        return {"removed": name, "deleted_key_files": len(removed)}
+
+    @route("POST", "/api/v1/remote/hosts/{name}/keygen", "generateRemoteKey", "Remote",
+           "Create an ed25519 key pair for the machine (kept here, mode 600); returns the public key to install there",
+           params=[{"name": "name", "in": "path", "required": True, "schema": STR}], responses={"200": {"type": "object"}})
+    def remote_keygen(self, req, name):
+        inv, h = self._inv(), self._host(name)
+        managed = os.path.join(inv.keys, "%s_ed25519" % name)
+        for f in (managed, managed + ".pub"):
+            if os.path.exists(f):
+                os.remove(f)    # replacing it: the old public key must then be removed from the machine too
+        try:
+            isle_remote.keygen(inv, h)
+        except isle_remote.RemoteError as exc:
+            raise ApiError(500, "Key generation failed", str(exc))
+        return self._host_out(inv, h)
+
+    @route("PUT", "/api/v1/remote/hosts/{name}/key", "importRemoteKey", "Remote",
+           "Use your own key pair: the private key (OpenSSH/PEM text, no passphrase) and optionally its public key. "
+           "Checked with ssh-keygen and kept here with mode 600; it is never sent back",
+           params=[{"name": "name", "in": "path", "required": True, "schema": STR}],
+           body=obj({"private_key": {"type": "string", "maxLength": 32768}, "public_key": {"type": "string", "maxLength": 16384}}, ["private_key"]),
+           responses={"200": {"type": "object"}})
+    def remote_import_key(self, req, name):
+        inv, h = self._inv(), self._host(name)
+        private = need(req.body, "private_key", "str")
+        public = req.body.get("public_key") if isinstance(req.body, dict) else None
+        if public is not None and not isinstance(public, str):
+            raise ApiError(422, "Validation failed", "public_key must be a string")
+        try:
+            isle_remote.import_key(inv, h, private, public)
+        except isle_remote.RemoteError as exc:
+            raise ApiError(422, "Key not accepted", str(exc))
+        return self._host_out(inv, h)
+
+    @route("POST", "/api/v1/remote/hosts/{name}/test", "testRemoteHost", "Remote",
+           "Connect and check the machine: OS, architecture, sudo/admin, Docker, free disk, an existing install",
+           params=[{"name": "name", "in": "path", "required": True, "schema": STR}], responses={"200": {"type": "object"}})
+    def remote_test(self, req, name):
+        inv, h = self._inv(), self._host(name)
+        try:
+            return isle_remote.do_test(inv, h)
+        except isle_remote.RemoteError as exc:
+            return {"name": name, "reachable": False, "error": str(exc), "problems": [], "ready": False}
+
+    @route("POST", "/api/v1/remote/hosts/{name}/provision", "provisionRemoteHost", "Remote",
+           "Install The Isle server on the machine (a job): upload these scripts and run its installer",
+           params=[{"name": "name", "in": "path", "required": True, "schema": STR}],
+           body=obj({"mode": {"type": "string", "enum": ["native", "docker"]}, "start": {"type": "boolean"}, "ui": {"type": "boolean"},
+                     "setup": {"type": "boolean"}}),
+           responses={"202": JOB, "409": {"$ref": "#/components/schemas/Problem"}}, status=202)
+    def remote_provision(self, req, name):
+        self._host(name)
+        b = req.body if isinstance(req.body, dict) else {}
+        args = ["provision", name]
+        mode = b.get("mode")
+        if mode is not None:
+            if mode not in ("native", "docker"):
+                raise ApiError(422, "Validation failed", "mode: native or docker")
+            args.append("--" + mode)
+        for flag in ("start", "ui", "setup"):
+            v = b.get(flag, False)
+            if not isinstance(v, bool):
+                raise ApiError(422, "Validation failed", "%s must be true or false" % flag)
+            if v:
+                args.append("--" + flag)
+        return self.jobs.start("remote-provision", "remote", args)
+
     # ------------------------------------------------------------ onboarding
     @route("GET", "/api/v1/system", "getSystem", "Setup",
            "This machine's CPU, memory and disk, and settings that fit them (estimates; MAX_PLAYERS, AI_DENSITY, NET_TICK_RATE, backups)",
@@ -1232,7 +1357,7 @@ def build_spec():
         "externalDocs": {"description": "Project on GitHub (made with love by Kyros Koh)", "url": "https://github.com/kyroskoh/the-isle-dedicated-server"},
         "servers": [{"url": "/"}],
         "security": [{"bearerAuth": []}],
-        "tags": [{"name": t} for t in ("System", "Setup", "Server", "Jobs", "Admin", "Settings", "Players", "Roster", "World", "Profiles", "Plugins", "Backups", "Snapshots")],
+        "tags": [{"name": t} for t in ("System", "Setup", "Remote", "Server", "Jobs", "Admin", "Settings", "Players", "Roster", "World", "Profiles", "Plugins", "Backups", "Snapshots")],
         "paths": paths,
         "components": {
             "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},
