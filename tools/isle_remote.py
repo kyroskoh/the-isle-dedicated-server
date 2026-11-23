@@ -475,12 +475,15 @@ def import_key(inv, h, private_text, public_text=None):
     protect(tmp)   # ssh-keygen -y refuses a key others can read on Windows
     rc, derived = _derive_public(tmp)
     if rc != 0:
+        if os.name == "nt" and "bad permissions" in derived:   # say which ssh-keygen and what access the file had
+            acl = subprocess.run(["icacls", tmp], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True).stdout
+            derived += " [ssh-keygen: %s; access: %s]" % (prog("ssh-keygen"), " ".join(acl.split())[:300])
         os.remove(tmp)
         low = derived.lower()
         if "passphrase" in low or "incorrect" in low:
             raise RemoteError("That key has a passphrase. Unattended logins cannot type it: use a key without one "
                               "(or make one here with keygen)")
-        raise RemoteError("ssh-keygen cannot read that private key: %s" % derived[-200:])
+        raise RemoteError("ssh-keygen cannot read that private key: %s" % derived[-600:])
     if public_text and public_text.strip():
         if key_blob(public_text) != key_blob(derived):
             os.remove(tmp)
