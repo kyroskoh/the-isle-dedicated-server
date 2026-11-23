@@ -440,10 +440,21 @@ def protect(path):
         # drop inherited entries and make this account the owner and the only one with access
         steps = [["icacls", path, "/inheritance:r"], ["icacls", path, "/grant:r", "%s:F" % user],
                  ["icacls", path, "/setowner", user]]
-        for cmd in steps:
+        def run(cmd):
             p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
             if p.returncode:
                 raise RemoteError("Could not restrict access to %s (%s): %s" % (path, " ".join(cmd[2:]), p.stdout.strip()[-300:]))
+            return p.stdout
+        for cmd in steps:
+            run(cmd)
+        # entries that were already explicit survive /inheritance:r (e.g. "OWNER RIGHTS:(IO)(F)" from a temp
+        # folder); Windows OpenSSH counts any of them as "too open", so remove every entry but this account's
+        keep = {user.lower(), "nt authority\\system", "builtin\\administrators"}
+        for line in run(["icacls", path]).splitlines():
+            line = line[len(path):] if line.startswith(path) else line
+            who = line.strip().split(":(")[0].strip() if ":(" in line else ""
+            if who and who.lower() not in keep:
+                run(["icacls", path, "/remove:g", who])
 
 
 def _derive_public(private_path):
