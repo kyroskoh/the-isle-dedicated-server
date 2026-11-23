@@ -33,6 +33,12 @@ Please open a private security advisory on GitHub
   remote or an SSH host). Targets are validated strictly and run without a shell, but whoever holds the UI token
   decides where your backups - which include `server.conf` - are sent: treat the token as full admin access.
   `BACKUP_OFFSITE_COMMAND` can only be set in `server.conf` on the machine.
+- **Remote machines (`isle-server remote`).** SSH keys made for them live in `config/keys/` (private keys mode
+  600) and the machine list in `config/hosts/`; both are in `.gitignore` and are never uploaded or put in
+  snapshots. Logins are key-only (BatchMode); host keys are pinned in `config/keys/known_hosts` and a changed one
+  is refused. Commands sent to a remote machine are built from validated parts (no shell characters from
+  arguments), and Windows commands go as `-EncodedCommand`. Anyone who can read `config/keys/` can log in to
+  those machines: protect it like the keys in `~/.ssh`.
 - **Steam name lookups** (`STEAM_NAME_LOOKUP=true`, the default) make the server, never the browser, fetch
   public profile pages from `steamcommunity.com` for the SteamID64s you list (or call `api.steampowered.com`
   when `STEAM_WEB_API_KEY` is set). Only SteamID64s are sent. `STEAM_WEB_API_KEY` is masked in the web UI like a

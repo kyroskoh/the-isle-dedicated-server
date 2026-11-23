@@ -93,6 +93,10 @@ ck 'Recommend --apply KEY'   { run Recommend --apply MAX_PLAYERS NET_TICK_RATE |
 ck 'Recommend unknown key'   { (run Recommend --apply RCON_PASSWORD) -match 'Nothing to apply' }
 ck 'Setup --yes'             { run Setup --yes | Out-Null; ((conf AI_DENSITY) -eq '0.75') -and (Test-Path (Join-Path $W '.setup-done')) }
 Remove-Item Env:ISLE_SYSINFO_FAKE
+ck 'Remote add + hosts'       { run Remote add vps --host 203.0.113.10 --user Administrator --os windows --mode native | Out-Null; (run Remote hosts) -match 'Administrator@203.0.113.10:22' }
+ck 'Remote add refuses bad'   { (run Remote add bad '--host=-oProxyCommand=x' --user a) -match 'HOST must be' }
+ck 'Remote provision dry-run' { (run Remote provision vps --start --dry-run) -match 'EncodedCommand' }
+run Remote remove vps | Out-Null
 Stop-Process -Id $steam.Id -Force -ErrorAction SilentlyContinue
 Remove-Item $W -Recurse -Force -ErrorAction SilentlyContinue
 "RESULT: $fails failure(s)"

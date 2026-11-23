@@ -57,6 +57,10 @@
 #                          otherwise only a retained world is picked up)
 #    --overwrite          replace a world that already exists in the target
 #    --from-snapshot FILE restore a snapshot after installing (new machine / other OS)
+#    --remote [NAME]      install on ANOTHER machine over SSH instead of this one (Linux or Windows;
+#                         native or docker): NAME = a machine added with "isle-server remote add";
+#                         no NAME = a guided setup (host, key, test, install). Does not need root here.
+#                         Run interactively without --native/--docker/--remote, it asks where to install.
 #    --no-import          same as --data fresh
 #    -h | --help          show this help
 # =============================================================================
@@ -70,7 +74,7 @@ MODE=""
 DO_SERVICE=1; DO_FIREWALL=1; DO_DEPS=1; DO_SUDOERS=1; DO_START=0
 DO_UNINSTALL=0; DO_PURGE=0; ASSUME_YES=0
 DATA=copy; CARRY="worlds,settings,overrides,plugins"; CARRY_SET=0; OVERWRITE=0; FROM_SNAPSHOT=""
-NO_FINAL_BACKUP=0; IMAGE_REF=""; DO_UI=0
+NO_FINAL_BACKUP=0; IMAGE_REF=""; DO_UI=0; REMOTE=""; REMOTE_SET=0
 RM_GAME=0; RM_WORLDS=0; RM_BACKUPS=0; RM_SETTINGS=0; DATA_FLAG=0; KEEP_DATA=0
 SERVICE="theisle-server"
 UI_SERVICE="theisle-ui"
@@ -120,10 +124,36 @@ while [[ $# -gt 0 ]]; do
     --overwrite)   OVERWRITE=1; shift ;;
     --image)       IMAGE_REF="${2:?}"; shift 2 ;;
     --from-snapshot) FROM_SNAPSHOT="${2:?}"; shift 2 ;;
+    --remote)      REMOTE_SET=1; if [[ $# -gt 1 && "$2" != -* ]]; then REMOTE="$2"; shift 2; else shift; fi ;;
     -h|--help)     usage; exit 0 ;;
     *)             usage; die "Unknown option: $1" ;;
   esac
 done
+
+# --------------------------------------------------- this machine or another? ---
+remote_install() {  # hand over to tools/isle_remote.py (provision NAME, or the guided wizard)
+  command -v python3 >/dev/null 2>&1 || die "Installing on another machine needs python3 here (and the OpenSSH client)"
+  local args=() cfg="$SRC_DIR/config"
+  [[ -n "$MODE" ]] && args+=("--$MODE")
+  (( DO_START )) && args+=(--start)
+  (( DO_UI == 1 )) && args+=(--ui)
+  (( BRANCH_SET )) && args+=(--branch "$BRANCH")
+  [[ -n "$IMAGE_REF" ]] && args+=(--image "$IMAGE_REF")
+  [[ -n "$FROM_SNAPSHOT" ]] && args+=(--from-snapshot "$(readlink -f "$FROM_SNAPSHOT")")
+  if [[ -n "$REMOTE" ]]; then
+    exec python3 "$SRC_DIR/tools/isle_remote.py" --dir "$cfg" provision "$REMOTE" "${args[@]}"
+  fi
+  exec python3 "$SRC_DIR/tools/isle_remote.py" --dir "$cfg" wizard "${args[@]}"
+}
+if (( REMOTE_SET )); then
+  (( DO_UNINSTALL )) && die "--remote installs only; to remove a remote install run there: sudo ./linux/install.sh --uninstall"
+  remote_install
+fi
+if [[ -t 0 && -z "$MODE" ]] && (( ! DO_UNINSTALL )); then
+  printf '\nWhere should The Isle server run?\n  1) This machine\n  2) Another machine over SSH (Linux or Windows, native or Docker)\n'
+  read -r -p "Choose [1]: " _where || _where=1
+  if [[ "${_where:-1}" == 2 ]]; then remote_install; fi
+fi
 
 [[ $EUID -eq 0 ]] || die "Please run as root, e.g.: sudo $0 $*"
 [[ "$(uname -m)" == "x86_64" ]] || die "The Isle dedicated server requires x86_64 (detected $(uname -m))"

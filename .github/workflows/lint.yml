@@ -35,6 +35,10 @@ jobs:
         run: python3 -m unittest -v tests/test_offsite.py
       - name: Release notes from CHANGELOG.md
         run: python3 -m unittest -v tests/test_release.py
+      - name: Remote machines over SSH (REM-01..06)
+        run: python3 -m unittest -v tests/test_remote.py
+      - name: Remote provisioning against a real sshd (REM-01..06)
+        run: sudo ISLE_TEST_I_UNDERSTAND=1 bash tests/test_remote_ssh.sh
       - name: Web UI via the real launcher (UI-04)
         run: |
           set -e
@@ -140,7 +144,7 @@ jobs:
       - name: Unit suites inside the Debian image (DEB-01)
         run: |
           docker run --rm -v "$PWD":/src:ro --entrypoint sh theisle-server:ci -c \
-            'cp -a /src /repo && cd /repo && ISLE_ALLOW_ROOT=1 bash tests/test_config_tools.sh && python3 -m unittest -v tests/test_plugins.py tests/test_snapshot.py tests/test_api.py tests/test_logs.py tests/test_steam.py tests/test_offsite.py'
+            'cp -a /src /repo && cd /repo && ISLE_ALLOW_ROOT=1 bash tests/test_config_tools.sh && python3 -m unittest -v tests/test_plugins.py tests/test_snapshot.py tests/test_api.py tests/test_logs.py tests/test_steam.py tests/test_offsite.py tests/test_remote.py'
       - name: End-to-end through the launcher with an RCON-speaking fake server
         run: ISLE_TEST_I_UNDERSTAND=1 IMAGE=theisle-server:ci bash tests/test_container_e2e.sh
       - name: Launcher in docker mode (LCH-01..08)

@@ -6,7 +6,7 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](DOCKER.md)
 [![Web UI + REST API](https://img.shields.io/badge/web%20UI-REST%20API%20%2B%20OpenAPI-6E56CF)](UI.md)
 
-**Version:** 1.13.1 · **Author:** [Kyros Koh](https://github.com/kyroskoh) · **Repository:** [kyroskoh/the-isle-dedicated-server](https://github.com/kyroskoh/the-isle-dedicated-server) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
+**Version:** 1.14.0 · **Author:** [Kyros Koh](https://github.com/kyroskoh) · **Repository:** [kyroskoh/the-isle-dedicated-server](https://github.com/kyroskoh/the-isle-dedicated-server) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
 
 Scripts to install, configure, run, update and back up a **The Isle – Evrima**
 dedicated server on **Windows**, **Linux** and **Docker**, all driven from one shared config file.
@@ -63,6 +63,10 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 - **Watchdog** that restarts the server if it crashes. On Linux this is systemd `Restart=on-failure` or the built-in watchdog. On Windows it's a scheduled task plus a watchdog loop.
 - **Auto-update** through SteamCMD before each start (optional).
 - **Graceful stop.** The scripts save the world over RCON, then stop the server cleanly.
+- **This machine or another one.** The installers ask where the server should run: here, or on another Linux
+  or Windows machine over SSH (native or Docker). A guided setup makes an SSH key pair for it, checks the
+  machine, uploads the scripts, installs, and applies settings that fit that machine; `isle-server remote run`
+  manages it afterwards. Keys only, host keys pinned, your config and secrets never uploaded.
 - **Easy first server.** `isle-server setup` (and the web UI's **Get started** page) checks the machine's CPU,
   memory and disk, recommends settings that fit it (`isle-server recommend`), and walks you through name, map,
   admins, play style and backups. The web UI also has a **guided tour**.

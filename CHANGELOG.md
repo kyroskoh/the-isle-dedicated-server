@@ -6,6 +6,30 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-11-23
+
+Planned in [PRD.md](PRD.md) as milestone M19 (REM-01 to REM-06).
+
+### Added
+- **Install on this machine or another one:** run interactively, both installers first ask where The Isle server
+  should run: this machine, or another Linux or Windows machine over SSH, natively or in Docker.
+  - A guided setup asks for the host, user and port, creates an ed25519 **SSH key pair** for that machine
+    (`config/keys/`, mode 600), helps install its public key (`ssh-copy-id` on Linux, printed steps for Windows),
+    checks the machine, uploads the scripts and runs the installer there.
+  - Non-interactive: `install.sh --remote NAME --docker --start`, `Install.ps1 -Remote NAME -Native -Start`,
+    `-RemoteSetup` for the guided setup. No root or Administrator rights are needed on the controlling machine.
+- **`isle-server remote` / `IsleServer.ps1 Remote`** (`tools/isle_remote.py`):
+  - `add NAME --host H --user U [--new-key | --key FILE] [--mode native|docker] [--os auto|linux|windows]`,
+    `hosts`, `show`, `remove`, `keygen`, `copy-id`.
+  - `test NAME`: OS, distro, architecture, sudo/Administrator, Docker, free disk, an existing install, and what
+    to fix before installing.
+  - `provision NAME [--native|--docker] [--start] [--ui] [--setup] [--branch] [--image] [--from-snapshot FILE]
+    [--dry-run] [--stage-only]`; `--setup` applies settings recommended for **that** machine's specs.
+  - `run NAME -- status|start|logs|backup|...` manages it afterwards.
+  - Security: key-only logins, host keys pinned in `config/keys/known_hosts` (a changed one is refused, with
+    advice), validated hosts and arguments, Windows commands sent as `-EncodedCommand`, and your `server.conf`,
+    tokens, keys and machine list are never uploaded.
+
 ## [1.13.1] - 2026-11-22
 
 ### Fixed
@@ -464,7 +488,8 @@ The scope for this release was planned in [PRD.md](PRD.md) (milestone M5).
 - Documentation: README, INSTALL, CONFIGURATION, TROUBLESHOOTING, PRD, SECURITY, CONTRIBUTING and LICENSE.
 - GitHub Actions lint and smoke-test workflow (ShellCheck, PowerShell 5.1 parser, PSScriptAnalyzer).
 
-[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.13.1...HEAD
+[Unreleased]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/kyroskoh/the-isle-dedicated-server/releases/tag/v1.13.0
 [1.8.0]: https://github.com/kyroskoh/the-isle-dedicated-server/compare/v1.7.1...v1.8.0

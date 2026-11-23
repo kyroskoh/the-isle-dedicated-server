@@ -183,6 +183,14 @@ ck "setup wizard (answers piped)" "printf 'n\\nWizard Isle\\n-\\n\\n24\\n\\n\\n\
 ck "setup --yes applies recommendations" "out recommend --apply MAX_PLAYERS >/dev/null; sed -i 's/^AI_DENSITY=.*/AI_DENSITY=2/' $ISLE_CONF && out setup --yes </dev/null >/dev/null && [ \"\$(conf AI_DENSITY)\" = 0.75 ]"
 unset ISLE_SYSINFO_FAKE
 
+echo "## remote machines (REM-02, REM-05)"
+ck "remote hosts (none yet)"     "out remote hosts | grep -q 'No remote machines yet'"
+ck "remote add saves a machine"  "out remote add vps --host 203.0.113.10 --user admin --mode docker --os linux >/dev/null && [ -f $T/hosts/vps.conf ] && grep -q '^MODE=docker' $T/hosts/vps.conf"
+ck "remote add refuses bad hosts" "out remote add bad '--host=-oProxyCommand=x' --user admin 2>&1 | grep -q 'HOST must be'"
+ck "remote provision --dry-run"  "out remote provision vps --start --dry-run | grep -q 'install.sh --docker --yes --start'"
+ck "install.sh --remote needs no root" "! bash $R/linux/install.sh --remote nosuch 2>&1 | grep -q 'run as root' && bash $R/linux/install.sh --remote nosuch 2>&1 | grep -q 'No remote machine called'"
+out remote remove vps >/dev/null
+
 echo "## admin (ADM-01..03)"
 ck "admin usage notes the limits" "out admin | grep -q 'god mode'"
 ck "admin kick needs a SteamID64" "! out admin kick 123 >/dev/null"
