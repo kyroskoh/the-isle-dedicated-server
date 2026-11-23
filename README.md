@@ -66,7 +66,8 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 - **This machine or another one.** The installers ask where the server should run: here, or on another Linux
   or Windows machine over SSH (native or Docker). A guided setup makes an SSH key pair for it, checks the
   machine, uploads the scripts, installs, and applies settings that fit that machine; `isle-server remote run`
-  manages it afterwards. Keys only, host keys pinned, your config and secrets never uploaded.
+  manages it afterwards; the web UI has a **Remote machines** page for the same. Use an SSH key pair made by the
+  script or upload your own. Keys only, host keys pinned, your config and secrets never uploaded.
 - **Easy first server.** `isle-server setup` (and the web UI's **Get started** page) checks the machine's CPU,
   memory and disk, recommends settings that fit it (`isle-server recommend`), and walks you through name, map,
   admins, play style and backups. The web UI also has a **guided tour**.
@@ -80,6 +81,10 @@ dedicated server on **Windows**, **Linux** and **Docker**, all driven from one s
 ## Screenshots
 
 <table>
+  <tr>
+    <td width="50%"><a href="docs/images/ui/setup-remote.png"><img src="docs/images/ui/setup-remote.png" alt="Get started: this machine, or another one over SSH"></a><br><sub>Get started: this machine, or another one over SSH</sub></td>
+    <td width="50%"><a href="docs/images/ui/remote-key.png"><img src="docs/images/ui/remote-key.png" alt="An SSH key pair made here, or your own"></a><br><sub>An SSH key pair made here, or your own</sub></td>
+  </tr>
   <tr>
     <td width="50%"><a href="docs/images/ui/setup-machine.png"><img src="docs/images/ui/setup-machine.png" alt="Get started: what this machine can run, with recommended settings"></a><br><sub>Get started: what this machine can run, with recommended settings</sub></td>
     <td width="50%"><a href="docs/images/ui/tour.png"><img src="docs/images/ui/tour.png" alt="The guided tour shows where everything is"></a><br><sub>The guided tour shows where everything is</sub></td>

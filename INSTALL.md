@@ -243,9 +243,14 @@ leave out the `--` in `Remote run vps status` (PowerShell keeps `--` for itself)
 
 How it works and what it keeps:
 
-- **Keys, not passwords.** `--new-key` (or `remote keygen NAME`) creates an ed25519 key pair in
-  `config/keys/NAME_ed25519` (mode 600). An existing key works too (`--key ~/.ssh/id_ed25519`). No password is
-  ever stored; `copy-id` asks for one once, and only `ssh-copy-id` sees it.
+- **Keys, not passwords: made here, or your own.** `--new-key` (or `remote keygen NAME`) creates an ed25519 key
+  pair in `config/keys/NAME_ed25519` (mode 600). To bring your own pair, `remote import-key NAME ~/.ssh/id_ed25519
+  [--pub ~/.ssh/id_ed25519.pub]` checks it with `ssh-keygen` (refusing a public key that does not match, or a
+  passphrase - unattended logins cannot type one) and keeps a copy in `config/keys/NAME_key` (mode 600); or point
+  at it where it is with `add --key FILE` (an `ssh-agent` can then unlock a passphrase). No password is ever
+  stored; `copy-id` asks for one once, and only `ssh-copy-id` sees it.
+- **From the web UI.** The **Remote machines** page (and the **Your machine** step of Get started) does the same:
+  add a machine, make a key pair or upload your own, test it and install there. See [UI.md](UI.md#remote-machines).
 - **Pinned host keys.** The first connection records the machine's host key in `config/keys/known_hosts`; a
   changed key later is refused, with advice on what to do if you reinstalled that machine.
 - **What is uploaded.** The scripts and tools only: never your `server.conf`, the web UI token, your list of

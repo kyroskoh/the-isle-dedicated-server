@@ -60,6 +60,10 @@ writeFileSync(conf, readFileSync(join(REPO, "config", "server.conf.example"), "u
   .replace(/^SERVER_DIR=.*$/m, "SERVER_DIR=/srv/games/the-isle/an/unusually/deep/folder/structure/that/goes/on/and/on/theisle-server")
   .replace(/^ADMIN_STEAM_IDS=.*$/m, "ADMIN_STEAM_IDS=" + Array.from({ length: 12 }, (_, i) => "765611980000000" + String(10 + i)).join(","))
   .replace(/^ALLOWED_CLASSES=.*$/m, `ALLOWED_CLASSES=${LONG}Rex,Tyrannosaurus`));
+// a remote machine with long names (Remote machines page and Get started's "another machine")
+mkdirSync(join(dir, "config", "hosts"), { recursive: true });
+writeFileSync(join(dir, "config", "hosts", "a-very-long-remote-machine-name.conf"),
+  "HOST=a-really-long-host-name-for-layout-testing.subdomain.example-hosting-provider.com\nPORT=22022\nUSER=administrator_account\nOS=windows\nMODE=docker\nKEY=\nINSTALL_ROOT=C:\\TheIsle\nSERVICE_USER=theisle\n");
 const logFile = join(dir, "server.log");
 writeFileSync(logFile, Array.from({ length: 50 }, (_, i) => i % 7 ? `[2026.11.08-12.00.${String(i).padStart(2, "0")}] LogTheIsle: line ${i}` :
   "X".repeat(400)).join("\n") + "\n");
@@ -68,7 +72,7 @@ const port = await freePort();
 // fake Steam (tests/fixtures/fake-steam.py): Steam names for SteamID64s without touching the internet
 const steamProc = spawn(PY, [join(REPO, "tests", "fixtures", "fake-steam.py"), "0"], { stdio: ["ignore", "pipe", "ignore"] });
 const steamUrl = await new Promise((res) => steamProc.stdout.once("data", (b) => res("http://127.0.0.1:" + String(b).trim().split(/\s+/)[1])));
-const env = { ...process.env, ISLE_SYSINFO_FAKE: '{"cpus": 4, "mem_gb": 8, "disk_free_gb": 100, "arch": "x86_64", "cpu_model": "An Extremely Long Processor Model Name With Many Words 16-Core @ 3.40GHz"}', ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.1",
+const env = { ...process.env, ISLE_SYSINFO_FAKE: '{"cpus": 4, "mem_gb": 8, "disk_free_gb": 100, "arch": "x86_64", "cpu_model": "An Extremely Long Processor Model Name With Many Words 16-Core @ 3.40GHz"}', ISLE_UI_TOKEN: TOKEN, ISLE_SSH: join(REPO, "tests", "fixtures", "fake-ssh.py"), ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.1",
   FAKE_LOG_FILE: logFile };
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
   "--port", String(port), "--snapshot-dir", join(dir, "snapshots")], { env, stdio: ["ignore", "pipe", "pipe"] });
@@ -229,7 +233,7 @@ const settle = async (page) => {
   for (let i = 0; i < 80; i++) { if (await page.evaluate(() => !document.querySelector("#content [role=status]"))) break; await sleep(100); }
   await sleep(150);
 };
-const ROUTES = ["", "setup", "settings", "players", "roster", "world", "profiles", "plugins", "snapshots", "logs", "admin", "console"];
+const ROUTES = ["", "setup", "remote", "settings", "players", "roster", "world", "profiles", "plugins", "snapshots", "logs", "admin", "console"];
 const WIDTHS = [1440, 1280, 1024, 820, 600, 390, 320];
 try {
   for (const scheme of ["light", "dark"]) {

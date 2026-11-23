@@ -77,7 +77,7 @@ const steamProc = spawn(PY, [join(REPO, "tests", "fixtures", "fake-steam.py"), "
 const steamUrl = await new Promise((res) => steamProc.stdout.once("data", (b) => res("http://127.0.0.1:" + String(b).trim().split(/\s+/)[1])));
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
   "--port", String(port), "--snapshot-dir", join(dir, "snapshots")],
-  { env: { ...process.env, ISLE_SYSINFO_FAKE: '{"cpus": 4, "mem_gb": 8, "disk_free_gb": 100, "arch": "x86_64"}', ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.5" }, stdio: ["ignore", "pipe", "pipe"] });
+  { env: { ...process.env, ISLE_SYSINFO_FAKE: '{"cpus": 4, "mem_gb": 8, "disk_free_gb": 100, "arch": "x86_64"}', ISLE_UI_TOKEN: TOKEN, ISLE_SSH: join(REPO, "tests", "fixtures", "fake-ssh.py"), ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"), FAKE_DELAY: "0.5" }, stdio: ["ignore", "pipe", "pipe"] });
 const apiLog = [];
 for (const stream of [api.stdout, api.stderr]) stream.on("data", (b) => { apiLog.push(String(b)); if (apiLog.length > 400) apiLog.shift(); });
 process.on("uncaughtException", (e) => { console.log("API log (last lines):\n" + apiLog.join("").split("\n").slice(-30).join("\n")); throw e; });
@@ -340,9 +340,56 @@ try {
   await page.keyboard.press("Escape");
   await ck("Escape closes it and returns focus", async () => { await sleep(200); return !(await page.$("#tour")) && (await page.evaluate(() => document.activeElement.id)) === "tour-start"; });
   await page.click("#tour-start");
-  for (let i = 0; i < 12; i++) { await page.click(".tour-pop button:has-text('Next')"); await sleep(260); }
+  const steps = await page.evaluate(() => window.IsleTour.steps.length);
+  for (let i = 0; i < steps - 1; i++) { await page.click(".tour-pop button:has-text('Next')"); await sleep(260); }
   await page.click(".tour-pop button:has-text('Done')");
   await ck("finishing remembers it", async () => !(await page.$("#tour")) && (await page.evaluate(() => window.IsleTour.seen())));
+
+  console.log("## remote machines");
+  const { execFileSync } = await import("node:child_process");
+  const keyDir = join(dir, "own-keys");
+  mkdirSync(keyDir, { recursive: true });
+  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "mine", "-f", join(keyDir, "mine")]);
+  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "pw123", "-C", "locked", "-f", join(keyDir, "locked")]);
+  await page.click('#nav a[href="#/remote"]');
+  await ck("remote page starts empty", async () => { await page.waitForSelector("#remote-list .empty"); return true; });
+  await page.fill("#ra-name", "vps"); await page.fill("#ra-host", "203.0.113.10"); await page.fill("#ra-user", "admin");
+  await page.selectOption("#ra-mode", "docker");
+  await page.click("#remote-add button:has-text('Add machine')");
+  await ck("adding opens the key dialog", async () => { await page.waitForSelector("#modal[open] button:has-text('Make a key pair here')"); return true; });
+  await page.click("#modal button:has-text('Make a key pair here')");
+  await ck("a key pair is made here, public key shown", async () => { await page.waitForSelector("#modal textarea.pubkey");
+    return /^ssh-ed25519 /.test(await page.inputValue("#modal textarea.pubkey")); });
+  await ck("the private key is never shown", async () => !/PRIVATE KEY/.test(await page.textContent("#modal")));
+  await page.fill("#rk-priv-text", readFileSync(join(keyDir, "locked"), "utf8"));
+  await page.click("#modal button:has-text('Use this key pair')");
+  await ck("a passphrase-protected key is refused", async () => { await page.waitForSelector(".toast.error:has-text('passphrase')"); return true; });
+  await page.setInputFiles("#rk-priv", join(keyDir, "mine"));
+  await page.setInputFiles("#rk-pub", join(keyDir, "mine.pub"));
+  await page.click("#modal button:has-text('Use this key pair')");
+  await ck("your own key pair is used", async () => { await page.waitForSelector(".toast:has-text('Your key pair is in use')");
+    return (await page.inputValue("#modal textarea.pubkey")).trim() === readFileSync(join(keyDir, "mine.pub"), "utf8").trim(); });
+  await page.click("#modal-close");
+  await page.waitForSelector(".remote-host button:has-text('Test'):not([disabled])");
+  await page.click(".remote-host button:has-text('Test')");
+  await ck("test shows the machine is ready", async () => { await page.waitForSelector(".remote-host .callout.green:has-text('Ready to install')"); return true; });
+  await page.click(".remote-host button:has-text('Install there')");
+  await page.waitForSelector("#confirm[open] #ri-mode");
+  await ck("install asks native or docker (machine's mode preselected)", async () => (await page.inputValue("#ri-mode")) === "docker");
+  await page.click("#confirm button[value='ok']");
+  await ck("install runs as a job", async () => { await page.waitForSelector(".toast:has-text('Install on vps finished')", { timeout: 15000 }); return true; });
+  await page.click('#nav a[href="#/setup"]');
+  await page.waitForSelector(".where");
+  await page.click(".where label:has-text('Another machine over SSH')");
+  await ck("Get started offers another machine", async () => { await page.waitForSelector(".where ~ div #remote-list .remote-host h3:text('vps')"); return true; });
+  const before = conf_("NET_TICK_RATE");
+  await page.click(".setup-nav button:has-text('Save & continue')");
+  await ck("choosing another machine leaves this machine's settings alone", async () => { await page.waitForSelector("#setup-name"); return conf_("NET_TICK_RATE") === before; });
+  await page.click('#nav a[href="#/remote"]');
+  await page.waitForSelector(".remote-host button:has-text('Remove')");
+  await page.click(".remote-host button:has-text('Remove')");
+  await page.click("#confirm button[value='ok']");
+  await ck("removing forgets it", async () => { await page.waitForSelector("#remote-list .empty"); return true; });
 
   console.log("## date & time preferences");
   await page.click('#nav a[href="#/"]');

@@ -74,7 +74,7 @@ const port = await freePort();
 const steamProc = spawn(PY, [join(REPO, "tests", "fixtures", "fake-steam.py"), "0"], { stdio: ["ignore", "pipe", "ignore"] });
 const steamUrl = await new Promise((res) => steamProc.stdout.once("data", (b) => res("http://127.0.0.1:" + String(b).trim().split(/\s+/)[1])));
 const env = { ...process.env, ISLE_SYSINFO_FAKE: JSON.stringify({ cpus: 8, mem_gb: 16, mem_available_gb: 13.2, disk_free_gb: 240, cpu_model: "AMD Ryzen 7 5800X 8-Core Processor", os: "Linux", arch: "x86_64", backup_size_mb: 180 }),
-  ISLE_UI_TOKEN: TOKEN, ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"),
+  ISLE_UI_TOKEN: TOKEN, ISLE_SSH: join(REPO, "tests", "fixtures", "fake-ssh.py"), ISLE_STEAM_COMMUNITY_URL: steamUrl, ISLE_STEAM_API_URL: steamUrl, ISLE_LOG_DIR: join(dir, "logs"), FAKE_STATE_DIR: dir, FAKE_LAUNCHER_LOG: join(dir, "calls.log"),
   FAKE_DELAY: "0.2", FAKE_LOG_FILE: join(dir, "server.log") };
 const api = spawn(PY, [join(REPO, "tools", "isle_api.py"), "--conf", conf, "--launcher", join(REPO, "tests", "fixtures", "fake-launcher.py"),
   "--port", String(port), "--snapshot-dir", join(dir, "snapshots")], { env, stdio: "ignore" });
@@ -190,6 +190,25 @@ try {
     await page.click(".setup-nav button:has-text('Skip this step')"); await page.waitForSelector("input[name='setup-style']");
     await page.check("input[name='setup-style'][value='realism']");
     await snap(page, "setup-style");
+    // remote machines: add one, make its SSH key pair here, test it
+    await go(page, "remote");
+    await page.fill("#ra-name", "eu-vps"); await page.fill("#ra-host", "203.0.113.42"); await page.fill("#ra-user", "deploy");
+    await page.selectOption("#ra-os", "linux"); await page.selectOption("#ra-mode", "docker");
+    await page.click("#remote-add button:has-text('Add machine')");
+    await page.waitForSelector("#modal[open] button:has-text('Make a key pair here')");
+    await page.click("#modal button:has-text('Make a key pair here')");
+    await page.waitForSelector("#modal textarea.pubkey");
+    await sleep(300);
+    await snap(page, "remote-key");
+    await page.click("#modal-close");
+    await page.waitForSelector(".remote-host button:has-text('Test'):not([disabled])");
+    await page.click(".remote-host button:has-text('Test')");
+    await page.waitForSelector(".remote-host .callout.green");
+    await snap(page, "remote-machines");
+    await go(page, "setup"); await page.waitForSelector(".where");
+    await page.click(".where label:has-text('Another machine over SSH')");
+    await page.waitForSelector(".where ~ div .remote-host");
+    await snap(page, "setup-remote");
     // guided tour, on the quick actions
     await go(page, "");
     await page.evaluate(() => window.IsleTour.start());

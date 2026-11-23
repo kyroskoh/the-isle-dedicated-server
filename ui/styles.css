@@ -519,3 +519,14 @@ input.num { width: 5.5rem; flex: none; min-width: 0; }
 @media (prefers-reduced-motion: reduce) { .tour-spot { transition: none; } }
 .specs { margin-bottom: .75rem; }
 td.nowrap { white-space: nowrap; }
+/* v1.14: remote machines */
+.where { margin-bottom: 1rem; }
+.remote-host .card-head h3 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-host .who { min-width: 0; display: flex; flex-direction: column; flex: 1 1 12rem; }
+.remote-host .who code { overflow-wrap: anywhere; }
+.fingerprint { font-family: var(--mono); overflow-wrap: anywhere; }
+textarea.pubkey, textarea.mono { width: 100%; font-family: var(--mono); font-size: .8rem; resize: vertical; overflow-wrap: anywhere; word-break: break-all; }
+.own-key { border-top: 1px solid var(--border); padding-top: .75rem; margin-top: .25rem; }
+.own-key h3 { margin: 0; }
+.own-key input[type=file] { max-width: 100%; }
+.test-result:empty { display: none; }

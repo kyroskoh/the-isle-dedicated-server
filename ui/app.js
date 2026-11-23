@@ -1165,6 +1165,163 @@
     paint();
   }
 
+  // ------------------------------------------------------------ remote machines over SSH (PRD REM-07..09)
+  function copyButton(getText, label) {
+    var b = btn(label || "Copy", { kind: "sm" });
+    b.addEventListener("click", function () {
+      var text = getText();
+      var done = function () { toast("Copied to the clipboard"); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { toast("Copy failed", "Select the text and copy it yourself.", "warn"); });
+      else toast("Select the text and copy it yourself", "", "warn");
+    });
+    return b;
+  }
+  function readFileText(input) {
+    return new Promise(function (resolve, reject) {
+      var f = input.files && input.files[0];
+      if (!f) { resolve(""); return; }
+      if (f.size > 32768) { reject(new ApiError({ title: "That file is too big for a key", detail: f.name })); return; }
+      var r = new FileReader();
+      r.onload = function () { resolve(String(r.result || "")); };
+      r.onerror = function () { reject(new ApiError({ title: "Could not read " + f.name })); };
+      r.readAsText(f);
+    });
+  }
+  function keyInstall(m) {
+    var pub = m.key.public_key || "";
+    var line = m.os === "windows"
+      ? "As an administrator on " + m.host + ", add this line to C:\\ProgramData\\ssh\\administrators_authorized_keys, then run: Restart-Service sshd"
+      : "On " + m.host + ", add this line to ~" + m.user + "/.ssh/authorized_keys - or from a terminal here: isle-server remote copy-id " + m.name;
+    var area = h("textarea", { class: "pubkey", readonly: true, rows: "3", spellcheck: "false", "aria-label": "Public key for " + m.name, value: pub });
+    return h("div", { class: "stack key-install" },
+      h("div", { class: "row" }, h("strong", { text: "Public key" }), h("span", { class: "muted small", text: m.key.fingerprint || "" }), copyButton(function () { return pub; })),
+      area, h("p", { class: "muted small", text: line }));
+  }
+  function keyDialog(h0, after) {
+    var body = h("div", { class: "stack" });
+    var dlg = modal("SSH key for " + h0.name, body);
+    var paint = function (m) {
+      clear(body);
+      if (m.key.public_key) body.appendChild(keyInstall(m));
+      else body.appendChild(h("p", { class: "callout", text: "No key yet. Make one here, or use your own key pair." }));
+      var gen = btn(m.key.public_key ? "Make a new key pair" : "Make a key pair here", { kind: m.key.public_key ? "" : "primary" });
+      gen.addEventListener("click", function () {
+        var go = function () { busy(gen, api("POST", "/remote/hosts/" + encodeURIComponent(m.name) + "/keygen").then(function (n) { toast("Key pair created", "Install the public key on " + n.host + "."); paint(n); after(); }, fail)); };
+        if (!m.key.public_key) { go(); return; }
+        confirmDialog({ title: "Replace the key?", text: "The old public key stops working once you remove it from " + m.host + ". Install the new one there.", ok: "Make a new key" }).then(function (yes) { if (yes) go(); });
+      });
+      var privFile = h("input", { type: "file", id: "rk-priv", accept: ".pem,.key,*" }), pubFile = h("input", { type: "file", id: "rk-pub", accept: ".pub" });
+      var privText = h("textarea", { id: "rk-priv-text", rows: "4", spellcheck: "false", placeholder: "-----BEGIN OPENSSH PRIVATE KEY-----", class: "mono" });
+      var use = btn("Use this key pair", { type: "submit" });
+      var form = h("form", { class: "stack own-key" },
+        h("h3", { text: "Use your own key pair" }),
+        h("div", { class: "grid cols-2" },
+          h("div", { class: "field" }, h("label", { for: "rk-priv", text: "Private key file" }), privFile, h("span", { class: "hint", text: "e.g. ~/.ssh/id_ed25519 - without a passphrase (unattended logins cannot type one)." })),
+          h("div", { class: "field" }, h("label", { for: "rk-pub", text: "Public key file (optional)" }), pubFile, h("span", { class: "hint", text: "Checked against the private key; worked out from it when left out." }))),
+        h("div", { class: "field" }, h("label", { for: "rk-priv-text", text: "...or paste the private key" }), privText),
+        h("p", { class: "muted small", text: "The key is checked with ssh-keygen and kept on this server in config/keys (mode 600). It is never shown or sent back." }),
+        h("div", { class: "row" }, use));
+      form.addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        busy(use, Promise.all([readFileText(privFile), readFileText(pubFile)]).then(function (t) {
+          var priv = t[0] || privText.value;
+          if (!priv.trim()) { toast("Choose or paste a private key", "", "warn"); return null; }
+          var body2 = { private_key: priv };
+          if (t[1].trim()) body2.public_key = t[1];
+          return api("PUT", "/remote/hosts/" + encodeURIComponent(m.name) + "/key", body2).then(function (n) { privText.value = ""; toast("Your key pair is in use", n.key.fingerprint || ""); paint(n); after(); });
+        }).catch(fail));
+      });
+      add(body, [h("div", { class: "row" }, gen), form]);
+    };
+    paint(h0);
+    return dlg;
+  }
+  function testResult(t) {
+    if (!t.reachable) return h("div", { class: "callout", role: "alert" }, h("strong", { text: "Cannot log in. " }), t.error || "", t.hint ? h("p", { class: "small", text: t.hint }) : null);
+    var ul = h("ul", { class: "checks" });
+    var item = function (ok, title, text) { return h("li", null, h("span", { class: "pill " + (ok ? "ok" : "warn"), text: ok ? "OK" : "Fix" }), h("div", null, h("strong", { text: title }), h("p", { class: "muted small", text: text }))); };
+    add(ul, [item(true, "Connected", (t.distro || t.os) + " (" + (t.arch || "?") + ")"),
+      item(t.admin, t.os === "windows" ? "Administrator" : "sudo without a password", t.admin ? "Can install system packages and services." : "Needed to install: use an administrator / passwordless sudo account."),
+      item(true, "Docker", t.docker ? "Installed" : "Not installed (only needed in docker mode)"),
+      item(!(+t.disk_gb < 25), "Free disk", (t.disk_gb || "?") + " GB (the game needs about 20 GB)")]);
+    return h("div", { class: "stack" }, ul,
+      t.problems && t.problems.length ? h("div", { class: "callout" }, h("strong", { text: "Fix before installing: " }), t.problems.join("; ")) : h("p", { class: "callout green", text: "Ready to install." }));
+  }
+  function installDialog(h0, after) {
+    var mode = h("select", { id: "ri-mode" }, h("option", { value: "native", text: "Native", selected: h0.mode === "native" }), h("option", { value: "docker", text: "Docker", selected: h0.mode === "docker" }));
+    var start = h("input", { type: "checkbox", checked: true }), setup = h("input", { type: "checkbox", checked: true }), ui = h("input", { type: "checkbox" });
+    var extra = h("div", { class: "stack" },
+      h("div", { class: "field" }, h("label", { for: "ri-mode", text: "Run the server" }), mode),
+      h("label", { class: "check" }, start, "Start it when the install finishes"),
+      h("label", { class: "check" }, setup, "Apply settings recommended for that machine's CPU, memory and disk"),
+      h("label", { class: "check" }, ui, "Also run the web UI there (localhost only; reach it through an SSH tunnel)"));
+    confirmDialog({ title: "Install on " + h0.name + "?", text: "Uploads these scripts to " + h0.user + "@" + h0.host + " and runs the installer there. The first install downloads about 20 GB.", ok: "Install", extra: extra }).then(function (yes) {
+      if (!yes) return;
+      runJob("Install on " + h0.name, api("POST", "/remote/hosts/" + encodeURIComponent(h0.name) + "/provision", { mode: mode.value, start: start.checked, setup: setup.checked, ui: ui.checked })).then(after);
+    });
+  }
+  function remotePanel(c) {
+    var list = h("div", { class: "stack", id: "remote-list" });
+    var nameI = h("input", { id: "ra-name", type: "text", placeholder: "vps", required: true, spellcheck: "false", autocomplete: "off", maxlength: "32" });
+    var hostI = h("input", { id: "ra-host", type: "text", placeholder: "203.0.113.10 or game.example.org", required: true, spellcheck: "false", autocomplete: "off" });
+    var userI = h("input", { id: "ra-user", type: "text", placeholder: "root, a sudo user, or a Windows administrator", required: true, spellcheck: "false", autocomplete: "off" });
+    var portI = h("input", { id: "ra-port", type: "number", min: "1", max: "65535", value: "22", class: "num" });
+    var osI = h("select", { id: "ra-os" }, [["auto", "Detect"], ["linux", "Linux"], ["windows", "Windows"]].map(function (o) { return h("option", { value: o[0], text: o[1] }); }));
+    var modeI = h("select", { id: "ra-mode" }, h("option", { value: "native", text: "Native" }), h("option", { value: "docker", text: "Docker" }));
+    var addB = btn("Add machine", { kind: "primary", type: "submit" });
+    var form = h("form", { class: "card stack", id: "remote-add" }, h("h2", { text: "Add a machine" }),
+      h("div", { class: "grid cols-3" },
+        h("div", { class: "field" }, h("label", { for: "ra-name", text: "Name" }), nameI, h("span", { class: "hint", text: "lowercase letters, digits, - _" })),
+        h("div", { class: "field" }, h("label", { for: "ra-host", text: "Host or IP" }), hostI),
+        h("div", { class: "field" }, h("label", { for: "ra-user", text: "SSH user" }), userI),
+        h("div", { class: "field" }, h("label", { for: "ra-port", text: "SSH port" }), portI),
+        h("div", { class: "field" }, h("label", { for: "ra-os", text: "Operating system" }), osI),
+        h("div", { class: "field" }, h("label", { for: "ra-mode", text: "Run the server" }), modeI)),
+      h("p", { class: "muted small", text: "Logins use an SSH key pair - make one here or bring your own after adding. No password is stored." }),
+      h("div", { class: "row" }, addB));
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      busy(addB, api("POST", "/remote/hosts", { name: nameI.value.trim().toLowerCase(), host: hostI.value.trim(), user: userI.value.trim(), port: portI.value.trim() || "22", os: osI.value, mode: modeI.value })
+        .then(function (n) { form.reset(); portI.value = "22"; toast("Added " + n.name, "Now set up its SSH key."); load().then(function () { keyDialog(n, load); }); }, fail));
+    });
+    function load() {
+      clear(list).appendChild(loading());
+      return api("GET", "/remote/hosts").then(function (hosts) {
+        clear(list);
+        if (!hosts.length) { list.appendChild(h("p", { class: "empty", text: "No remote machines yet. Add one below." })); return; }
+        hosts.forEach(function (m) {
+          var result = h("div", { class: "test-result" });
+          var keyB = btn(m.key.public_key ? "SSH key" : "Set up SSH key", { kind: "sm" + (m.key.public_key ? "" : " primary") });
+          var testB = btn("Test", { kind: "sm", icon: "refresh", disabled: !m.key.public_key && !m.key.key });
+          var instB = btn("Install there", { kind: "sm primary", disabled: !m.key.public_key && !m.key.key });
+          var rmB = btn("Remove", { kind: "sm", aria: "Remove " + m.name });
+          keyB.addEventListener("click", function () { keyDialog(m, load); });
+          testB.addEventListener("click", function () { clear(result).appendChild(loading()); busy(testB, api("POST", "/remote/hosts/" + encodeURIComponent(m.name) + "/test").then(function (t) { clear(result).appendChild(testResult(t)); }, function (e) { clear(result); fail(e); })); });
+          instB.addEventListener("click", function () { installDialog(m, load); });
+          rmB.addEventListener("click", function () {
+            var del = h("input", { type: "checkbox", checked: !!m.key.managed });
+            confirmDialog({ title: "Remove " + m.name + "?", text: "Forgets the machine here. Nothing on " + m.host + " is changed.", ok: "Remove", danger: true,
+              extra: m.key.managed ? h("label", { class: "check" }, del, "Also delete its key pair kept here") : null }).then(function (yes) {
+              if (yes) busy(rmB, api("DELETE", "/remote/hosts/" + encodeURIComponent(m.name) + (del.checked && m.key.managed ? "?delete_key=true" : "")).then(function () { toast("Removed " + m.name); load(); }, fail));
+            });
+          });
+          list.appendChild(h("article", { class: "card stack remote-host" },
+            h("div", { class: "card-head" }, h("div", { class: "who" }, h("h3", { text: m.name, "data-peek": m.name }), h("code", { class: "small", text: m.user + "@" + m.host + ":" + m.port })),
+              h("span", { class: "row" }, h("span", { class: "badge", text: m.os === "auto" ? "OS: detect" : m.os }), h("span", { class: "badge green", text: m.mode }))),
+            h("p", { class: "muted small" }, m.key.public_key ? ["Key: ", h("span", { class: "fingerprint", text: m.key.fingerprint || m.key.key })] : (m.key.key ? "Key: " + m.key.key : "No SSH key yet")),
+            h("div", { class: "row" }, keyB, testB, instB, rmB), result));
+        });
+      }, function (e) { clear(list).appendChild(errorCard(e, load)); });
+    }
+    add(c, [list, form]);
+    load();
+    return c;
+  }
+  function pageRemote(c) {
+    c.appendChild(pageHead("Remote machines", "Install and manage The Isle server on other Linux or Windows machines over SSH - natively or in Docker."));
+    remotePanel(c);
+  }
+
   // ------------------------------------------------------------ first-time setup wizard (PRD ONB-03)
   var SETUP_STEPS = ["Your machine", "Name & size", "Map", "Admins", "Play style", "Backups", "Finish"];
   function pageSetup(c) {
@@ -1207,7 +1364,29 @@
     go(0);
   }
   function stepMachine(el, setNext) {
-    var holder = section(el, function () { return api("GET", "/system"); }, function (box, r) {
+    // where should the server run: this machine (its specs and recommendations), or another one over SSH
+    var here = h("input", { type: "radio", name: "where", value: "here", checked: true });
+    var there = h("input", { type: "radio", name: "where", value: "remote" });
+    var local = h("div"), remote = h("div", { class: "stack", hidden: true });
+    el.appendChild(h("fieldset", { class: "plain stack where" }, h("legend", { class: "step-title", text: "Where should The Isle server run?" }),
+      h("div", { class: "grid cols-2" },
+        h("label", { class: "card choice checked" }, h("span", { class: "row" }, here, h("strong", { text: "This machine" })),
+          h("span", { class: "muted small", text: "The machine this page runs on. Its specs and recommended settings are below." })),
+        h("label", { class: "card choice" }, h("span", { class: "row" }, there, h("strong", { text: "Another machine over SSH" })),
+          h("span", { class: "muted small", text: "A Linux or Windows server, VPS or PC - natively or in Docker. Set up with an SSH key pair: made here or your own." })))));
+    add(el, [local, remote]);
+    var remoteBuilt = false;
+    var flip = function () {
+      el.querySelectorAll(".where .choice").forEach(function (x) { x.classList.toggle("checked", !!x.querySelector("input:checked")); });
+      local.hidden = !here.checked; remote.hidden = !there.checked;
+      if (there.checked && !remoteBuilt) {
+        remoteBuilt = true;
+        remote.appendChild(h("p", { class: "callout", text: "Install there from its card below; tick \"apply recommended settings\" to fit that machine's CPU, memory and disk. The next steps here set up THIS machine's own configuration - skip them if this machine only manages others." }));
+        remotePanel(remote);
+      }
+    };
+    here.addEventListener("change", flip); there.addEventListener("change", flip);
+    var holder = section(local, function () { return api("GET", "/system"); }, function (box, r) {
       var m = r.machine;
       var mem = m.mem_total_gb + " GB" + (m.mem_limit_gb ? " (container limit " + m.mem_limit_gb + " GB)" : "");
       add(box, [
@@ -1231,6 +1410,7 @@
           return h("th", { scope: "col", text: t }); }))), tbody)),
         h("p", { class: "muted small", text: "Estimates from community experience - the developers publish no official server requirements. Watch real usage and adjust in Settings." })]);
       setNext(function () {
+        if (!here.checked) return true;   // another machine: its own settings come with "apply recommended settings" there
         var keys = boxes.filter(function (b) { return b[0].checked; }).map(function (b) { return b[1]; });
         if (!keys.length) return true;
         return api("POST", "/recommendations/apply", { keys: keys }).then(function () { toast("Applied " + keys.length + " recommended setting" + (keys.length > 1 ? "s" : "")); });
@@ -1591,7 +1771,7 @@
     "/": ["Dashboard", pageDashboard], "/settings": ["Settings", pageSettings], "/players": ["Players", pagePlayers],
     "/roster": ["Roster", pageRoster], "/profiles": ["Profiles & presets", pageProfiles], "/plugins": ["Plugins", pagePlugins],
     "/snapshots": ["Snapshots & backups", pageSnapshots], "/logs": ["Logs", pageLogs], "/console": ["RCON console", pageConsole],
-    "/world": ["Map & AI", pageWorld], "/admin": ["Admin", pageAdmin], "/setup": ["Get started", pageSetup]
+    "/world": ["Map & AI", pageWorld], "/admin": ["Admin", pageAdmin], "/setup": ["Get started", pageSetup], "/remote": ["Remote machines", pageRemote]
   };
   function navigate() {
     if (!state.token) return;

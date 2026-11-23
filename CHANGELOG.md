@@ -8,7 +8,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.14.0] - 2026-11-23
 
-Planned in [PRD.md](PRD.md) as milestone M19 (REM-01 to REM-06).
+Planned in [PRD.md](PRD.md) as milestone M19 (REM-01 to REM-09).
 
 ### Added
 - **Install on this machine or another one:** run interactively, both installers first ask where The Isle server
@@ -26,6 +26,14 @@ Planned in [PRD.md](PRD.md) as milestone M19 (REM-01 to REM-06).
   - `provision NAME [--native|--docker] [--start] [--ui] [--setup] [--branch] [--image] [--from-snapshot FILE]
     [--dry-run] [--stage-only]`; `--setup` applies settings recommended for **that** machine's specs.
   - `run NAME -- status|start|logs|backup|...` manages it afterwards.
+  - **Your own key pair:** `import-key NAME PRIVATE_KEY [--pub FILE]` checks it with `ssh-keygen` (refusing a
+    public key that does not match, or a passphrase) and keeps a copy in `config/keys` (mode 600); `add --key FILE`
+    uses a key where it is.
+- **Remote machines in the web UI:** a new **Remote machines** page and API (`/api/v1/remote/hosts…`): add a
+  machine, make an SSH key pair or upload your own (files or paste; the private key is never shown or sent back),
+  copy the public key with install steps for Linux or Windows, test the machine, and install there as a job.
+  The **Your machine** step of Get started now asks: this machine, or another one over SSH. The tour has a step
+  for it.
   - Security: key-only logins, host keys pinned in `config/keys/known_hosts` (a changed one is refused, with
     advice), validated hosts and arguments, Windows commands sent as `-EncodedCommand`, and your `server.conf`,
     tokens, keys and machine list are never uploaded.

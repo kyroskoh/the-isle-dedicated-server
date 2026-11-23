@@ -7,8 +7,10 @@ isle_remote.py - provision and manage a The Isle server on ANOTHER machine over 
     hosts                                      list the remote machines you have added
     add NAME --host H [--user U] [--port 22] [--os auto|linux|windows] [--mode native|docker]
             [--key FILE | --new-key] [--install-root C:\\TheIsle] [--service-user theisle]
-    show NAME | remove NAME
+    show NAME | remove NAME [--delete-key]
     keygen NAME                                create an ed25519 key pair for NAME (config/keys/NAME_ed25519)
+    import-key NAME PRIVATE_KEY [--pub FILE]   use your own key pair instead (copied to config/keys/NAME_key,
+                                               mode 600; checked with ssh-keygen; no passphrase)
     copy-id NAME                               install that public key on a Linux host (asks for the password once)
     test NAME [--json]                         connect, detect OS, admin/sudo, Docker, disk, an existing install
     provision NAME [--native|--docker] [--start] [--ui] [--setup] [--branch B] [--image REF]
@@ -421,6 +423,81 @@ def keygen(inv, h):
         return key, handle.read().strip()
 
 
+def _derive_public(private_path):
+    """(rc, text) of ssh-keygen -y: the public key of a private key file, or why not"""
+    p = subprocess.run([prog("ssh-keygen"), "-y", "-P", "", "-f", private_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       universal_newlines=True)
+    return p.returncode, (p.stdout or "").strip()
+
+
+def key_blob(pub):
+    parts = (pub or "").split()
+    return (parts[0], parts[1]) if len(parts) >= 2 else (None, None)
+
+
+def import_key(inv, h, private_text, public_text=None):
+    """store a user's own key pair for h (config/keys/NAME_key, mode 600); returns (path, public key)"""
+    if not private_text or "PRIVATE KEY" not in private_text or len(private_text) > 32768:
+        raise RemoteError("That is not an OpenSSH/PEM private key (it should start with -----BEGIN ... PRIVATE KEY-----)")
+    os.makedirs(inv.keys, exist_ok=True)
+    try:
+        os.chmod(inv.keys, 0o700)
+    except OSError:
+        pass
+    key = os.path.join(inv.keys, "%s_key" % h["NAME"])
+    tmp = key + ".new"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(private_text.replace("\r\n", "\n").strip() + "\n")
+    rc, derived = _derive_public(tmp)
+    if rc != 0:
+        os.remove(tmp)
+        low = derived.lower()
+        if "passphrase" in low or "incorrect" in low:
+            raise RemoteError("That key has a passphrase. Unattended logins cannot type it: use a key without one "
+                              "(or make one here with keygen)")
+        raise RemoteError("ssh-keygen cannot read that private key: %s" % derived[-200:])
+    if public_text and public_text.strip():
+        if key_blob(public_text) != key_blob(derived):
+            os.remove(tmp)
+            raise RemoteError("The public key does not belong to that private key")
+    os.replace(tmp, key)
+    pub = derived if not (public_text or "").strip() else public_text.strip().splitlines()[0]
+    with open(key + ".pub", "w", encoding="utf-8") as handle:
+        handle.write(pub + "\n")
+    h["KEY"] = os.path.relpath(key, inv.dir)
+    inv.save(h)
+    return key, pub
+
+
+def key_info(inv, h):
+    """{key, public_key, fingerprint, managed} - never the private key"""
+    key = inv.key_path(h)
+    out = {"key": h.get("KEY") or "", "public_key": None, "fingerprint": None,
+           "managed": bool(key) and os.path.dirname(os.path.abspath(key)) == os.path.abspath(inv.keys), "exists": bool(key and os.path.isfile(key))}
+    if key and os.path.isfile(key + ".pub"):
+        with open(key + ".pub", encoding="utf-8") as handle:
+            out["public_key"] = handle.read().strip()
+        p = subprocess.run([prog("ssh-keygen"), "-l", "-f", key + ".pub"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+        if p.returncode == 0:
+            out["fingerprint"] = p.stdout.strip()
+    return out
+
+
+def remove_host(inv, name, delete_keys=False):
+    h = inv.load(name)
+    os.remove(inv.path(name))
+    removed = []
+    if delete_keys:
+        key = inv.key_path(h)
+        if key and os.path.dirname(os.path.abspath(key)) == os.path.abspath(inv.keys):   # only keys this tool keeps
+            for f in (key, key + ".pub"):
+                if os.path.isfile(f):
+                    os.remove(f)
+                    removed.append(f)
+    return removed
+
+
 def key_instructions(h, pub):
     return "\n".join([
         "Public key:", "  " + pub, "",
@@ -545,8 +622,10 @@ def main(argv=None):
     a.add_argument("--mode", default="native", choices=["native", "docker"]); a.add_argument("--key", default="")
     a.add_argument("--new-key", action="store_true"); a.add_argument("--install-root", default="C:\\TheIsle")
     a.add_argument("--service-user", default="theisle")
-    for n in ("show", "remove", "keygen", "copy-id"):
+    for n in ("show", "keygen", "copy-id"):
         sub.add_parser(n).add_argument("name")
+    rm = sub.add_parser("remove"); rm.add_argument("name"); rm.add_argument("--delete-key", action="store_true")
+    ik = sub.add_parser("import-key"); ik.add_argument("name"); ik.add_argument("private_key"); ik.add_argument("--pub")
     t = sub.add_parser("test"); t.add_argument("name"); t.add_argument("--json", action="store_true")
     p = sub.add_parser("provision"); p.add_argument("name")
     g = p.add_mutually_exclusive_group(); g.add_argument("--native", dest="mode", action="store_const", const="native")
@@ -598,8 +677,19 @@ def main(argv=None):
                 print("%-13s: %s" % (k, h[k]))
             return 0
         if args.cmd == "remove":
-            os.remove(inv.path(args.name))
-            print("Removed %s (its key, if any, stays in %s)" % (args.name, inv.keys))
+            removed = remove_host(inv, args.name, args.delete_key)
+            print("Removed %s%s" % (args.name, " and its key" if removed else " (its key, if any, stays in %s)" % inv.keys))
+            return 0
+        if args.cmd == "import-key":
+            with open(os.path.expanduser(args.private_key), encoding="utf-8") as handle:
+                private = handle.read()
+            public = None
+            if args.pub:
+                with open(os.path.expanduser(args.pub), encoding="utf-8") as handle:
+                    public = handle.read()
+            key, pub = import_key(inv, h, private, public)
+            print("Stored your key as %s (mode 600)\n" % key)
+            print(key_instructions(h, pub))
             return 0
         if args.cmd == "keygen":
             key, pub = keygen(inv, h)

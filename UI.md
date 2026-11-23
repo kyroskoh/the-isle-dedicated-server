@@ -57,7 +57,8 @@ plain text.
 | Page | What it does |
 |---|---|
 | Dashboard | State, Start/Stop/Restart/Save/Backup, Update/Verify game files, server details, recent jobs with their output; a welcome card until setup is done |
-| Get started | First-time setup wizard: machine check with recommended settings, name and size, map, admins, play style, backups (schedule and 3-2-1), finish |
+| Get started | First-time setup wizard: where the server runs (this machine, or another over SSH), machine check with recommended settings, name and size, map, admins, play style, backups (schedule and 3-2-1), finish |
+| Remote machines | Other Linux or Windows machines to install The Isle server on over SSH (native or Docker): add one, make an SSH key pair here or use your own, test it, install there (a job with live output), remove |
 | Settings | Every `server.conf` key, grouped and searchable. Secrets are masked. Changes are checked with `check` and rolled back if invalid. Machine-specific keys (paths, runtime, UI address) are read-only here |
 | Players | Admins and whitelist (add, remove, on/off), each with the player's Steam name (looked up by the server and cached) |
 | Roster | Playable classes as tick boxes (with types), roster presets, a type filter (incl. human and egg) with Only / Add / Remove, and the humans switch |
@@ -68,6 +69,29 @@ plain text.
 | Logs | The game's log or any rotated `launcher_` / `server_` / `ui_` log file, last 100–2000 lines, with auto-refresh |
 | Admin | Live admin commands: players online, player data, DM, kick, ban, announce, live switches, growth multiplier, save, wipe corpses, custom |
 | RCON console | Send RCON commands to the running server |
+
+### Remote machines
+
+**Remote machines** installs The Isle server on another Linux or Windows machine over SSH, the same way
+`isle-server remote` does from a terminal ([INSTALL.md](INSTALL.md#install-on-another-machine-over-ssh)).
+Add the machine (host, SSH user and port, OS or "detect", native or Docker), then set up its SSH key:
+
+- **Make a key pair here**: an ed25519 pair kept on this server; copy the public key shown and add it to the
+  machine (Linux `~/.ssh/authorized_keys`, Windows `C:\ProgramData\ssh\administrators_authorized_keys`).
+- **Use your own key pair**: choose your private key file (and optionally its `.pub`), or paste the private key.
+  It is checked with `ssh-keygen` (a public key that does not match, or a key with a passphrase, is refused),
+  stored in `config/keys` with mode 600, and never shown or sent back.
+
+**Test** connects and reports OS, sudo/Administrator, Docker and free disk; **Install there** asks native or
+Docker, start, settings recommended for that machine and the web UI, then runs as a job. The **Your machine**
+step of Get started asks the same question as the installers - this machine or another one over SSH - and
+shows this panel for the second.
+
+| Remote machines | Its SSH key: made here or your own |
+|---|---|
+| ![Remote machines with a tested machine](docs/images/ui/remote-machines.png) | ![SSH key dialog](docs/images/ui/remote-key.png) |
+
+![Get started: this machine or another one over SSH](docs/images/ui/setup-remote.png)
 
 ### Get started and the guided tour
 

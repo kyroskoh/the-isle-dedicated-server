@@ -38,7 +38,10 @@ Please open a private security advisory on GitHub
   snapshots. Logins are key-only (BatchMode); host keys are pinned in `config/keys/known_hosts` and a changed one
   is refused. Commands sent to a remote machine are built from validated parts (no shell characters from
   arguments), and Windows commands go as `-EncodedCommand`. Anyone who can read `config/keys/` can log in to
-  those machines: protect it like the keys in `~/.ssh`.
+  those machines: protect it like the keys in `~/.ssh`. The web UI can add machines, make or receive key pairs
+  and install on them; it never returns a private key, refuses passphrase-protected ones, and cannot point a
+  machine at a key file elsewhere on the server - but anyone with the UI token can use those keys, so treat the
+  token as access to every machine listed there.
 - **Steam name lookups** (`STEAM_NAME_LOOKUP=true`, the default) make the server, never the browser, fetch
   public profile pages from `steamcommunity.com` for the SteamID64s you list (or call `api.steampowered.com`
   when `STEAM_WEB_API_KEY` is set). Only SteamID64s are sent. `STEAM_WEB_API_KEY` is masked in the web UI like a
