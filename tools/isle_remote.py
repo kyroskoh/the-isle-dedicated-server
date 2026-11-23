@@ -413,14 +413,25 @@ def keygen(inv, h):
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
     if p.returncode:
         raise RemoteError("ssh-keygen failed: %s" % p.stdout.strip())
-    try:
-        os.chmod(key, 0o600)
-    except OSError:
-        pass
+    protect(key)
     h["KEY"] = os.path.relpath(key, inv.dir)
     inv.save(h)
     with open(key + ".pub", encoding="utf-8") as handle:
         return key, handle.read().strip()
+
+
+def protect(path):
+    """only the owner may read a private key: mode 600, and on Windows an ACL without inherited entries
+    (Windows OpenSSH refuses a key that other users can read: "UNPROTECTED PRIVATE KEY FILE")"""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    if os.name == "nt":
+        user = os.environ.get("USERNAME") or ""
+        grants = ["/grant:r", "%s:F" % user] if user else []
+        subprocess.run(["icacls", path, "/inheritance:r"] + grants + ["/grant:r", "*S-1-5-18:F", "/grant:r", "*S-1-5-32-544:F"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _derive_public(private_path):
@@ -449,6 +460,7 @@ def import_key(inv, h, private_text, public_text=None):
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(private_text.replace("\r\n", "\n").strip() + "\n")
+    protect(tmp)   # ssh-keygen -y refuses a key others can read on Windows
     rc, derived = _derive_public(tmp)
     if rc != 0:
         os.remove(tmp)
@@ -462,6 +474,7 @@ def import_key(inv, h, private_text, public_text=None):
             os.remove(tmp)
             raise RemoteError("The public key does not belong to that private key")
     os.replace(tmp, key)
+    protect(key)
     pub = derived if not (public_text or "").strip() else public_text.strip().splitlines()[0]
     with open(key + ".pub", "w", encoding="utf-8") as handle:
         handle.write(pub + "\n")

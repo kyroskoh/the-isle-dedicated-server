@@ -471,6 +471,15 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(body["done"] and body["at"])
         self.assertTrue(self.s.call("GET", "/api/v1/setup")[1]["done"])
 
+    def assertPrivate(self, path):
+        """only the owner (and on Windows SYSTEM/Administrators) can read a private key"""
+        if os.name == "nt":
+            acl = subprocess.run(["icacls", path], stdout=subprocess.PIPE, universal_newlines=True).stdout
+            self.assertNotRegex(acl, r"(?i)\b(Users|Everyone|Authenticated Users)\b:", acl)
+            self.assertNotIn("(I)", acl, "no inherited entries: " + acl)
+        else:
+            self.assertEqual(os.stat(path).st_mode & 0o077, 0)
+
     def test_remote_machines(self):
         if not shutil.which("ssh-keygen"):
             self.skipTest("ssh-keygen (OpenSSH client) is not installed")
@@ -490,7 +499,7 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(h["key"]["public_key"].startswith("ssh-ed25519 "))
         self.assertIn("SHA256:", h["key"]["fingerprint"])
         self.assertTrue(h["key"]["managed"] and h["key"]["exists"])
-        self.assertEqual(os.stat(os.path.join(cfg, "keys", "vps_ed25519")).st_mode & 0o077, 0)
+        self.assertPrivate(os.path.join(cfg, "keys", "vps_ed25519"))
         listed = json.dumps(self.s.call("GET", "/api/v1/remote/hosts")[1])
         self.assertNotIn("PRIVATE KEY", listed, "private keys are never returned")
         # or bring your own
@@ -511,7 +520,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(code, 200, h)
         self.assertEqual(h["key"]["public_key"], slurp(own + ".pub").strip())
         self.assertEqual(h["key"]["key"], os.path.join("keys", "vps_key"))
-        self.assertEqual(os.stat(os.path.join(cfg, "keys", "vps_key")).st_mode & 0o077, 0)
+        self.assertPrivate(os.path.join(cfg, "keys", "vps_key"))
         # check the machine, install there (a job through the launcher)
         code, t, _ = self.s.call("POST", "/api/v1/remote/hosts/vps/test")
         self.assertEqual(code, 200, t)
