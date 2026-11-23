@@ -428,10 +428,15 @@ def protect(path):
     except OSError:
         pass
     if os.name == "nt":
-        user = os.environ.get("USERNAME") or ""
-        grants = ["/grant:r", "%s:F" % user] if user else []
-        subprocess.run(["icacls", path, "/inheritance:r"] + grants + ["/grant:r", "*S-1-5-18:F", "/grant:r", "*S-1-5-32-544:F"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        who = subprocess.run(["whoami"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True).stdout.strip()
+        user = who or "%s\\%s" % (os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", ""))
+        # drop inherited entries, then give full control to this account, SYSTEM and Administrators only
+        steps = [["icacls", path, "/inheritance:r"], ["icacls", path, "/grant:r", "%s:F" % user],
+                 ["icacls", path, "/grant:r", "*S-1-5-18:F"], ["icacls", path, "/grant:r", "*S-1-5-32-544:F"]]
+        for cmd in steps:
+            p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+            if p.returncode:
+                raise RemoteError("Could not restrict access to %s (%s): %s" % (path, " ".join(cmd[2:]), p.stdout.strip()[-300:]))
 
 
 def _derive_public(private_path):
