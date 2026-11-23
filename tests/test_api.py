@@ -472,7 +472,7 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(self.s.call("GET", "/api/v1/setup")[1]["done"])
 
     def assertPrivate(self, path):
-        """only the owner (and on Windows SYSTEM/Administrators) can read a private key"""
+        """only the owner can read a private key"""
         if os.name == "nt":
             acl = subprocess.run(["icacls", path], stdout=subprocess.PIPE, universal_newlines=True).stdout
             self.assertNotRegex(acl, r"(?i)\b(Users|Everyone|Authenticated Users)\b:", acl)

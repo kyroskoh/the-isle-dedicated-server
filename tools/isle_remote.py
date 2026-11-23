@@ -67,7 +67,14 @@ class RemoteError(Exception):
 
 
 def prog(name):
-    return os.environ.get("ISLE_" + name.upper().replace("-", "_"), name)
+    env = os.environ.get("ISLE_" + name.upper().replace("-", "_"))
+    if env:
+        return env
+    if os.name == "nt":   # prefer Windows' own OpenSSH over another one on PATH (Git's ssh reads ACLs differently)
+        own = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "OpenSSH", name + ".exe")
+        if os.path.isfile(own):
+            return own
+    return name
 
 
 # ----------------------------------------------------------------- inventory
@@ -430,9 +437,9 @@ def protect(path):
     if os.name == "nt":
         who = subprocess.run(["whoami"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True).stdout.strip()
         user = who or "%s\\%s" % (os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", ""))
-        # drop inherited entries, then give full control to this account, SYSTEM and Administrators only
+        # drop inherited entries and make this account the owner and the only one with access
         steps = [["icacls", path, "/inheritance:r"], ["icacls", path, "/grant:r", "%s:F" % user],
-                 ["icacls", path, "/grant:r", "*S-1-5-18:F"], ["icacls", path, "/grant:r", "*S-1-5-32-544:F"]]
+                 ["icacls", path, "/setowner", user]]
         for cmd in steps:
             p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
             if p.returncode:
