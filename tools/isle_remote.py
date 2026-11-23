@@ -77,6 +77,12 @@ def prog(name):
     return name
 
 
+def cmd(name):
+    """the argument list that starts a program (a .py override, as the tests use, runs through this Python)"""
+    p = prog(name)
+    return [sys.executable, p] if p.endswith(".py") else [p]
+
+
 # ----------------------------------------------------------------- inventory
 class Inventory(object):
     def __init__(self, config_dir):
@@ -169,7 +175,7 @@ class Remote(object):
         return "%s@%s" % (self.h["USER"], host)
 
     def ssh(self, command, tty=False, timeout=None, capture=True):
-        args = [prog("ssh")] + self._common() + ["-p", str(self.h["PORT"])] + (["-t"] if tty else []) + [self.target(), command]
+        args = cmd("ssh") + self._common() + ["-p", str(self.h["PORT"])] + (["-t"] if tty else []) + [self.target(), command]
         if self.verbose:
             print("+ " + " ".join(shlex.quote(a) for a in args[:-1]) + " " + shlex.quote(command), file=sys.stderr)
         try:
@@ -185,7 +191,7 @@ class Remote(object):
         host = self.h["HOST"]
         if ":" in host:          # IPv6
             host = "[%s]" % host
-        args = [prog("scp")] + self._common() + ["-P", str(self.h["PORT"]), "-q", local, "%s@%s:%s" % (self.h["USER"], host, remote_name)]
+        args = cmd("scp") + self._common() + ["-P", str(self.h["PORT"]), "-q", local, "%s@%s:%s" % (self.h["USER"], host, remote_name)]
         try:
             p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, universal_newlines=True)
         except OSError as exc:
@@ -376,9 +382,9 @@ def do_provision(inv, h, opts, workdir):
     snap_name = os.path.basename(snap) if snap else None
     if snap_name and not re.match(r"^[A-Za-z0-9_.-]+$", snap_name):
         raise RemoteError("The snapshot file name may only use letters, digits, . _ - (rename it first)")
-    cmd = install_command(osname, h, opts, snap_name)
+    command = install_command(osname, h, opts, snap_name)
     if opts.get("dry_run"):
-        return {"os": osname, "bundle": bundle, "command": cmd, "snapshot": snap_name}
+        return {"os": osname, "bundle": bundle, "command": command, "snapshot": snap_name}
     print("Uploading the scripts to %s (%s) ..." % (h["NAME"], osname), flush=True)
     r.scp(bundle, STAGE + ".tgz")
     if snap:
@@ -388,12 +394,12 @@ def do_provision(inv, h, opts, workdir):
             r.ssh(ps("New-Item -ItemType Directory -Force -Path (Join-Path $HOME '%s') | Out-Null" % STAGE), timeout=60)
         r.scp(snap, "%s/%s" % (STAGE, snap_name))
     if opts.get("stage_only"):
-        rc, out = r.ssh(cmd, timeout=600)
+        rc, out = r.ssh(command, timeout=600)
         if rc:
             raise RemoteError("Unpacking on %s failed (exit %d): %s" % (h["NAME"], rc, out.strip()[-400:]))
         return {"os": osname, "mode": h["MODE"], "host": h["NAME"], "staged": out.strip().splitlines()[-1] if out.strip() else ""}
     print("Running the %s installer (%s mode) on %s - this takes a while the first time ..." % (osname, h["MODE"], h["NAME"]), flush=True)
-    rc, _ = r.ssh(cmd, tty=opts.get("tty", False), capture=False)
+    rc, _ = r.ssh(command, tty=opts.get("tty", False), capture=False)
     if rc:
         raise RemoteError("The installer on %s failed (exit %d) - see its output above" % (h["NAME"], rc))
     if not h.get("OS") or h["OS"] == "auto":
@@ -416,7 +422,7 @@ def keygen(inv, h):
     key = os.path.join(inv.keys, "%s_ed25519" % h["NAME"])
     if os.path.exists(key):
         raise RemoteError("%s already exists - remove it first to make a new one" % key)
-    p = subprocess.run([prog("ssh-keygen"), "-q", "-t", "ed25519", "-N", "", "-C", "the-isle-server %s" % h["NAME"], "-f", key],
+    p = subprocess.run(cmd("ssh-keygen") + ["-q", "-t", "ed25519", "-N", "", "-C", "the-isle-server %s" % h["NAME"], "-f", key],
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
     if p.returncode:
         raise RemoteError("ssh-keygen failed: %s" % p.stdout.strip())
@@ -440,13 +446,13 @@ def protect(path):
         # drop inherited entries and make this account the owner and the only one with access
         steps = [["icacls", path, "/inheritance:r"], ["icacls", path, "/grant:r", "%s:F" % user],
                  ["icacls", path, "/setowner", user]]
-        def run(cmd):
-            p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+        def run(args):
+            p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
             if p.returncode:
-                raise RemoteError("Could not restrict access to %s (%s): %s" % (path, " ".join(cmd[2:]), p.stdout.strip()[-300:]))
+                raise RemoteError("Could not restrict access to %s (%s): %s" % (path, " ".join(args[2:]), p.stdout.strip()[-300:]))
             return p.stdout
-        for cmd in steps:
-            run(cmd)
+        for step in steps:
+            run(step)
         # entries that were already explicit survive /inheritance:r (e.g. "OWNER RIGHTS:(IO)(F)" from a temp
         # folder); Windows OpenSSH counts any of them as "too open", so remove every entry but this account's
         keep = {user.lower(), "nt authority\\system", "builtin\\administrators"}
@@ -459,7 +465,7 @@ def protect(path):
 
 def _derive_public(private_path):
     """(rc, text) of ssh-keygen -y: the public key of a private key file, or why not"""
-    p = subprocess.run([prog("ssh-keygen"), "-y", "-P", "", "-f", private_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    p = subprocess.run(cmd("ssh-keygen") + ["-y", "-P", "", "-f", private_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        universal_newlines=True)
     return p.returncode, (p.stdout or "").strip()
 
@@ -517,7 +523,7 @@ def key_info(inv, h):
     if key and os.path.isfile(key + ".pub"):
         with open(key + ".pub", encoding="utf-8") as handle:
             out["public_key"] = handle.read().strip()
-        p = subprocess.run([prog("ssh-keygen"), "-l", "-f", key + ".pub"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+        p = subprocess.run(cmd("ssh-keygen") + ["-l", "-f", key + ".pub"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
         if p.returncode == 0:
             out["fingerprint"] = p.stdout.strip()
     return out
@@ -606,7 +612,7 @@ def wizard(inv, preset):
             print("\n  Created %s" % key)
             if (h["OS"] != "windows" and shutil.which(prog("ssh-copy-id"))
                     and yes("Install the public key on %s now (asks for %s's password once)?" % (h["HOST"], h["USER"]))):
-                subprocess.call([prog("ssh-copy-id"), "-i", key + ".pub", "-p", str(h["PORT"]), "-o", "UserKnownHostsFile=" + inv.known_hosts(),
+                subprocess.call(cmd("ssh-copy-id") + ["-i", key + ".pub", "-p", str(h["PORT"]), "-o", "UserKnownHostsFile=" + inv.known_hosts(),
                                  "-o", "StrictHostKeyChecking=accept-new", "%s@%s" % (h["USER"], h["HOST"])])
             else:
                 print("\n" + key_instructions(h, pub))
@@ -739,7 +745,7 @@ def main(argv=None):
             key = inv.key_path(h)
             if not key or not os.path.isfile(key + ".pub"):
                 raise RemoteError("No key for %s yet - run: remote keygen %s" % (args.name, args.name))
-            return subprocess.call([prog("ssh-copy-id"), "-i", key + ".pub", "-p", str(h["PORT"]),
+            return subprocess.call(cmd("ssh-copy-id") + ["-i", key + ".pub", "-p", str(h["PORT"]),
                                     "-o", "UserKnownHostsFile=" + inv.known_hosts(), "-o", "StrictHostKeyChecking=accept-new",
                                     "%s@%s" % (h["USER"], h["HOST"])])
         if args.cmd == "test":
